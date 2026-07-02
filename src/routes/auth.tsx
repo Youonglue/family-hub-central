@@ -1,7 +1,6 @@
 import { createFileRoute, useNavigate, redirect, Link } from "@tanstack/react-router";
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { lovable } from "@/integrations/lovable";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/auth")({
@@ -16,35 +15,65 @@ export const Route = createFileRoute("/auth")({
   component: AuthPage,
 });
 
+// Family Hub uses username + password only. No email is ever sent — the
+// backend just needs *some* unique identifier per account, so we normalise
+// the username into a synthetic address (`<username>@family.local`). The
+// local part is what the user types; the domain is never shown or emailed.
+const USERNAME_RE = /^[a-z0-9][a-z0-9._-]{1,30}$/;
+
+function toSyntheticEmail(username: string) {
+  return `${username.trim().toLowerCase()}@family.local`;
+}
+
 function AuthPage() {
   const { mode } = Route.useSearch();
   const navigate = useNavigate();
   const [isSignup, setIsSignup] = useState(mode === "signup");
-  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => setIsSignup(mode === "signup"), [mode]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    const uname = username.trim().toLowerCase();
+    if (!USERNAME_RE.test(uname)) {
+      toast.error("Username must be 2–31 chars, letters/numbers/._- only.");
+      return;
+    }
+    if (password.length < 6) {
+      toast.error("Password needs at least 6 characters.");
+      return;
+    }
+
     setBusy(true);
     try {
+      const email = toSyntheticEmail(uname);
       if (isSignup) {
         const { error } = await supabase.auth.signUp({
           email,
           password,
           options: {
+            // Auto-confirm is on server-side, so no email is ever sent.
             emailRedirectTo: window.location.origin,
-            data: { display_name: name || email.split("@")[0] },
+            data: { display_name: uname, username: uname },
           },
         });
         if (error) throw error;
-        toast.success("Welcome! Check your email to confirm your account.");
+        // If the session didn't hydrate from signUp, sign in explicitly.
+        const { data: sess } = await supabase.auth.getSession();
+        if (!sess.session) {
+          const { error: signInErr } = await supabase.auth.signInWithPassword({ email, password });
+          if (signInErr) throw signInErr;
+        }
+        toast.success(`Welcome, ${uname}!`);
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw error;
+        if (error) {
+          if (/invalid/i.test(error.message)) throw new Error("Wrong username or password.");
+          throw error;
+        }
       }
       navigate({ to: "/dashboard" });
     } catch (err) {
@@ -52,20 +81,6 @@ function AuthPage() {
     } finally {
       setBusy(false);
     }
-  }
-
-  async function google() {
-    setBusy(true);
-    const result = await lovable.auth.signInWithOAuth("google", {
-      redirect_uri: window.location.origin,
-    });
-    if (result.error) {
-      toast.error(result.error.message ?? "Sign-in failed");
-      setBusy(false);
-      return;
-    }
-    if (result.redirected) return;
-    navigate({ to: "/dashboard" });
   }
 
   return (
@@ -83,56 +98,39 @@ function AuthPage() {
             {isSignup ? "Create your hub" : "Welcome back"}
           </h1>
           <p className="mt-1 text-center text-sm text-muted-foreground">
-            {isSignup ? "Set up your family in under a minute." : "Sign in to your family hub."}
+            {isSignup
+              ? "Pick a username and password — no email needed."
+              : "Sign in with your family username."}
           </p>
 
-          <button
-            type="button"
-            onClick={google}
-            disabled={busy}
-            className="mt-6 w-full rounded-xl border border-border bg-panel py-2.5 text-sm font-semibold hover:bg-muted disabled:opacity-50 flex items-center justify-center gap-2"
-          >
-            <svg viewBox="0 0 24 24" className="size-4" aria-hidden>
-              <path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.5-.2-2.3H12v4.3h6.5c-.3 1.5-1.1 2.7-2.4 3.6v3h3.8c2.3-2.1 3.6-5.2 3.6-8.6z"/>
-              <path fill="#34A853" d="M12 24c3.2 0 6-1.1 7.9-2.9l-3.8-3c-1.1.7-2.5 1.1-4.1 1.1-3.2 0-5.8-2.1-6.8-5H1.3v3.1C3.2 21.3 7.3 24 12 24z"/>
-              <path fill="#FBBC05" d="M5.2 14.3c-.2-.7-.4-1.5-.4-2.3s.1-1.6.4-2.3V6.6H1.3C.5 8.2 0 10.1 0 12s.5 3.8 1.3 5.4l3.9-3.1z"/>
-              <path fill="#EA4335" d="M12 4.8c1.8 0 3.4.6 4.6 1.8l3.4-3.4C18 1.2 15.2 0 12 0 7.3 0 3.2 2.7 1.3 6.6l3.9 3.1C6.2 6.9 8.8 4.8 12 4.8z"/>
-            </svg>
-            Continue with Google
-          </button>
-
-          <div className="my-5 flex items-center gap-3 text-[10px] uppercase tracking-widest text-muted-foreground">
-            <div className="h-px flex-1 bg-border" />
-            or email
-            <div className="h-px flex-1 bg-border" />
-          </div>
-
-          <form onSubmit={submit} className="space-y-3">
-            {isSignup && (
+          <form onSubmit={submit} className="mt-6 space-y-3">
+            <label className="block">
+              <span className="mb-1 block text-xs font-semibold text-muted-foreground">Username</span>
               <input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Your name"
+                autoFocus
+                autoComplete="username"
+                autoCapitalize="none"
+                spellCheck={false}
+                required
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="e.g. mum, dad, olivia"
                 className="w-full rounded-xl border border-border bg-panel px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring"
               />
-            )}
-            <input
-              type="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@family.com"
-              className="w-full rounded-xl border border-border bg-panel px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring"
-            />
-            <input
-              type="password"
-              required
-              minLength={6}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Password (min 6 chars)"
-              className="w-full rounded-xl border border-border bg-panel px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring"
-            />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs font-semibold text-muted-foreground">Password</span>
+              <input
+                type="password"
+                autoComplete={isSignup ? "new-password" : "current-password"}
+                required
+                minLength={6}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="At least 6 characters"
+                className="w-full rounded-xl border border-border bg-panel px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring"
+              />
+            </label>
             <button
               type="submit"
               disabled={busy}
@@ -153,6 +151,10 @@ function AuthPage() {
             </button>
           </p>
         </div>
+
+        <p className="mt-6 text-center text-[11px] text-muted-foreground">
+          Usernames stay on your family hub. No email is ever sent.
+        </p>
       </div>
     </main>
   );
