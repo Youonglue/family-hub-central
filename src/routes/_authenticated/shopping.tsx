@@ -9,7 +9,7 @@ import {
   deleteShopping,
   listShopping,
   toggleShopping,
-} from "@/lib/hub.functions";
+} from "@/lib/hub-api";
 import { Check, Plus, Trash2, Eraser } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/shopping")({

@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { AppShell, kidStyle } from "@/components/AppShell";
-import { listPoints, upcomingEvents, listChores, listShopping, listMealPlan } from "@/lib/hub.functions";
+import { listPoints, upcomingEvents, listChores, listShopping, listMealPlan } from "@/lib/hub-api";
 import { Trophy, ShoppingCart, ChefHat, Calendar, ArrowRight, Sparkles } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
