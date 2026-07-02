@@ -1,74 +1,76 @@
-## Family Hub Dashboard — Build Plan
+## What you're getting
 
-An open-source, self-hostable family dashboard with calendar sync, gamified chores, shopping list, meal planner, and Home Assistant integration.
+A **single box** on your home network (Raspberry Pi, old laptop, NAS, mini-PC — anything running Docker) that hosts the Family Hub. Every phone, tablet, and fridge screen on your Wi-Fi opens `http://familyhub.local` and sees the same live data. Zero traffic leaves your house. No accounts to create, no cloud bills, no outages when the internet drops.
 
-### Tech stack
+## How it will run at home
 
-- **Frontend**: TanStack Start (React 19 + Vite 7) — already scaffolded here
-- **Backend**: TanStack server functions + server routes (`/api/*`)
-- **Database + Auth + Realtime + Push**: Lovable Cloud (Supabase under the hood — Postgres, RLS, Realtime, Web Push via edge)
-- **Calendar sync**: CalDAV/ICS ingest + Google Calendar (per-user OAuth) with a cron-driven sync job
-- **Mobile push**: Web Push (VAPID) — installable PWA works on iOS/Android home screens
-- **Home Assistant**: Long-lived access token + REST/WebSocket bridge, plus a webhook endpoint HA can call
-- **GitHub**: connect via Lovable's GitHub integration (Plus menu → GitHub → Connect project) so the repo is created and kept in two-way sync automatically
+```text
+          ┌──────────────────────────────┐
+          │  Home Wi-Fi router           │
+          └──────────────┬───────────────┘
+                         │
+   ┌──────────┬──────────┼──────────┬──────────┐
+   │          │          │          │          │
+ phone     tablet     laptop     fridge    Home Assistant
+   │          │          │          │          │
+   └──────────┴────► http://familyhub.local ◄──┘
+                            │
+                ┌───────────┴────────────┐
+                │  Raspberry Pi / NAS    │
+                │  ┌──────────────────┐  │
+                │  │ familyhub Docker │  │
+                │  │  • Node API      │  │
+                │  │  • SQLite DB     │  │
+                │  │  • Static web    │  │
+                │  │  • WebSocket     │  │
+                │  └──────────────────┘  │
+                └────────────────────────┘
+```
 
-### Features
+Everything lives in **one Docker container**. One command to install, one folder to back up.
 
-1. **Calendar**
-  - Month/week/day views, per-family-member color coding
-  - Link external calendars (Google OAuth, ICS URL, CalDAV)
-  - Background sync every 15 min via cron-triggered `/api/public/cron/sync-calendars`
-  - Realtime updates pushed to all connected clients (Supabase Realtime)
-  - Web Push notifications for upcoming events on mobile
-2. **Chore list (gamified)**
-  - Kid profiles with avatars
-  - Chores with point values, recurrence, due dates
-  - Tap-to-complete with animations, sounds, confetti
-  - Points bank → redeem for parent-defined rewards (screen time, treats, outings)
-  - Leaderboard with weekly/monthly resets, badges, streaks
-3. **Shopping list**
-  - Shared, realtime, categorized by aisle
-  - Check-off syncs across devices
-  - "Add from meal plan" bulk import
-4. **Meal planner**
-  - Weekly grid, drag-and-drop recipes
-  - Recipe library with ingredients
-  - One-click "generate shopping list from this week's meals" (deduped, quantity-summed)
-5. **Home Assistant integration**
-  - Settings page to paste HA URL + long-lived token
-  - Pull entity states (weather, presence, lights) onto dashboard tiles
-  - Publish family events to HA (event bus) — e.g. "chore completed" → HA automation
-  - Optional: HA webhook receiver at `/api/public/ha/webhook` (HMAC-verified)
+## The offline switch
 
-### Data model (Postgres via Lovable Cloud)
+- **Real-time sync between devices** over your LAN using WebSockets — kid ticks a chore on their tablet, the fridge screen updates instantly, your phone gets the point bump.
+- **Optimistic local writes** with IndexedDB on each device, so if the Wi-Fi hiccups the app stays snappy and reconciles when it reconnects.
+- **Installable on every device** (Add to Home Screen) so it launches like a native app, full-screen, no browser bar.
+- **Zero external calls.** No Google Fonts, no analytics, no telemetry. Fonts and icons bundled in the container.
 
-`families`, `profiles` (with `family_id`, `role: parent|kid`, `avatar`, `color`),
-`user_roles` (separate table per security rules),
-`calendars` (source: google|ics|caldav|local, credentials encrypted),
-`events`, `chores`, `chore_completions`, `rewards`, `redemptions`, `points_ledger`,
-`shopping_items`, `recipes`, `recipe_ingredients`, `meal_plan_entries`,
-`ha_connections`, `push_subscriptions`.
-RLS scoped to `family_id` on every table.
+## Scope of this pivot
 
-### Build order (this first pass)
+Because you're moving from Lovable Cloud to a self-hosted box, this is a significant refactor — but it's what unlocks Home Assistant, full offline, and single-family privacy. Phases:
 
-1. Enable Lovable Cloud
-2. Design system + shell (dashboard grid, sidebar nav, kid/parent mode toggle)
-3. Auth (email + Google) + family onboarding
-4. Chores + points + leaderboard (highest interactivity, best first demo)
-5. Shopping list (realtime)
-6. Meal planner + "generate shopping list"
-7. Calendar (local first, then Google OAuth, then ICS/CalDAV, then cron sync)
-8. Web Push (PWA manifest + service worker + VAPID)
-9. Home Assistant panel
-10. GitHub connect + README + docker-compose for self-hosting
+### Phase A — New local backend
+1. Ship a `server/` directory: **Fastify** (Node) API + **better-sqlite3** for storage + **WebSocket** for live sync.
+2. Re-implement every existing server-function endpoint (family, chores, points, rewards, shopping, meals, recipes, calendar) against SQLite. Same shapes so the frontend barely changes.
+3. Optional PIN gate (one shared family PIN) instead of Google login — no accounts, no cloud auth.
 
-### What I need from you before starting
+### Phase B — Frontend rewire
+1. Replace the `@/lib/hub.functions.ts` server-fn calls with a small `apiClient` that talks to `/api/*` on the same origin.
+2. Add IndexedDB-backed offline queue (writes stored locally, flushed when server reachable).
+3. Subscribe to WebSocket for realtime updates — leaderboard, shopping ticks, chore completions.
+4. Add PWA manifest + service worker for install + full offline read.
+5. Rip out Google fonts CDN link; bundle Inter + Outfit via `@fontsource` locally.
 
-- **Design direction** — I'll propose 2–3 visual directions (playful kid-friendly vs. calm minimal vs. bold dark). Pick one.
-- **Google Calendar** — needs your own Google Cloud OAuth credentials (per-user OAuth, since each family member links their own calendar). I'll wire the flow; you paste client ID/secret when ready. OK to defer to phase 7?
-- **GitHub repo** — I can't create the repo directly, but after we build I'll walk you through the Plus (+) → GitHub → Connect project flow which creates it in one click and keeps it synced.
-- **Scope of first ship** — this is a big app. I 
-  recommend shipping phases 1–6 first (working dashboard with chores/shopping/meals/local calendar), then layering Google sync, push, and HA in follow-ups. Agree?
+### Phase C — Packaging & docs
+1. Multi-arch `Dockerfile` (works on Pi 4/5 arm64 and x86 NAS).
+2. `docker-compose.yml` with one volume for the SQLite file and one for uploads.
+3. Optional `avahi` / mDNS so it broadcasts as `familyhub.local` — no need to know its IP.
+4. `README.md`: 3-command install, backup/restore, updating.
+5. GitHub repo with CI that builds the container image on push.
 
-Reply with your direction preference and any scope tweaks and I'll start building.
+### Phase D — Home Assistant hook (bonus, later turn)
+- Long-lived HA token stored in the container's env — the Family Hub can push events to HA and read HA calendar/entities. Fully local, no cloud middleman.
+
+## Things worth flagging
+
+- **Lovable Cloud stays on this project** — it can't be disconnected. It'll act only as the dev preview while we build. The self-hosted container is what your family actually uses; it never talks to Lovable Cloud.
+- **The preview inside Lovable won't be truly offline** — it runs inside a browser tab pointed at the sandbox. The offline story only kicks in once you install the container at home. I'll call that out clearly in the README.
+- **Sign-in stays inside Lovable preview only** — the shipped container uses a family PIN (or no gate at all if you prefer). Say the word if you want per-member profiles instead of one shared family box.
+- **Calendar sync (Google/CalDAV) was in the original roadmap** — with fully-isolated mode we drop external calendars by default. If later you want *optional* pull-from-Google when a family member's phone has internet, we can add it as a per-device pull, not a server call.
+
+## First step
+
+I'll start with **Phase A** — spinning up the local Fastify + SQLite server and rewiring the existing pages to talk to it. That's the biggest chunk and unblocks everything else. Once it's green in preview, Phase B (offline + PWA + WebSocket) and Phase C (Docker + docs) follow.
+
+Say the word and I'll begin Phase A. If you'd rather I ship the whole thing in one push (bigger single review, longer wait), let me know and I'll batch it.

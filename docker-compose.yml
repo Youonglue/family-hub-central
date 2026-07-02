@@ -1,0 +1,17 @@
+services:
+  familyhub:
+    build: .
+    image: familyhub:latest
+    container_name: familyhub
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      # Uncomment to require a shared family PIN. Empty = no gate on your LAN.
+      # FAMILY_PIN: "1234"
+      TZ: ${TZ:-UTC}
+    volumes:
+      - familyhub-data:/data
+
+volumes:
+  familyhub-data:
