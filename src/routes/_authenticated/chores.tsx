@@ -151,7 +151,7 @@ function ChoresPage() {
                       <div className="flex-1">
                         <p className="font-semibold">{m.name}</p>
                         <p className="text-xs text-muted-foreground">
-                          {m.completions ?? 0} tasks · {m.redemptions ?? 0} rewards
+                          This week: {m.week_points ?? 0} pts
                         </p>
                       </div>
                       <div className="text-right">
