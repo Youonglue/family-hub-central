@@ -1,0 +1,11 @@
+node_modules
+dist
+electron-release
+.git
+.github
+.lovable
+.env
+.env.*
+*.log
+data
+server/node_modules
