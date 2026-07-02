@@ -14,16 +14,400 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      chore_completions: {
+        Row: {
+          chore_id: string
+          completed_at: string
+          id: string
+          member_id: string
+          owner_id: string
+          points_awarded: number
+        }
+        Insert: {
+          chore_id: string
+          completed_at?: string
+          id?: string
+          member_id: string
+          owner_id: string
+          points_awarded: number
+        }
+        Update: {
+          chore_id?: string
+          completed_at?: string
+          id?: string
+          member_id?: string
+          owner_id?: string
+          points_awarded?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chore_completions_chore_id_fkey"
+            columns: ["chore_id"]
+            isOneToOne: false
+            referencedRelation: "chores"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chore_completions_member_id_fkey"
+            columns: ["member_id"]
+            isOneToOne: false
+            referencedRelation: "family_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chore_completions_member_id_fkey"
+            columns: ["member_id"]
+            isOneToOne: false
+            referencedRelation: "member_points"
+            referencedColumns: ["member_id"]
+          },
+        ]
+      }
+      chores: {
+        Row: {
+          active: boolean
+          created_at: string
+          id: string
+          member_id: string | null
+          owner_id: string
+          points: number
+          recurrence: Database["public"]["Enums"]["chore_recurrence"]
+          title: string
+        }
+        Insert: {
+          active?: boolean
+          created_at?: string
+          id?: string
+          member_id?: string | null
+          owner_id: string
+          points?: number
+          recurrence?: Database["public"]["Enums"]["chore_recurrence"]
+          title: string
+        }
+        Update: {
+          active?: boolean
+          created_at?: string
+          id?: string
+          member_id?: string | null
+          owner_id?: string
+          points?: number
+          recurrence?: Database["public"]["Enums"]["chore_recurrence"]
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chores_member_id_fkey"
+            columns: ["member_id"]
+            isOneToOne: false
+            referencedRelation: "family_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chores_member_id_fkey"
+            columns: ["member_id"]
+            isOneToOne: false
+            referencedRelation: "member_points"
+            referencedColumns: ["member_id"]
+          },
+        ]
+      }
+      events: {
+        Row: {
+          color: string | null
+          created_at: string
+          ends_at: string | null
+          id: string
+          location: string | null
+          member_id: string | null
+          owner_id: string
+          starts_at: string
+          title: string
+        }
+        Insert: {
+          color?: string | null
+          created_at?: string
+          ends_at?: string | null
+          id?: string
+          location?: string | null
+          member_id?: string | null
+          owner_id: string
+          starts_at: string
+          title: string
+        }
+        Update: {
+          color?: string | null
+          created_at?: string
+          ends_at?: string | null
+          id?: string
+          location?: string | null
+          member_id?: string | null
+          owner_id?: string
+          starts_at?: string
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "events_member_id_fkey"
+            columns: ["member_id"]
+            isOneToOne: false
+            referencedRelation: "family_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "events_member_id_fkey"
+            columns: ["member_id"]
+            isOneToOne: false
+            referencedRelation: "member_points"
+            referencedColumns: ["member_id"]
+          },
+        ]
+      }
+      family_members: {
+        Row: {
+          avatar_color: string
+          created_at: string
+          id: string
+          is_kid: boolean
+          name: string
+          owner_id: string
+          sort_order: number
+        }
+        Insert: {
+          avatar_color?: string
+          created_at?: string
+          id?: string
+          is_kid?: boolean
+          name: string
+          owner_id: string
+          sort_order?: number
+        }
+        Update: {
+          avatar_color?: string
+          created_at?: string
+          id?: string
+          is_kid?: boolean
+          name?: string
+          owner_id?: string
+          sort_order?: number
+        }
+        Relationships: []
+      }
+      meal_plan: {
+        Row: {
+          created_at: string
+          custom_name: string | null
+          id: string
+          meal: Database["public"]["Enums"]["meal_type"]
+          owner_id: string
+          plan_date: string
+          recipe_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          custom_name?: string | null
+          id?: string
+          meal?: Database["public"]["Enums"]["meal_type"]
+          owner_id: string
+          plan_date: string
+          recipe_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          custom_name?: string | null
+          id?: string
+          meal?: Database["public"]["Enums"]["meal_type"]
+          owner_id?: string
+          plan_date?: string
+          recipe_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "meal_plan_recipe_id_fkey"
+            columns: ["recipe_id"]
+            isOneToOne: false
+            referencedRelation: "recipes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      recipes: {
+        Row: {
+          created_at: string
+          id: string
+          ingredients: Json
+          name: string
+          notes: string | null
+          owner_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          ingredients?: Json
+          name: string
+          notes?: string | null
+          owner_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          ingredients?: Json
+          name?: string
+          notes?: string | null
+          owner_id?: string
+        }
+        Relationships: []
+      }
+      redemptions: {
+        Row: {
+          id: string
+          member_id: string
+          owner_id: string
+          points_spent: number
+          redeemed_at: string
+          reward_id: string
+        }
+        Insert: {
+          id?: string
+          member_id: string
+          owner_id: string
+          points_spent: number
+          redeemed_at?: string
+          reward_id: string
+        }
+        Update: {
+          id?: string
+          member_id?: string
+          owner_id?: string
+          points_spent?: number
+          redeemed_at?: string
+          reward_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "redemptions_member_id_fkey"
+            columns: ["member_id"]
+            isOneToOne: false
+            referencedRelation: "family_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "redemptions_member_id_fkey"
+            columns: ["member_id"]
+            isOneToOne: false
+            referencedRelation: "member_points"
+            referencedColumns: ["member_id"]
+          },
+          {
+            foreignKeyName: "redemptions_reward_id_fkey"
+            columns: ["reward_id"]
+            isOneToOne: false
+            referencedRelation: "rewards"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      rewards: {
+        Row: {
+          active: boolean
+          cost_points: number
+          created_at: string
+          icon: string | null
+          id: string
+          owner_id: string
+          title: string
+        }
+        Insert: {
+          active?: boolean
+          cost_points?: number
+          created_at?: string
+          icon?: string | null
+          id?: string
+          owner_id: string
+          title: string
+        }
+        Update: {
+          active?: boolean
+          cost_points?: number
+          created_at?: string
+          icon?: string | null
+          id?: string
+          owner_id?: string
+          title?: string
+        }
+        Relationships: []
+      }
+      shopping_items: {
+        Row: {
+          category: string | null
+          checked: boolean
+          checked_at: string | null
+          created_at: string
+          id: string
+          name: string
+          owner_id: string
+          quantity: string | null
+        }
+        Insert: {
+          category?: string | null
+          checked?: boolean
+          checked_at?: string | null
+          created_at?: string
+          id?: string
+          name: string
+          owner_id: string
+          quantity?: string | null
+        }
+        Update: {
+          category?: string | null
+          checked?: boolean
+          checked_at?: string | null
+          created_at?: string
+          id?: string
+          name?: string
+          owner_id?: string
+          quantity?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
-      [_ in never]: never
+      member_points: {
+        Row: {
+          avatar_color: string | null
+          balance: number | null
+          is_kid: boolean | null
+          member_id: string | null
+          name: string | null
+          owner_id: string | null
+          week_points: number | null
+        }
+        Insert: {
+          avatar_color?: string | null
+          balance?: never
+          is_kid?: boolean | null
+          member_id?: string | null
+          name?: string | null
+          owner_id?: string | null
+          week_points?: never
+        }
+        Update: {
+          avatar_color?: string | null
+          balance?: never
+          is_kid?: boolean | null
+          member_id?: string | null
+          name?: string | null
+          owner_id?: string | null
+          week_points?: never
+        }
+        Relationships: []
+      }
     }
     Functions: {
       [_ in never]: never
     }
     Enums: {
-      [_ in never]: never
+      chore_recurrence: "daily" | "weekly" | "once"
+      meal_type: "breakfast" | "lunch" | "dinner"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +534,9 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      chore_recurrence: ["daily", "weekly", "once"],
+      meal_type: ["breakfast", "lunch", "dinner"],
+    },
   },
 } as const
