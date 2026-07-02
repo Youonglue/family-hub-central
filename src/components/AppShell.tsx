@@ -3,6 +3,7 @@ import { LayoutDashboard, Trophy, ShoppingCart, ChefHat, Calendar, Users, LogOut
 import type { ReactNode } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
+import { useLiveSync } from "@/hooks/useLiveSync";
 
 const nav = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -17,6 +18,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const qc = useQueryClient();
+  useLiveSync(); // push-to-every-device: any change on the backend fans out here
+
 
   async function signOut() {
     await qc.cancelQueries();
