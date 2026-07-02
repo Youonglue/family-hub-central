@@ -196,7 +196,7 @@ function MealsPage() {
                             });
                           }}
                           defaultValue=""
-              </Fragment>
+                        >
                           <option value="">＋ pick</option>
                           {(recipes.data ?? []).map((r) => (
                             <option key={r.id} value={r.id}>
@@ -208,7 +208,7 @@ function MealsPage() {
                     </div>
                   );
                 })}
-              </>
+              </Fragment>
             ))}
           </div>
         </section>
