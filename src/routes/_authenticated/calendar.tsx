@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
 import { AppShell, KID_COLORS, kidStyle } from "@/components/AppShell";
-import { addEvent, deleteEvent, listEvents, listMembers } from "@/lib/hub.functions";
+import { addEvent, deleteEvent, listEvents, listMembers } from "@/lib/hub-api";
 import { CalendarPlus, MapPin, Trash2 } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/calendar")({

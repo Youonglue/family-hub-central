@@ -15,7 +15,7 @@ import {
   listRewards,
   recentCompletions,
   redeemReward,
-} from "@/lib/hub.functions";
+} from "@/lib/hub-api";
 import { CheckCircle2, Gift, Plus, Sparkles, Trash2, Trophy } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/chores")({

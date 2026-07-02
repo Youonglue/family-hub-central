@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
 import { AppShell, KID_COLORS, kidStyle } from "@/components/AppShell";
-import { addMember, deleteMember, listMembers } from "@/lib/hub.functions";
+import { addMember, deleteMember, listMembers } from "@/lib/hub-api";
 import { Trash2, UserPlus } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/family")({

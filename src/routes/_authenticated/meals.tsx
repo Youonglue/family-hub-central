@@ -11,7 +11,7 @@ import {
   listRecipes,
   removeMealPlan,
   setMealPlan,
-} from "@/lib/hub.functions";
+} from "@/lib/hub-api";
 import { ChefHat, Plus, ShoppingBasket, Trash2, X } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/meals")({
