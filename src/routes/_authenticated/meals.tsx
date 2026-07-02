@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/AppShell";
 import {
@@ -160,7 +160,7 @@ function MealsPage() {
               </div>
             ))}
             {MEALS.map((m) => (
-              <>
+              <Fragment key={m}>
                 <div key={`label-${m}`} className="flex items-center font-mono text-[10px] uppercase tracking-widest text-muted-foreground capitalize">
                   {m}
                 </div>
@@ -196,7 +196,7 @@ function MealsPage() {
                             });
                           }}
                           defaultValue=""
-                        >
+              </Fragment>
                           <option value="">＋ pick</option>
                           {(recipes.data ?? []).map((r) => (
                             <option key={r.id} value={r.id}>
