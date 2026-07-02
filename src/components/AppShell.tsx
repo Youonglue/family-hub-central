@@ -4,6 +4,9 @@ import type { ReactNode } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLiveSync } from "@/hooks/useLiveSync";
+import { useLanLive } from "@/hooks/useLanLive";
+import { HUB_MODE } from "@/lib/hub-api";
+
 
 const nav = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -18,7 +21,13 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const qc = useQueryClient();
-  useLiveSync(); // push-to-every-device: any change on the backend fans out here
+  // Cross-device live sync. In the Lovable Cloud preview we ride Supabase
+  // realtime; in the offline LAN Docker build we use the Fastify /ws feed.
+  // Both hooks are safe no-ops in the other mode.
+  useLiveSync(); // cloud: postgres_changes on tables
+  useLanLive();  // selfhost: WebSocket topics
+  void HUB_MODE; // side-effect: pin the mode value so tree-shaking keeps it
+
 
 
   async function signOut() {
