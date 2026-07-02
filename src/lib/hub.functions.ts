@@ -200,7 +200,7 @@ export const redeemReward = createServerFn({ method: "POST" })
       .select("balance")
       .eq("member_id", data.member_id)
       .single();
-    if (!pts || pts.balance < reward.cost_points) throw new Error("Not enough points!");
+    if (!pts || (pts.balance ?? 0) < (reward.cost_points ?? 0)) throw new Error("Not enough points!");
     const { error } = await context.supabase.from("redemptions").insert({
       owner_id: context.userId,
       reward_id: data.reward_id,
