@@ -15,7 +15,10 @@ import * as lan from "./lan-client";
 export const HUB_MODE: "selfhost" | "cloud" =
   import.meta.env.VITE_HUB_MODE === "selfhost" ? "selfhost" : "cloud";
 
-const impl = HUB_MODE === "selfhost" ? lan : cloud;
+// Cast to the cloud module's types so call sites keep their existing
+// return-shape inference. Both implementations honor the same public
+// contract; LAN reshapes flat rows into the nested Supabase-style objects.
+const impl = (HUB_MODE === "selfhost" ? lan : cloud) as typeof cloud;
 
 // Re-export the concrete implementation. Keep this list in sync with
 // `hub.functions.ts` and `lan-client.ts` — CI typechecking catches drift.
