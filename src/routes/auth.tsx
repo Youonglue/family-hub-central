@@ -7,8 +7,8 @@ export const Route = createFileRoute("/auth")({
     mode: s.mode === "signup" ? ("signup" as const) : ("signin" as const),
   }),
   ssr: false,
-  beforeLoad: async () => {
-    // Supabase auth check removed for local-only hosting
+  beforeLoad: () => {
+    // Sync beforeLoad prevents router generator build errors
     return;
   },
   component: AuthPage,
@@ -29,35 +29,30 @@ function AuthPage() {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     const uname = username.trim().toLowerCase();
-    
-    // ... (Keep your validation logic here) ...
+
+    if (!USERNAME_RE.test(uname)) {
+      toast.error("Username must be 2–31 chars, letters/numbers/._- only.");
+      return;
+    }
+    if (password.length < 6) {
+      toast.error("Password needs at least 6 characters.");
+      return;
+    }
 
     setBusy(true);
     try {
-      // Create a fake session in local storage
+      // Simulation of auth for self-hosted mode
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
       const fakeSession = {
         user: { id: "local-user", email: `${uname}@family.local` },
       };
       localStorage.setItem("fake_session", JSON.stringify(fakeSession));
-      
+
       toast.success(`Welcome, ${uname}!`);
       navigate({ to: "/dashboard" });
     } catch (err) {
       toast.error("Error signing in.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-    setBusy(true);
-    try {
-      // MOCK AUTHENTICATION:
-      // Supabase calls removed. Simulating success to allow local access.
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      toast.success(`Welcome, ${uname}!`);
-      navigate({ to: "/dashboard" });
-    } catch (err) {
-      toast.error("Authentication currently disabled in local-only mode.");
     } finally {
       setBusy(false);
     }
