@@ -7,13 +7,6 @@ export const Route = createFileRoute("/auth")({
     mode: s.mode === "signup" ? ("signup" as const) : ("signin" as const),
   }),
   ssr: false,
-  beforeLoad: () => {
-    // Sync beforeLoad prevents router generator build errors
-    return;
-  },
-  component: AuthPage,
-});
-
 const USERNAME_RE = /^[a-z0-9][a-z0-9._-]{1,30}$/;
 
 function AuthPage() {
