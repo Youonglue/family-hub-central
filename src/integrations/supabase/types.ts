@@ -16,30 +16,53 @@ export type Database = {
     Tables: {
       chore_completions: {
         Row: {
+          approved_at: string | null
+          approved_by: string | null
           chore_id: string
           completed_at: string
           id: string
           member_id: string
           owner_id: string
           points_awarded: number
+          status: Database["public"]["Enums"]["chore_completion_status"]
         }
         Insert: {
+          approved_at?: string | null
+          approved_by?: string | null
           chore_id: string
           completed_at?: string
           id?: string
           member_id: string
           owner_id: string
           points_awarded: number
+          status?: Database["public"]["Enums"]["chore_completion_status"]
         }
         Update: {
+          approved_at?: string | null
+          approved_by?: string | null
           chore_id?: string
           completed_at?: string
           id?: string
           member_id?: string
           owner_id?: string
           points_awarded?: number
+          status?: Database["public"]["Enums"]["chore_completion_status"]
         }
         Relationships: [
+          {
+            foreignKeyName: "chore_completions_approved_by_fkey"
+            columns: ["approved_by"]
+            isOneToOne: false
+            referencedRelation: "family_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chore_completions_approved_by_fkey"
+            columns: ["approved_by"]
+            isOneToOne: false
+            referencedRelation: "member_points"
+            referencedColumns: ["member_id"]
+          },
           {
             foreignKeyName: "chore_completions_chore_id_fkey"
             columns: ["chore_id"]
@@ -168,6 +191,7 @@ export type Database = {
           created_at: string
           id: string
           is_kid: boolean
+          is_parent: boolean
           name: string
           owner_id: string
           sort_order: number
@@ -177,6 +201,7 @@ export type Database = {
           created_at?: string
           id?: string
           is_kid?: boolean
+          is_parent?: boolean
           name: string
           owner_id: string
           sort_order?: number
@@ -186,6 +211,7 @@ export type Database = {
           created_at?: string
           id?: string
           is_kid?: boolean
+          is_parent?: boolean
           name?: string
           owner_id?: string
           sort_order?: number
@@ -376,28 +402,11 @@ export type Database = {
           avatar_color: string | null
           balance: number | null
           is_kid: boolean | null
+          is_parent: boolean | null
           member_id: string | null
           name: string | null
           owner_id: string | null
           week_points: number | null
-        }
-        Insert: {
-          avatar_color?: string | null
-          balance?: never
-          is_kid?: boolean | null
-          member_id?: string | null
-          name?: string | null
-          owner_id?: string | null
-          week_points?: never
-        }
-        Update: {
-          avatar_color?: string | null
-          balance?: never
-          is_kid?: boolean | null
-          member_id?: string | null
-          name?: string | null
-          owner_id?: string | null
-          week_points?: never
         }
         Relationships: []
       }
@@ -406,6 +415,7 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
+      chore_completion_status: "pending" | "approved" | "rejected"
       chore_recurrence: "daily" | "weekly" | "once"
       meal_type: "breakfast" | "lunch" | "dinner"
     }
@@ -535,6 +545,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
+      chore_completion_status: ["pending", "approved", "rejected"],
       chore_recurrence: ["daily", "weekly", "once"],
       meal_type: ["breakfast", "lunch", "dinner"],
     },
