@@ -29,14 +29,25 @@ function AuthPage() {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     const uname = username.trim().toLowerCase();
-    if (!USERNAME_RE.test(uname)) {
-      toast.error("Username must be 2–31 chars, letters/numbers/._- only.");
-      return;
+    
+    // ... (Keep your validation logic here) ...
+
+    setBusy(true);
+    try {
+      // Create a fake session in local storage
+      const fakeSession = {
+        user: { id: "local-user", email: `${uname}@family.local` },
+      };
+      localStorage.setItem("fake_session", JSON.stringify(fakeSession));
+      
+      toast.success(`Welcome, ${uname}!`);
+      navigate({ to: "/dashboard" });
+    } catch (err) {
+      toast.error("Error signing in.");
+    } finally {
+      setBusy(false);
     }
-    if (password.length < 6) {
-      toast.error("Password needs at least 6 characters.");
-      return;
-    }
+  }
 
     setBusy(true);
     try {
