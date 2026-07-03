@@ -62,3 +62,6 @@ export const listEvents             = impl.listEvents;
 export const upcomingEvents         = impl.upcomingEvents;
 export const addEvent               = impl.addEvent;
 export const deleteEvent            = impl.deleteEvent;
+
+export const exportBackup           = impl.exportBackup;
+export const importBackup           = impl.importBackup;
