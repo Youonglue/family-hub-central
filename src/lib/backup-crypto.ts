@@ -56,9 +56,9 @@ export interface BackupBundle {
 }
 
 export async function encryptBundle(bundle: BackupBundle, passphrase: string): Promise<string> {
-  const salt = crypto.getRandomValues(new Uint8Array(SALT_LEN));
-  const iv = crypto.getRandomValues(new Uint8Array(IV_LEN));
-  const key = await deriveKey(passphrase, salt);
+  const salt = randomBytes(SALT_LEN);
+  const iv = randomBytes(IV_LEN);
+  const key = await deriveKey(passphrase, salt, ITERATIONS);
   const plaintext = enc.encode(JSON.stringify(bundle));
   const ct = new Uint8Array(
     await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, plaintext),
