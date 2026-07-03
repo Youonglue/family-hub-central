@@ -81,7 +81,7 @@ function ChoresPage() {
   });
   const complete = useMutation({
     mutationFn: (v: { chore_id: string; member_id: string }) => completeChore({ data: v }),
-    onSuccess: (res, v) => {
+    onSuccess: (_res, v) => {
       setPopId(v.chore_id);
       setTimeout(() => setPopId(null), 700);
       toast.success("Sent for approval ✅", { icon: "⏳" });
@@ -126,19 +126,77 @@ function ChoresPage() {
           <Trophy className="size-6 text-primary" />
         </header>
 
-        <div className="mb-6 inline-flex rounded-2xl border border-border bg-panel p-1">
-          {(["leaderboard", "chores", "rewards"] as const).map((t) => (
+        <div className="mb-6 inline-flex flex-wrap rounded-2xl border border-border bg-panel p-1">
+          {(["leaderboard", "chores", "approvals", "rewards"] as const).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
-              className={`rounded-xl px-4 py-2 text-sm font-semibold capitalize ${
+              className={`relative rounded-xl px-4 py-2 text-sm font-semibold capitalize ${
                 tab === t ? "bg-primary text-primary-foreground" : "text-muted-foreground"
               }`}
             >
               {t}
+              {t === "approvals" && (pending.data ?? []).length > 0 && (
+                <span className="ml-1.5 rounded-full bg-destructive px-1.5 py-0.5 text-[10px] font-bold text-destructive-foreground">
+                  {(pending.data ?? []).length}
+                </span>
+              )}
             </button>
           ))}
         </div>
+
+        {tab === "approvals" && (
+          <section className="rounded-3xl border border-border bg-panel p-6">
+            <h2 className="mb-1 font-display text-lg font-bold">Pending approvals</h2>
+            <p className="mb-4 text-xs text-muted-foreground">
+              Points are only awarded once a grown-up confirms the chore is done.
+            </p>
+            {(pending.data ?? []).length === 0 ? (
+              <p className="text-sm text-muted-foreground">Nothing waiting — all caught up! 🎉</p>
+            ) : (
+              <ul className="space-y-2">
+                {((pending.data ?? []) as Array<{
+                  id: string;
+                  points_awarded: number;
+                  completed_at: string;
+                  chores: { title: string } | null;
+                  family_members: { name: string; avatar_color: string } | null;
+                }>).map((p) => {
+                  const approver = memberList.find((m) => m.is_parent) ?? memberList[0];
+                  return (
+                    <li key={p.id} className="flex items-center gap-3 rounded-2xl bg-canvas p-3">
+                      <Clock className="size-4 text-muted-foreground" />
+                      <span className="grid size-9 place-items-center rounded-xl font-display text-sm font-bold"
+                        style={kidStyle(p.family_members?.avatar_color ?? "amber")}>
+                        {(p.family_members?.name ?? "?").charAt(0).toUpperCase()}
+                      </span>
+                      <div className="flex-1">
+                        <p className="text-sm font-semibold">{p.chores?.title ?? "Chore"}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {p.family_members?.name} · {new Date(p.completed_at).toLocaleString()} · +{p.points_awarded} pts
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => approver && approve.mutate({ id: p.id, approver_id: approver.id })}
+                        disabled={!approver}
+                        className="inline-flex items-center gap-1 rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50"
+                      >
+                        <CheckCircle2 className="size-3.5" /> Approve
+                      </button>
+                      <button
+                        onClick={() => approver && reject.mutate({ id: p.id, approver_id: approver.id })}
+                        disabled={!approver}
+                        className="inline-flex items-center gap-1 rounded-xl bg-panel px-3 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50"
+                      >
+                        <X className="size-3.5" /> Reject
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </section>
+        )}
 
         {tab === "leaderboard" && (
           <div className="grid gap-4 md:grid-cols-2">
