@@ -1,6 +1,5 @@
-import { createFileRoute, useNavigate, redirect, Link } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useState, useEffect } from "react";
-import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/auth")({
@@ -9,21 +8,13 @@ export const Route = createFileRoute("/auth")({
   }),
   ssr: false,
   beforeLoad: async () => {
-    const { data } = await supabase.auth.getSession();
-    if (data.session) throw redirect({ to: "/dashboard" });
+    // Supabase auth check removed for local-only hosting
+    return;
   },
   component: AuthPage,
 });
 
-// Family Hub uses username + password only. No email is ever sent — the
-// backend just needs *some* unique identifier per account, so we normalise
-// the username into a synthetic address (`<username>@family.local`). The
-// local part is what the user types; the domain is never shown or emailed.
 const USERNAME_RE = /^[a-z0-9][a-z0-9._-]{1,30}$/;
-
-function toSyntheticEmail(username: string) {
-  return `${username.trim().toLowerCase()}@family.local`;
-}
 
 function AuthPage() {
   const { mode } = Route.useSearch();
@@ -49,35 +40,13 @@ function AuthPage() {
 
     setBusy(true);
     try {
-      const email = toSyntheticEmail(uname);
-      if (isSignup) {
-        const { error } = await supabase.auth.signUp({
-          email,
-          password,
-          options: {
-            // Auto-confirm is on server-side, so no email is ever sent.
-            emailRedirectTo: window.location.origin,
-            data: { display_name: uname, username: uname },
-          },
-        });
-        if (error) throw error;
-        // If the session didn't hydrate from signUp, sign in explicitly.
-        const { data: sess } = await supabase.auth.getSession();
-        if (!sess.session) {
-          const { error: signInErr } = await supabase.auth.signInWithPassword({ email, password });
-          if (signInErr) throw signInErr;
-        }
-        toast.success(`Welcome, ${uname}!`);
-      } else {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) {
-          if (/invalid/i.test(error.message)) throw new Error("Wrong username or password.");
-          throw error;
-        }
-      }
+      // MOCK AUTHENTICATION:
+      // Supabase calls removed. Simulating success to allow local access.
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      toast.success(`Welcome, ${uname}!`);
       navigate({ to: "/dashboard" });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Something went wrong");
+      toast.error("Authentication currently disabled in local-only mode.");
     } finally {
       setBusy(false);
     }
@@ -151,10 +120,6 @@ function AuthPage() {
             </button>
           </p>
         </div>
-
-        <p className="mt-6 text-center text-[11px] text-muted-foreground">
-          Usernames stay on your family hub. No email is ever sent.
-        </p>
       </div>
     </main>
   );
