@@ -6,6 +6,7 @@ import { AppShell, kidStyle } from "@/components/AppShell";
 import {
   addChore,
   addReward,
+  approveCompletion,
   completeChore,
   deleteChore,
   deleteReward,
@@ -13,10 +14,12 @@ import {
   listMembers,
   listPoints,
   listRewards,
+  pendingApprovals,
   recentCompletions,
   redeemReward,
+  rejectCompletion,
 } from "@/lib/hub-api";
-import { CheckCircle2, Gift, Plus, Sparkles, Trash2, Trophy } from "lucide-react";
+import { CheckCircle2, Clock, Gift, Plus, Sparkles, Trash2, Trophy, X } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/chores")({
   ssr: false,
@@ -30,8 +33,9 @@ function ChoresPage() {
   const points = useQuery({ queryKey: ["points"], queryFn: () => listPoints() });
   const rewards = useQuery({ queryKey: ["rewards"], queryFn: () => listRewards() });
   const recent = useQuery({ queryKey: ["completions"], queryFn: () => recentCompletions() });
+  const pending = useQuery({ queryKey: ["pending-approvals"], queryFn: () => pendingApprovals() });
 
-  const [tab, setTab] = useState<"chores" | "leaderboard" | "rewards">("leaderboard");
+  const [tab, setTab] = useState<"chores" | "leaderboard" | "rewards" | "approvals">("leaderboard");
   const [choreTitle, setChoreTitle] = useState("");
   const [chorePoints, setChorePoints] = useState(10);
   const [choreMember, setChoreMember] = useState<string>("");
@@ -45,7 +49,19 @@ function ChoresPage() {
     qc.invalidateQueries({ queryKey: ["points"] });
     qc.invalidateQueries({ queryKey: ["completions"] });
     qc.invalidateQueries({ queryKey: ["rewards"] });
+    qc.invalidateQueries({ queryKey: ["pending-approvals"] });
   };
+
+  const approve = useMutation({
+    mutationFn: (v: { id: string; approver_id: string }) => approveCompletion({ data: v }),
+    onSuccess: () => { invalidateAll(); toast.success("Approved · points awarded 🎉"); },
+    onError: (e) => toast.error(e.message),
+  });
+  const reject = useMutation({
+    mutationFn: (v: { id: string; approver_id: string }) => rejectCompletion({ data: v }),
+    onSuccess: () => { invalidateAll(); toast.success("Rejected"); },
+    onError: (e) => toast.error(e.message),
+  });
 
   const addC = useMutation({
     mutationFn: (v: { title: string; points: number; member_id: string | null }) =>
@@ -68,7 +84,7 @@ function ChoresPage() {
     onSuccess: (res, v) => {
       setPopId(v.chore_id);
       setTimeout(() => setPopId(null), 700);
-      toast.success(`+${res.points} points!`, { icon: "🎉" });
+      toast.success("Sent for approval ✅", { icon: "⏳" });
       invalidateAll();
     },
     onError: (e) => toast.error(e.message),
