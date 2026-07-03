@@ -582,7 +582,8 @@ const BACKUP_TABLES = [
 export const exportBackup = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    const tables: Record<string, unknown[]> = {};
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const tables: Record<string, any[]> = {};
     for (const t of BACKUP_TABLES) {
       const { data, error } = await context.supabase.from(t).select("*");
       if (error) throw new Error(`${t}: ${error.message}`);
