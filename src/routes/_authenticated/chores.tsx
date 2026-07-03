@@ -155,7 +155,7 @@ function ChoresPage() {
               <p className="text-sm text-muted-foreground">Nothing waiting — all caught up! 🎉</p>
             ) : (
               <ul className="space-y-2">
-                {((pending.data ?? []) as Array<{
+                {((pending.data ?? []) as unknown as Array<{
                   id: string;
                   points_awarded: number;
                   completed_at: string;
