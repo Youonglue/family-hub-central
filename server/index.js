@@ -36,50 +36,49 @@ db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
 db.exec(readFileSync(join(__dirname, "schema.sql"), "utf8"));
 
+// Idempotent upgrades for pre-existing databases created before the approval
+// workflow. `ADD COLUMN IF NOT EXISTS` isn't in older SQLite, so we check first.
+function ensureColumn(table, col, ddl) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (!cols.find((c) => c.name === col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+}
+ensureColumn("family_members", "is_parent", "is_parent INTEGER NOT NULL DEFAULT 0");
+ensureColumn("chore_completions", "status", "status TEXT NOT NULL DEFAULT 'approved'");
+ensureColumn("chore_completions", "approved_by", "approved_by TEXT");
+ensureColumn("chore_completions", "approved_at", "approved_at TEXT");
+
 const now = () => new Date().toISOString();
 const uid = () => randomUUID();
 
 // -----------------------------------------------------------------------------
 // Fastify + WS
 // -----------------------------------------------------------------------------
-const app = Fastify({ logger: { level: "info" } });
+const app = Fastify({ logger: { level: "info" }, bodyLimit: 25 * 1024 * 1024 });
 await app.register(fastifyWebsocket);
 
-// Broadcast helper — every state-changing endpoint calls this so all connected
-// devices (phones, tablets, fridge) refresh in real time.
 const sockets = new Set();
 function broadcast(topic) {
   const msg = JSON.stringify({ topic, at: Date.now() });
-  for (const ws of sockets) {
-    try { ws.send(msg); } catch { /* client gone */ }
-  }
+  for (const ws of sockets) { try { ws.send(msg); } catch { /* client gone */ } }
+}
+function broadcastAll() {
+  for (const t of ["members", "points", "chores", "completions", "rewards", "shopping", "recipes", "meal-plan", "events"]) broadcast(t);
 }
 
 // -----------------------------------------------------------------------------
-// Auth (optional shared family PIN, cookie-based)
+// Auth (optional shared family PIN)
 // -----------------------------------------------------------------------------
-function hashPin(pin) {
-  return createHash("sha256").update(String(pin), "utf8").digest();
-}
+function hashPin(pin) { return createHash("sha256").update(String(pin), "utf8").digest(); }
 function pinMatches(input) {
   if (!FAMILY_PIN) return true;
-  const a = hashPin(input);
-  const b = hashPin(FAMILY_PIN);
+  const a = hashPin(input); const b = hashPin(FAMILY_PIN);
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
 app.addHook("onRequest", async (req, reply) => {
-  // Public routes: assets, health, WebSocket handshake, pin endpoints.
   const url = req.url;
-  if (
-    !FAMILY_PIN ||
-    url.startsWith("/api/health") ||
-    url.startsWith("/api/pin") ||
-    url.startsWith("/ws") ||
-    !url.startsWith("/api/")
-  ) {
-    return;
-  }
+  if (!FAMILY_PIN || url.startsWith("/api/health") || url.startsWith("/api/pin") ||
+      url.startsWith("/ws") || !url.startsWith("/api/")) return;
   const cookie = req.headers.cookie || "";
   const match = /(?:^|;\s*)fh_unlocked=([^;]+)/.exec(cookie);
   if (!match || !pinMatches(decodeURIComponent(match[1]))) {
@@ -87,22 +86,14 @@ app.addHook("onRequest", async (req, reply) => {
   }
 });
 
-// -----------------------------------------------------------------------------
-// Health + PIN
-// -----------------------------------------------------------------------------
-app.get("/api/health", async () => ({ ok: true, version: "1.0.0", pin_required: !!FAMILY_PIN }));
-
+app.get("/api/health", async () => ({ ok: true, version: "1.1.0", pin_required: !!FAMILY_PIN }));
 app.post("/api/pin", async (req, reply) => {
   const { pin } = (req.body || {});
   if (!FAMILY_PIN) return { ok: true };
   if (!pinMatches(pin)) return reply.code(401).send({ ok: false, error: "Wrong PIN" });
-  reply.header(
-    "set-cookie",
-    `fh_unlocked=${encodeURIComponent(pin)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${60 * 60 * 24 * 30}`,
-  );
+  reply.header("set-cookie", `fh_unlocked=${encodeURIComponent(pin)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${60*60*24*30}`);
   return { ok: true };
 });
-
 app.post("/api/pin/clear", async (_req, reply) => {
   reply.header("set-cookie", "fh_unlocked=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0");
   return { ok: true };
@@ -116,52 +107,60 @@ app.get("/api/members", async () =>
 );
 
 app.post("/api/members", async (req, reply) => {
-  const { name, avatar_color, is_kid } = req.body || {};
+  const { name, avatar_color, is_kid, is_parent } = req.body || {};
   if (!name || !avatar_color) return reply.code(400).send({ error: "name and avatar_color required" });
+  // First member becomes an approver automatically.
+  const existing = db.prepare("SELECT COUNT(*) AS n FROM family_members").get().n;
   const row = {
     id: uid(),
     name: String(name).slice(0, 60),
     avatar_color: String(avatar_color).slice(0, 20),
     is_kid: is_kid ? 1 : 0,
+    is_parent: is_parent ? 1 : (existing === 0 ? 1 : (is_kid ? 0 : 1)),
     sort_order: 0,
     created_at: now(),
   };
   db.prepare(
-    "INSERT INTO family_members (id,name,avatar_color,is_kid,sort_order,created_at) VALUES (@id,@name,@avatar_color,@is_kid,@sort_order,@created_at)",
+    "INSERT INTO family_members (id,name,avatar_color,is_kid,is_parent,sort_order,created_at) VALUES (@id,@name,@avatar_color,@is_kid,@is_parent,@sort_order,@created_at)",
   ).run(row);
   broadcast("members");
   return row;
 });
 
+app.patch("/api/members/:id", async (req, reply) => {
+  const { is_parent } = req.body || {};
+  if (is_parent === undefined) return reply.code(400).send({ error: "is_parent required" });
+  db.prepare("UPDATE family_members SET is_parent = ? WHERE id = ?").run(is_parent ? 1 : 0, req.params.id);
+  broadcast("members");
+  return { ok: true };
+});
+
 app.delete("/api/members/:id", async (req) => {
   db.prepare("DELETE FROM family_members WHERE id = ?").run(req.params.id);
-  broadcast("members");
-  broadcast("points");
+  broadcast("members"); broadcast("points");
   return { ok: true };
 });
 
 // -----------------------------------------------------------------------------
-// Points / leaderboard (view computed on the fly)
+// Points / leaderboard (only APPROVED completions count)
 // -----------------------------------------------------------------------------
 app.get("/api/points", async () =>
-  db
-    .prepare(
-      `SELECT m.id AS member_id, m.name, m.avatar_color, m.is_kid,
-              COALESCE(earned.pts, 0) - COALESCE(spent.pts, 0)  AS balance,
-              COALESCE(earned.week_pts, 0)                     AS week_points
-       FROM family_members m
-       LEFT JOIN (
-         SELECT member_id,
-                SUM(points_awarded) AS pts,
-                SUM(CASE WHEN completed_at >= datetime('now','-7 days') THEN points_awarded ELSE 0 END) AS week_pts
-         FROM chore_completions GROUP BY member_id
-       ) earned ON earned.member_id = m.id
-       LEFT JOIN (
-         SELECT member_id, SUM(points_spent) AS pts FROM redemptions GROUP BY member_id
-       ) spent ON spent.member_id = m.id
-       ORDER BY balance DESC`,
-    )
-    .all(),
+  db.prepare(
+    `SELECT m.id AS member_id, m.name, m.avatar_color, m.is_kid, m.is_parent,
+            COALESCE(earned.pts, 0) - COALESCE(spent.pts, 0)  AS balance,
+            COALESCE(earned.week_pts, 0)                     AS week_points
+     FROM family_members m
+     LEFT JOIN (
+       SELECT member_id,
+              SUM(points_awarded) AS pts,
+              SUM(CASE WHEN completed_at >= datetime('now','-7 days') THEN points_awarded ELSE 0 END) AS week_pts
+       FROM chore_completions WHERE status = 'approved' GROUP BY member_id
+     ) earned ON earned.member_id = m.id
+     LEFT JOIN (
+       SELECT member_id, SUM(points_spent) AS pts FROM redemptions GROUP BY member_id
+     ) spent ON spent.member_id = m.id
+     ORDER BY balance DESC`,
+  ).all(),
 );
 
 // -----------------------------------------------------------------------------
@@ -196,32 +195,69 @@ app.delete("/api/chores/:id", async (req) => {
   return { ok: true };
 });
 
+// Kid marks a chore done → PENDING, no points until a parent approves.
 app.post("/api/chores/:id/complete", async (req, reply) => {
   const { member_id } = req.body || {};
   if (!member_id) return reply.code(400).send({ error: "member_id required" });
   const chore = db.prepare("SELECT points FROM chores WHERE id = ?").get(req.params.id);
   if (!chore) return reply.code(404).send({ error: "chore not found" });
   db.prepare(
-    "INSERT INTO chore_completions (id,chore_id,member_id,points_awarded,completed_at) VALUES (?,?,?,?,?)",
-  ).run(uid(), req.params.id, member_id, chore.points, now());
-  broadcast("chores");
-  broadcast("points");
-  broadcast("completions");
-  return { ok: true, points: chore.points };
+    "INSERT INTO chore_completions (id,chore_id,member_id,points_awarded,status,completed_at) VALUES (?,?,?,?,?,?)",
+  ).run(uid(), req.params.id, member_id, chore.points, "pending", now());
+  broadcast("chores"); broadcast("completions"); broadcast("points");
+  return { ok: true, points: chore.points, status: "pending" };
+});
+
+// Approvals queue
+app.get("/api/completions/pending", async () =>
+  db.prepare(
+    `SELECT cc.id, cc.points_awarded, cc.completed_at, cc.status,
+            c.title AS chore_title,
+            m.name  AS member_name, m.avatar_color AS member_color
+     FROM chore_completions cc
+     JOIN chores c         ON c.id = cc.chore_id
+     JOIN family_members m ON m.id = cc.member_id
+     WHERE cc.status = 'pending'
+     ORDER BY cc.completed_at ASC`,
+  ).all(),
+);
+
+app.post("/api/completions/:id/approve", async (req, reply) => {
+  const { parent_id } = req.body || {};
+  if (!parent_id) return reply.code(400).send({ error: "parent_id required" });
+  const parent = db.prepare("SELECT is_parent FROM family_members WHERE id = ?").get(parent_id);
+  if (!parent || !parent.is_parent) return reply.code(403).send({ error: "Only approvers can approve." });
+  const r = db.prepare(
+    "UPDATE chore_completions SET status = 'approved', approved_by = ?, approved_at = ? WHERE id = ? AND status = 'pending'",
+  ).run(parent_id, now(), req.params.id);
+  if (r.changes === 0) return reply.code(404).send({ error: "Not pending" });
+  broadcast("completions"); broadcast("points"); broadcast("chores");
+  return { ok: true };
+});
+
+app.post("/api/completions/:id/reject", async (req, reply) => {
+  const { parent_id } = req.body || {};
+  if (!parent_id) return reply.code(400).send({ error: "parent_id required" });
+  const parent = db.prepare("SELECT is_parent FROM family_members WHERE id = ?").get(parent_id);
+  if (!parent || !parent.is_parent) return reply.code(403).send({ error: "Only approvers can reject." });
+  db.prepare(
+    "UPDATE chore_completions SET status = 'rejected', approved_by = ?, approved_at = ?, points_awarded = 0 WHERE id = ? AND status = 'pending'",
+  ).run(parent_id, now(), req.params.id);
+  broadcast("completions"); broadcast("points");
+  return { ok: true };
 });
 
 app.get("/api/completions/recent", async () =>
-  db
-    .prepare(
-      `SELECT cc.id, cc.points_awarded, cc.completed_at,
-              c.title AS chore_title,
-              m.name  AS member_name, m.avatar_color AS member_color
-       FROM chore_completions cc
-       JOIN chores c         ON c.id = cc.chore_id
-       JOIN family_members m ON m.id = cc.member_id
-       ORDER BY cc.completed_at DESC LIMIT 20`,
-    )
-    .all(),
+  db.prepare(
+    `SELECT cc.id, cc.points_awarded, cc.completed_at, cc.status,
+            c.title AS chore_title,
+            m.name  AS member_name, m.avatar_color AS member_color
+     FROM chore_completions cc
+     JOIN chores c         ON c.id = cc.chore_id
+     JOIN family_members m ON m.id = cc.member_id
+     WHERE cc.status = 'approved'
+     ORDER BY cc.completed_at DESC LIMIT 20`,
+  ).all(),
 );
 
 // -----------------------------------------------------------------------------
@@ -230,7 +266,6 @@ app.get("/api/completions/recent", async () =>
 app.get("/api/rewards", async () =>
   db.prepare("SELECT * FROM rewards WHERE active = 1 ORDER BY cost_points").all(),
 );
-
 app.post("/api/rewards", async (req, reply) => {
   const { title, cost_points } = req.body || {};
   if (!title || !cost_points) return reply.code(400).send({ error: "title and cost_points required" });
@@ -241,32 +276,25 @@ app.post("/api/rewards", async (req, reply) => {
   broadcast("rewards");
   return row;
 });
-
 app.delete("/api/rewards/:id", async (req) => {
   db.prepare("UPDATE rewards SET active = 0 WHERE id = ?").run(req.params.id);
   broadcast("rewards");
   return { ok: true };
 });
-
 app.post("/api/rewards/:id/redeem", async (req, reply) => {
   const { member_id } = req.body || {};
   if (!member_id) return reply.code(400).send({ error: "member_id required" });
   const reward = db.prepare("SELECT cost_points FROM rewards WHERE id = ?").get(req.params.id);
   if (!reward) return reply.code(404).send({ error: "reward not found" });
-  const bal = db
-    .prepare(
-      `SELECT COALESCE((SELECT SUM(points_awarded) FROM chore_completions WHERE member_id = ?),0)
-             - COALESCE((SELECT SUM(points_spent)     FROM redemptions       WHERE member_id = ?),0) AS balance`,
-    )
-    .get(member_id, member_id);
-  if ((bal?.balance ?? 0) < reward.cost_points) {
-    return reply.code(400).send({ error: "Not enough points" });
-  }
+  const bal = db.prepare(
+    `SELECT COALESCE((SELECT SUM(points_awarded) FROM chore_completions WHERE member_id = ? AND status = 'approved'),0)
+           - COALESCE((SELECT SUM(points_spent)     FROM redemptions       WHERE member_id = ?),0) AS balance`,
+  ).get(member_id, member_id);
+  if ((bal?.balance ?? 0) < reward.cost_points) return reply.code(400).send({ error: "Not enough points" });
   db.prepare(
     "INSERT INTO redemptions (id,reward_id,member_id,points_spent,redeemed_at) VALUES (?,?,?,?,?)",
   ).run(uid(), req.params.id, member_id, reward.cost_points, now());
-  broadcast("rewards");
-  broadcast("points");
+  broadcast("rewards"); broadcast("points");
   return { ok: true };
 });
 
@@ -276,18 +304,14 @@ app.post("/api/rewards/:id/redeem", async (req, reply) => {
 app.get("/api/shopping", async () =>
   db.prepare("SELECT * FROM shopping_items ORDER BY checked ASC, created_at DESC").all(),
 );
-
 app.post("/api/shopping", async (req, reply) => {
   const { name, quantity, category } = req.body || {};
   if (!name) return reply.code(400).send({ error: "name required" });
   const row = {
-    id: uid(),
-    name: String(name).slice(0, 120),
+    id: uid(), name: String(name).slice(0, 120),
     quantity: quantity ? String(quantity).slice(0, 60) : null,
     category: category ? String(category).slice(0, 40) : "general",
-    checked: 0,
-    checked_at: null,
-    created_at: now(),
+    checked: 0, checked_at: null, created_at: now(),
   };
   db.prepare(
     "INSERT INTO shopping_items (id,name,quantity,category,checked,checked_at,created_at) VALUES (@id,@name,@quantity,@category,@checked,@checked_at,@created_at)",
@@ -295,7 +319,6 @@ app.post("/api/shopping", async (req, reply) => {
   broadcast("shopping");
   return row;
 });
-
 app.patch("/api/shopping/:id", async (req) => {
   const { checked } = req.body || {};
   db.prepare("UPDATE shopping_items SET checked = ?, checked_at = ? WHERE id = ?")
@@ -303,13 +326,11 @@ app.patch("/api/shopping/:id", async (req) => {
   broadcast("shopping");
   return { ok: true };
 });
-
 app.delete("/api/shopping/:id", async (req) => {
   db.prepare("DELETE FROM shopping_items WHERE id = ?").run(req.params.id);
   broadcast("shopping");
   return { ok: true };
 });
-
 app.post("/api/shopping/clear-checked", async () => {
   db.prepare("DELETE FROM shopping_items WHERE checked = 1").run();
   broadcast("shopping");
@@ -320,18 +341,13 @@ app.post("/api/shopping/clear-checked", async () => {
 // Recipes + meal plan
 // -----------------------------------------------------------------------------
 app.get("/api/recipes", async () =>
-  db
-    .prepare("SELECT * FROM recipes ORDER BY name")
-    .all()
-    .map((r) => ({ ...r, ingredients: safeJson(r.ingredients, []) })),
+  db.prepare("SELECT * FROM recipes ORDER BY name").all().map((r) => ({ ...r, ingredients: safeJson(r.ingredients, []) })),
 );
-
 app.post("/api/recipes", async (req, reply) => {
   const { name, notes, ingredients } = req.body || {};
   if (!name) return reply.code(400).send({ error: "name required" });
   const row = {
-    id: uid(),
-    name: String(name).slice(0, 120),
+    id: uid(), name: String(name).slice(0, 120),
     notes: notes ? String(notes).slice(0, 2000) : null,
     ingredients: JSON.stringify(Array.isArray(ingredients) ? ingredients : []),
     created_at: now(),
@@ -342,60 +358,44 @@ app.post("/api/recipes", async (req, reply) => {
   broadcast("recipes");
   return { ...row, ingredients: safeJson(row.ingredients, []) };
 });
-
 app.delete("/api/recipes/:id", async (req) => {
   db.prepare("DELETE FROM recipes WHERE id = ?").run(req.params.id);
-  broadcast("recipes");
-  broadcast("meal-plan");
+  broadcast("recipes"); broadcast("meal-plan");
   return { ok: true };
 });
-
 app.get("/api/meal-plan", async (req) => {
   const { from, to } = req.query || {};
-  const rows = db
-    .prepare(
-      `SELECT mp.*, r.name AS recipe_name, r.ingredients AS recipe_ingredients
-       FROM meal_plan mp
-       LEFT JOIN recipes r ON r.id = mp.recipe_id
-       WHERE mp.plan_date BETWEEN ? AND ?
-       ORDER BY mp.plan_date`,
-    )
-    .all(from || "1900-01-01", to || "2999-12-31");
+  const rows = db.prepare(
+    `SELECT mp.*, r.name AS recipe_name, r.ingredients AS recipe_ingredients
+     FROM meal_plan mp LEFT JOIN recipes r ON r.id = mp.recipe_id
+     WHERE mp.plan_date BETWEEN ? AND ? ORDER BY mp.plan_date`,
+  ).all(from || "1900-01-01", to || "2999-12-31");
   return rows.map((r) => ({
     ...r,
-    recipes: r.recipe_name
-      ? { id: r.recipe_id, name: r.recipe_name, ingredients: safeJson(r.recipe_ingredients, []) }
-      : null,
+    recipes: r.recipe_name ? { id: r.recipe_id, name: r.recipe_name, ingredients: safeJson(r.recipe_ingredients, []) } : null,
   }));
 });
-
 app.post("/api/meal-plan", async (req, reply) => {
   const { plan_date, meal, recipe_id, custom_name } = req.body || {};
   if (!plan_date || !meal) return reply.code(400).send({ error: "plan_date and meal required" });
   db.prepare(
-    `INSERT INTO meal_plan (id,plan_date,meal,recipe_id,custom_name,created_at)
-     VALUES (?,?,?,?,?,?)
+    `INSERT INTO meal_plan (id,plan_date,meal,recipe_id,custom_name,created_at) VALUES (?,?,?,?,?,?)
      ON CONFLICT(plan_date, meal) DO UPDATE SET recipe_id = excluded.recipe_id, custom_name = excluded.custom_name`,
   ).run(uid(), plan_date, meal, recipe_id || null, custom_name || null, now());
   broadcast("meal-plan");
   return { ok: true };
 });
-
 app.delete("/api/meal-plan/:id", async (req) => {
   db.prepare("DELETE FROM meal_plan WHERE id = ?").run(req.params.id);
   broadcast("meal-plan");
   return { ok: true };
 });
-
 app.post("/api/meal-plan/build-shopping", async (req) => {
   const { from, to } = req.body || {};
-  const rows = db
-    .prepare(
-      `SELECT r.ingredients FROM meal_plan mp
-       JOIN recipes r ON r.id = mp.recipe_id
-       WHERE mp.plan_date BETWEEN ? AND ?`,
-    )
-    .all(from, to);
+  const rows = db.prepare(
+    `SELECT r.ingredients FROM meal_plan mp JOIN recipes r ON r.id = mp.recipe_id
+     WHERE mp.plan_date BETWEEN ? AND ?`,
+  ).all(from, to);
   const merged = new Map();
   for (const r of rows) {
     for (const ing of safeJson(r.ingredients, [])) {
@@ -405,21 +405,15 @@ app.post("/api/meal-plan/build-shopping", async (req) => {
       const existing = merged.get(key);
       if (existing) {
         if (ing.quantity && !existing.quantity.includes(ing.quantity)) {
-          existing.quantity = existing.quantity
-            ? `${existing.quantity} + ${ing.quantity}`
-            : String(ing.quantity);
+          existing.quantity = existing.quantity ? `${existing.quantity} + ${ing.quantity}` : String(ing.quantity);
         }
-      } else {
-        merged.set(key, { name: ing.name, quantity: ing.quantity || "" });
-      }
+      } else merged.set(key, { name: ing.name, quantity: ing.quantity || "" });
     }
   }
   const insert = db.prepare(
     "INSERT INTO shopping_items (id,name,quantity,category,checked,checked_at,created_at) VALUES (?,?,?,?,0,NULL,?)",
   );
-  const tx = db.transaction((items) => {
-    for (const it of items) insert.run(uid(), it.name, it.quantity || null, "meal-plan", now());
-  });
+  const tx = db.transaction((items) => { for (const it of items) insert.run(uid(), it.name, it.quantity || null, "meal-plan", now()); });
   const items = [...merged.values()];
   tx(items);
   broadcast("shopping");
@@ -427,41 +421,29 @@ app.post("/api/meal-plan/build-shopping", async (req) => {
 });
 
 // -----------------------------------------------------------------------------
-// Events (calendar)
+// Events
 // -----------------------------------------------------------------------------
 app.get("/api/events", async () =>
-  db
-    .prepare(
-      `SELECT e.*, m.name AS member_name, m.avatar_color AS member_color
-       FROM events e LEFT JOIN family_members m ON m.id = e.member_id
-       ORDER BY starts_at`,
-    )
-    .all(),
+  db.prepare(
+    `SELECT e.*, m.name AS member_name, m.avatar_color AS member_color
+     FROM events e LEFT JOIN family_members m ON m.id = e.member_id ORDER BY starts_at`,
+  ).all(),
 );
-
 app.get("/api/events/upcoming", async () =>
-  db
-    .prepare(
-      `SELECT e.*, m.name AS member_name, m.avatar_color AS member_color
-       FROM events e LEFT JOIN family_members m ON m.id = e.member_id
-       WHERE starts_at >= datetime('now')
-       ORDER BY starts_at LIMIT 6`,
-    )
-    .all(),
+  db.prepare(
+    `SELECT e.*, m.name AS member_name, m.avatar_color AS member_color
+     FROM events e LEFT JOIN family_members m ON m.id = e.member_id
+     WHERE starts_at >= datetime('now') ORDER BY starts_at LIMIT 6`,
+  ).all(),
 );
-
 app.post("/api/events", async (req, reply) => {
   const { title, starts_at, ends_at, location, member_id, color } = req.body || {};
   if (!title || !starts_at) return reply.code(400).send({ error: "title and starts_at required" });
   const row = {
-    id: uid(),
-    title: String(title).slice(0, 120),
-    starts_at,
+    id: uid(), title: String(title).slice(0, 120), starts_at,
     ends_at: ends_at || null,
     location: location ? String(location).slice(0, 120) : null,
-    member_id: member_id || null,
-    color: color || "sky",
-    created_at: now(),
+    member_id: member_id || null, color: color || "sky", created_at: now(),
   };
   db.prepare(
     "INSERT INTO events (id,title,starts_at,ends_at,location,member_id,color,created_at) VALUES (@id,@title,@starts_at,@ends_at,@location,@member_id,@color,@created_at)",
@@ -469,7 +451,6 @@ app.post("/api/events", async (req, reply) => {
   broadcast("events");
   return row;
 });
-
 app.delete("/api/events/:id", async (req) => {
   db.prepare("DELETE FROM events WHERE id = ?").run(req.params.id);
   broadcast("events");
@@ -477,7 +458,63 @@ app.delete("/api/events/:id", async (req) => {
 });
 
 // -----------------------------------------------------------------------------
-// WebSocket — clients subscribe and receive `{ topic }` messages on changes.
+// Backup export / import (encryption happens in the browser; server only sees
+// plaintext table rows over the private LAN. The exported .fhb file the user
+// downloads is encrypted client-side, so it's safe to move between devices.)
+// -----------------------------------------------------------------------------
+const BACKUP_TABLES = [
+  "family_members", "chores", "chore_completions", "rewards", "redemptions",
+  "shopping_items", "recipes", "meal_plan", "events",
+];
+
+app.get("/api/backup/export", async () => {
+  const tables = {};
+  for (const t of BACKUP_TABLES) tables[t] = db.prepare(`SELECT * FROM ${t}`).all();
+  return { version: 1, exported_at: now(), mode: "selfhost", tables };
+});
+
+app.post("/api/backup/import", async (req, reply) => {
+  const { bundle, mode } = req.body || {};
+  if (!bundle || !bundle.tables) return reply.code(400).send({ error: "bundle.tables required" });
+  const wipe = mode === "replace";
+  const tx = db.transaction(() => {
+    if (wipe) {
+      // Order matters for FK: dependents first
+      for (const t of ["chore_completions", "redemptions", "meal_plan", "events", "shopping_items", "chores", "rewards", "recipes", "family_members"]) {
+        db.prepare(`DELETE FROM ${t}`).run();
+      }
+    }
+    for (const t of BACKUP_TABLES) {
+      const rows = bundle.tables[t];
+      if (!Array.isArray(rows) || rows.length === 0) continue;
+      // Column intersect
+      const info = db.prepare(`PRAGMA table_info(${t})`).all();
+      const colNames = info.map((c) => c.name);
+      for (const row of rows) {
+        const cols = colNames.filter((c) => c in row);
+        if (cols.length === 0) continue;
+        const placeholders = cols.map(() => "?").join(",");
+        const values = cols.map((c) => {
+          const v = row[c];
+          if (v === null || v === undefined) return null;
+          if (typeof v === "object") return JSON.stringify(v);
+          if (typeof v === "boolean") return v ? 1 : 0;
+          return v;
+        });
+        const sql = wipe
+          ? `INSERT INTO ${t} (${cols.join(",")}) VALUES (${placeholders})`
+          : `INSERT OR IGNORE INTO ${t} (${cols.join(",")}) VALUES (${placeholders})`;
+        try { db.prepare(sql).run(...values); } catch (_e) { /* skip malformed rows */ }
+      }
+    }
+  });
+  tx();
+  broadcastAll();
+  return { ok: true };
+});
+
+// -----------------------------------------------------------------------------
+// WebSocket
 // -----------------------------------------------------------------------------
 app.register(async (instance) => {
   instance.get("/ws", { websocket: true }, (socket) => {
@@ -489,33 +526,24 @@ app.register(async (instance) => {
 });
 
 // -----------------------------------------------------------------------------
-// Static SPA + fallback (must be last)
+// Static SPA + fallback
 // -----------------------------------------------------------------------------
 import { existsSync } from "node:fs";
 if (existsSync(STATIC_DIR)) {
   await app.register(fastifyStatic, { root: STATIC_DIR, wildcard: false });
   app.setNotFoundHandler((req, reply) => {
-    if (req.url.startsWith("/api/") || req.url.startsWith("/ws")) {
-      return reply.code(404).send({ error: "Not found" });
-    }
+    if (req.url.startsWith("/api/") || req.url.startsWith("/ws")) return reply.code(404).send({ error: "Not found" });
     return reply.sendFile("index.html");
   });
 } else {
-  app.get("/", async () => ({
-    ok: true,
-    hint: "Static bundle not found. Build the frontend with `npm run build` first.",
-  }));
+  app.get("/", async () => ({ ok: true, hint: "Static bundle not found. Build the frontend with `npm run build` first." }));
 }
 
-// -----------------------------------------------------------------------------
-// Helpers
-// -----------------------------------------------------------------------------
 function safeJson(str, fallback) {
   if (!str) return fallback;
   try { return JSON.parse(str); } catch { return fallback; }
 }
 
-// -----------------------------------------------------------------------------
 await app.listen({ port: PORT, host: HOST });
 app.log.info(`Family Hub listening on http://${HOST}:${PORT}`);
 app.log.info(`Database: ${DB_PATH}`);

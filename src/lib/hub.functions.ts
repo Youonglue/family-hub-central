@@ -23,17 +23,42 @@ export const addMember = createServerFn({ method: "POST" })
         name: z.string().min(1).max(60),
         avatar_color: z.string().min(1).max(20),
         is_kid: z.boolean(),
+        is_parent: z.boolean().optional(),
       })
       .parse(d),
   )
   .handler(async ({ context, data }) => {
+    // First member becomes an approver by default so the family isn't locked out.
+    const { count } = await context.supabase
+      .from("family_members")
+      .select("id", { count: "exact", head: true })
+      .eq("owner_id", context.userId);
+    const autoParent = (count ?? 0) === 0 ? true : !data.is_kid;
     const { data: row, error } = await context.supabase
       .from("family_members")
-      .insert({ ...data, owner_id: context.userId })
+      .insert({
+        name: data.name,
+        avatar_color: data.avatar_color,
+        is_kid: data.is_kid,
+        is_parent: data.is_parent ?? autoParent,
+        owner_id: context.userId,
+      })
       .select()
       .single();
     if (error) throw new Error(error.message);
     return row;
+  });
+
+export const updateMemberRole = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => z.object({ id: z.string().uuid(), is_parent: z.boolean() }).parse(d))
+  .handler(async ({ context, data }) => {
+    const { error } = await context.supabase
+      .from("family_members")
+      .update({ is_parent: data.is_parent })
+      .eq("id", data.id);
+    if (error) throw new Error(error.message);
+    return { ok: true };
   });
 
 export const deleteMember = createServerFn({ method: "POST" })
@@ -107,6 +132,7 @@ export const deleteChore = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+// Kid taps Done → PENDING. Points award only after a parent approves.
 export const completeChore = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
@@ -124,9 +150,55 @@ export const completeChore = createServerFn({ method: "POST" })
       chore_id: data.chore_id,
       member_id: data.member_id,
       points_awarded: chore.points,
+      status: "pending",
     });
     if (error) throw new Error(error.message);
-    return { ok: true, points: chore.points };
+    return { ok: true, points: chore.points, status: "pending" as const };
+  });
+
+export const pendingApprovals = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { data, error } = await context.supabase
+      .from("chore_completions")
+      .select("id, points_awarded, completed_at, status, chore_id, member_id, chores(title), family_members(name, avatar_color)")
+      .eq("status", "pending")
+      .order("completed_at", { ascending: true });
+    if (error) throw new Error(error.message);
+    return data ?? [];
+  });
+
+async function assertIsParent(supabase: { from: (t: string) => { select: (s: string) => { eq: (c: string, v: string) => { single: () => Promise<{ data: { is_parent: boolean } | null; error: unknown }> } } } }, parent_id: string) {
+  const { data, error } = await supabase.from("family_members").select("is_parent").eq("id", parent_id).single();
+  if (error || !data?.is_parent) throw new Error("Only approvers can do that.");
+}
+
+export const approveCompletion = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => z.object({ id: z.string().uuid(), parent_id: z.string().uuid() }).parse(d))
+  .handler(async ({ context, data }) => {
+    await assertIsParent(context.supabase as never, data.parent_id);
+    const { error } = await context.supabase
+      .from("chore_completions")
+      .update({ status: "approved", approved_by: data.parent_id, approved_at: new Date().toISOString() })
+      .eq("id", data.id)
+      .eq("status", "pending");
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+export const rejectCompletion = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => z.object({ id: z.string().uuid(), parent_id: z.string().uuid() }).parse(d))
+  .handler(async ({ context, data }) => {
+    await assertIsParent(context.supabase as never, data.parent_id);
+    const { error } = await context.supabase
+      .from("chore_completions")
+      .update({ status: "rejected", approved_by: data.parent_id, approved_at: new Date().toISOString(), points_awarded: 0 })
+      .eq("id", data.id)
+      .eq("status", "pending");
+    if (error) throw new Error(error.message);
+    return { ok: true };
   });
 
 export const recentCompletions = createServerFn({ method: "GET" })
@@ -134,7 +206,8 @@ export const recentCompletions = createServerFn({ method: "GET" })
   .handler(async ({ context }) => {
     const { data, error } = await context.supabase
       .from("chore_completions")
-      .select("id, points_awarded, completed_at, chore_id, member_id, chores(title), family_members(name, avatar_color)")
+      .select("id, points_awarded, completed_at, status, chore_id, member_id, chores(title), family_members(name, avatar_color)")
+      .eq("status", "approved")
       .order("completed_at", { ascending: false })
       .limit(20);
     if (error) throw new Error(error.message);
@@ -157,12 +230,7 @@ export const listRewards = createServerFn({ method: "GET" })
 export const addReward = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
-    z
-      .object({
-        title: z.string().min(1).max(120),
-        cost_points: z.number().int().min(1).max(100000),
-      })
-      .parse(d),
+    z.object({ title: z.string().min(1).max(120), cost_points: z.number().int().min(1).max(100000) }).parse(d),
   )
   .handler(async ({ context, data }) => {
     const { data: row, error } = await context.supabase
@@ -407,7 +475,6 @@ export const generateShoppingFromMeals = createServerFn({ method: "POST" })
         items.push({ name: ing.name, quantity: ing.quantity ?? "" });
       }
     }
-    // Dedupe by lowercased name
     const map = new Map<string, { name: string; quantity: string }>();
     for (const it of items) {
       const key = it.name.trim().toLowerCase();
@@ -417,9 +484,7 @@ export const generateShoppingFromMeals = createServerFn({ method: "POST" })
         if (it.quantity && !existing.quantity.includes(it.quantity)) {
           existing.quantity = existing.quantity ? `${existing.quantity} + ${it.quantity}` : it.quantity;
         }
-      } else {
-        map.set(key, { ...it });
-      }
+      } else map.set(key, { ...it });
     }
     const merged = Array.from(map.values());
     if (merged.length === 0) return { added: 0 };
@@ -499,4 +564,73 @@ export const deleteEvent = createServerFn({ method: "POST" })
     const { error } = await context.supabase.from("events").delete().eq("id", data.id);
     if (error) throw new Error(error.message);
     return { ok: true };
+  });
+
+/* -------------------- BACKUP EXPORT / IMPORT -------------------- */
+const BACKUP_TABLES = [
+  "family_members",
+  "chores",
+  "chore_completions",
+  "rewards",
+  "redemptions",
+  "shopping_items",
+  "recipes",
+  "meal_plan",
+  "events",
+] as const;
+
+export const exportBackup = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const tables: Record<string, unknown[]> = {};
+    for (const t of BACKUP_TABLES) {
+      const { data, error } = await context.supabase.from(t).select("*");
+      if (error) throw new Error(`${t}: ${error.message}`);
+      tables[t] = data ?? [];
+    }
+    return { version: 1 as const, exported_at: new Date().toISOString(), mode: "cloud" as const, tables };
+  });
+
+export const importBackup = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        bundle: z.object({
+          version: z.literal(1),
+          tables: z.record(z.string(), z.array(z.record(z.string(), z.unknown()))),
+        }),
+        mode: z.enum(["merge", "replace"]).default("merge"),
+      })
+      .parse(d),
+  )
+  .handler(async ({ context, data }) => {
+    const owner_id = context.userId;
+    if (data.mode === "replace") {
+      // Delete in FK-safe order (dependents first).
+      for (const t of [
+        "chore_completions",
+        "redemptions",
+        "meal_plan",
+        "events",
+        "shopping_items",
+        "chores",
+        "rewards",
+        "recipes",
+        "family_members",
+      ] as const) {
+        await context.supabase.from(t).delete().eq("owner_id", owner_id);
+      }
+    }
+    let inserted = 0;
+    for (const t of BACKUP_TABLES) {
+      const rows = data.bundle.tables[t];
+      if (!Array.isArray(rows) || rows.length === 0) continue;
+      // Force owner_id to the current user so imports don't cross-tenant.
+      const stripped = rows.map((r) => ({ ...(r as object), owner_id }));
+      const { error } = await context.supabase.from(t).upsert(stripped as never, { onConflict: "id", ignoreDuplicates: data.mode === "merge" });
+      if (error) throw new Error(`${t}: ${error.message}`);
+      inserted += stripped.length;
+    }
+    return { ok: true, inserted };
   });
