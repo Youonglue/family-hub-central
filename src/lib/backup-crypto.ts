@@ -31,7 +31,7 @@ function randomBytes(len: number): Uint8Array<ArrayBuffer> {
   return buf;
 }
 
-async function deriveKey(passphrase: string, salt: Uint8Array): Promise<CryptoKey> {
+async function deriveKey(passphrase: string, salt: Uint8Array<ArrayBuffer>, iter: number): Promise<CryptoKey> {
   const material = await crypto.subtle.importKey(
     "raw",
     enc.encode(passphrase),
@@ -40,7 +40,7 @@ async function deriveKey(passphrase: string, salt: Uint8Array): Promise<CryptoKe
     ["deriveKey"],
   );
   return crypto.subtle.deriveKey(
-    { name: "PBKDF2", hash: "SHA-256", salt, iterations: ITERATIONS },
+    { name: "PBKDF2", hash: "SHA-256", salt, iterations: iter },
     material,
     { name: "AES-GCM", length: KEY_BITS },
     false,
