@@ -19,11 +19,16 @@ function b64encode(bytes: Uint8Array): string {
   for (const b of bytes) s += String.fromCharCode(b);
   return btoa(s);
 }
-function b64decode(s: string): Uint8Array {
+function b64decode(s: string): Uint8Array<ArrayBuffer> {
   const bin = atob(s);
-  const out = new Uint8Array(bin.length);
+  const out = new Uint8Array(new ArrayBuffer(bin.length));
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
+}
+function randomBytes(len: number): Uint8Array<ArrayBuffer> {
+  const buf = new Uint8Array(new ArrayBuffer(len));
+  crypto.getRandomValues(buf);
+  return buf;
 }
 
 async function deriveKey(passphrase: string, salt: Uint8Array): Promise<CryptoKey> {
