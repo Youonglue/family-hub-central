@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
-import { LayoutDashboard, Trophy, ShoppingCart, ChefHat, Calendar, Users, LogOut } from "lucide-react";
+import { LayoutDashboard, Trophy, ShoppingCart, ChefHat, Calendar, Users, Settings, LogOut } from "lucide-react";
 import type { ReactNode } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
@@ -15,6 +15,7 @@ const nav = [
   { to: "/meals", label: "Meals", icon: ChefHat },
   { to: "/calendar", label: "Calendar", icon: Calendar },
   { to: "/family", label: "Family", icon: Users },
+  { to: "/settings", label: "Settings", icon: Settings },
 ] as const;
 
 export function AppShell({ children }: { children: ReactNode }) {

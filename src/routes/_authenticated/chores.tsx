@@ -6,6 +6,7 @@ import { AppShell, kidStyle } from "@/components/AppShell";
 import {
   addChore,
   addReward,
+  approveCompletion,
   completeChore,
   deleteChore,
   deleteReward,
@@ -13,10 +14,12 @@ import {
   listMembers,
   listPoints,
   listRewards,
+  pendingApprovals,
   recentCompletions,
   redeemReward,
+  rejectCompletion,
 } from "@/lib/hub-api";
-import { CheckCircle2, Gift, Plus, Sparkles, Trash2, Trophy } from "lucide-react";
+import { CheckCircle2, Clock, Gift, Plus, Sparkles, Trash2, Trophy, X } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/chores")({
   ssr: false,
@@ -30,8 +33,9 @@ function ChoresPage() {
   const points = useQuery({ queryKey: ["points"], queryFn: () => listPoints() });
   const rewards = useQuery({ queryKey: ["rewards"], queryFn: () => listRewards() });
   const recent = useQuery({ queryKey: ["completions"], queryFn: () => recentCompletions() });
+  const pending = useQuery({ queryKey: ["pending-approvals"], queryFn: () => pendingApprovals() });
 
-  const [tab, setTab] = useState<"chores" | "leaderboard" | "rewards">("leaderboard");
+  const [tab, setTab] = useState<"chores" | "leaderboard" | "rewards" | "approvals">("leaderboard");
   const [choreTitle, setChoreTitle] = useState("");
   const [chorePoints, setChorePoints] = useState(10);
   const [choreMember, setChoreMember] = useState<string>("");
@@ -45,7 +49,19 @@ function ChoresPage() {
     qc.invalidateQueries({ queryKey: ["points"] });
     qc.invalidateQueries({ queryKey: ["completions"] });
     qc.invalidateQueries({ queryKey: ["rewards"] });
+    qc.invalidateQueries({ queryKey: ["pending-approvals"] });
   };
+
+  const approve = useMutation({
+    mutationFn: (v: { id: string; approver_id: string }) => approveCompletion({ data: v }),
+    onSuccess: () => { invalidateAll(); toast.success("Approved · points awarded 🎉"); },
+    onError: (e) => toast.error(e.message),
+  });
+  const reject = useMutation({
+    mutationFn: (v: { id: string; approver_id: string }) => rejectCompletion({ data: v }),
+    onSuccess: () => { invalidateAll(); toast.success("Rejected"); },
+    onError: (e) => toast.error(e.message),
+  });
 
   const addC = useMutation({
     mutationFn: (v: { title: string; points: number; member_id: string | null }) =>
@@ -65,10 +81,10 @@ function ChoresPage() {
   });
   const complete = useMutation({
     mutationFn: (v: { chore_id: string; member_id: string }) => completeChore({ data: v }),
-    onSuccess: (res, v) => {
+    onSuccess: (_res, v) => {
       setPopId(v.chore_id);
       setTimeout(() => setPopId(null), 700);
-      toast.success(`+${res.points} points!`, { icon: "🎉" });
+      toast.success("Sent for approval ✅", { icon: "⏳" });
       invalidateAll();
     },
     onError: (e) => toast.error(e.message),
@@ -110,19 +126,77 @@ function ChoresPage() {
           <Trophy className="size-6 text-primary" />
         </header>
 
-        <div className="mb-6 inline-flex rounded-2xl border border-border bg-panel p-1">
-          {(["leaderboard", "chores", "rewards"] as const).map((t) => (
+        <div className="mb-6 inline-flex flex-wrap rounded-2xl border border-border bg-panel p-1">
+          {(["leaderboard", "chores", "approvals", "rewards"] as const).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
-              className={`rounded-xl px-4 py-2 text-sm font-semibold capitalize ${
+              className={`relative rounded-xl px-4 py-2 text-sm font-semibold capitalize ${
                 tab === t ? "bg-primary text-primary-foreground" : "text-muted-foreground"
               }`}
             >
               {t}
+              {t === "approvals" && (pending.data ?? []).length > 0 && (
+                <span className="ml-1.5 rounded-full bg-destructive px-1.5 py-0.5 text-[10px] font-bold text-destructive-foreground">
+                  {(pending.data ?? []).length}
+                </span>
+              )}
             </button>
           ))}
         </div>
+
+        {tab === "approvals" && (
+          <section className="rounded-3xl border border-border bg-panel p-6">
+            <h2 className="mb-1 font-display text-lg font-bold">Pending approvals</h2>
+            <p className="mb-4 text-xs text-muted-foreground">
+              Points are only awarded once a grown-up confirms the chore is done.
+            </p>
+            {(pending.data ?? []).length === 0 ? (
+              <p className="text-sm text-muted-foreground">Nothing waiting — all caught up! 🎉</p>
+            ) : (
+              <ul className="space-y-2">
+                {((pending.data ?? []) as unknown as Array<{
+                  id: string;
+                  points_awarded: number;
+                  completed_at: string;
+                  chores: { title: string } | null;
+                  family_members: { name: string; avatar_color: string } | null;
+                }>).map((p) => {
+                  const approver = memberList.find((m) => m.is_parent) ?? memberList[0];
+                  return (
+                    <li key={p.id} className="flex items-center gap-3 rounded-2xl bg-canvas p-3">
+                      <Clock className="size-4 text-muted-foreground" />
+                      <span className="grid size-9 place-items-center rounded-xl font-display text-sm font-bold"
+                        style={kidStyle(p.family_members?.avatar_color ?? "amber")}>
+                        {(p.family_members?.name ?? "?").charAt(0).toUpperCase()}
+                      </span>
+                      <div className="flex-1">
+                        <p className="text-sm font-semibold">{p.chores?.title ?? "Chore"}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {p.family_members?.name} · {new Date(p.completed_at).toLocaleString()} · +{p.points_awarded} pts
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => approver && approve.mutate({ id: p.id, approver_id: approver.id })}
+                        disabled={!approver}
+                        className="inline-flex items-center gap-1 rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50"
+                      >
+                        <CheckCircle2 className="size-3.5" /> Approve
+                      </button>
+                      <button
+                        onClick={() => approver && reject.mutate({ id: p.id, approver_id: approver.id })}
+                        disabled={!approver}
+                        className="inline-flex items-center gap-1 rounded-xl bg-panel px-3 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50"
+                      >
+                        <X className="size-3.5" /> Reject
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </section>
+        )}
 
         {tab === "leaderboard" && (
           <div className="grid gap-4 md:grid-cols-2">

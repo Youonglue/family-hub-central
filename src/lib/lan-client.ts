@@ -1,13 +1,5 @@
 // LAN REST + WebSocket client for the self-hosted Family Hub server.
-// -----------------------------------------------------------------------------
-// This module MUST expose the same function names and shapes as
-// `hub.functions.ts` so route components can call it interchangeably. The
-// server (Fastify + SQLite) lives in ../../server and serves the SPA on the
-// same origin, so all calls are relative — no host, no CORS.
-//
-// Nested-shape reshaping matches the Supabase-style objects the routes read
-// (`family_members: { name, avatar_color }`, `chores: { title }`), so switching
-// data sources requires zero UI changes.
+// Same signatures as hub.functions.ts so route components are interchangeable.
 
 async function j<T>(res: Response): Promise<T> {
   if (res.status === 401) throw new Error("Locked. Enter the family PIN.");
@@ -37,15 +29,12 @@ const patch = <T>(path: string, body: unknown) =>
 const del   = <T>(path: string) =>
   fetch(path, { method: "DELETE", credentials: "same-origin" }).then((r) => j<T>(r));
 
-// -----------------------------------------------------------------------------
-// Reshapers — collapse LAN's flat rows into the nested shape the UI expects.
-// -----------------------------------------------------------------------------
+// Reshape flat SQLite rows into the nested shape route components expect.
 type Flat<T> = T & {
   member_name?: string | null;
   member_color?: string | null;
   chore_title?: string | null;
 };
-
 function withMember<T>(row: Flat<T>) {
   return {
     ...row,
@@ -56,43 +45,44 @@ function withMember<T>(row: Flat<T>) {
 }
 function withChoreAndMember<T>(row: Flat<T>) {
   const base = withMember(row);
-  return {
-    ...base,
-    chores: row.chore_title ? { title: row.chore_title } : null,
-  };
+  return { ...base, chores: row.chore_title ? { title: row.chore_title } : null };
 }
 
-// -----------------------------------------------------------------------------
 // FAMILY
-// -----------------------------------------------------------------------------
 export const listMembers   = () => get<any[]>("/api/members");
-export const addMember     = ({ data }: { data: { name: string; avatar_color: string; is_kid: boolean } }) =>
+export const addMember     = ({ data }: { data: { name: string; avatar_color: string; is_kid: boolean; is_parent?: boolean } }) =>
   post("/api/members", data);
+export const updateMemberRole = ({ data }: { data: { id: string; is_parent: boolean } }) =>
+  patch(`/api/members/${encodeURIComponent(data.id)}`, { is_parent: data.is_parent });
 export const deleteMember  = ({ data }: { data: { id: string } }) =>
   del(`/api/members/${encodeURIComponent(data.id)}`);
 
-// -----------------------------------------------------------------------------
-// POINTS / LEADERBOARD
-// -----------------------------------------------------------------------------
+// POINTS
 export const listPoints = () => get<any[]>("/api/points");
 
-// -----------------------------------------------------------------------------
 // CHORES
-// -----------------------------------------------------------------------------
 export const listChores  = () => get<any[]>("/api/chores");
 export const addChore    = ({ data }: { data: any }) => post("/api/chores", data);
 export const deleteChore = ({ data }: { data: { id: string } }) =>
   del(`/api/chores/${encodeURIComponent(data.id)}`);
 export const completeChore = ({ data }: { data: { chore_id: string; member_id: string } }) =>
   post(`/api/chores/${encodeURIComponent(data.chore_id)}/complete`, { member_id: data.member_id });
+
+export const pendingApprovals = async () => {
+  const rows = await get<any[]>("/api/completions/pending");
+  return rows.map(withChoreAndMember);
+};
+export const approveCompletion = ({ data }: { data: { id: string; parent_id: string } }) =>
+  post(`/api/completions/${encodeURIComponent(data.id)}/approve`, { parent_id: data.parent_id });
+export const rejectCompletion = ({ data }: { data: { id: string; parent_id: string } }) =>
+  post(`/api/completions/${encodeURIComponent(data.id)}/reject`, { parent_id: data.parent_id });
+
 export const recentCompletions = async () => {
   const rows = await get<any[]>("/api/completions/recent");
   return rows.map(withChoreAndMember);
 };
 
-// -----------------------------------------------------------------------------
 // REWARDS
-// -----------------------------------------------------------------------------
 export const listRewards   = () => get<any[]>("/api/rewards");
 export const addReward     = ({ data }: { data: any }) => post("/api/rewards", data);
 export const deleteReward  = ({ data }: { data: { id: string } }) =>
@@ -100,9 +90,7 @@ export const deleteReward  = ({ data }: { data: { id: string } }) =>
 export const redeemReward  = ({ data }: { data: { reward_id: string; member_id: string } }) =>
   post(`/api/rewards/${encodeURIComponent(data.reward_id)}/redeem`, { member_id: data.member_id });
 
-// -----------------------------------------------------------------------------
 // SHOPPING
-// -----------------------------------------------------------------------------
 export const listShopping         = () => get<any[]>("/api/shopping");
 export const addShopping          = ({ data }: { data: any }) => post("/api/shopping", data);
 export const toggleShopping       = ({ data }: { data: { id: string; checked: boolean } }) =>
@@ -111,9 +99,7 @@ export const deleteShopping       = ({ data }: { data: { id: string } }) =>
   del(`/api/shopping/${encodeURIComponent(data.id)}`);
 export const clearCheckedShopping = () => post("/api/shopping/clear-checked");
 
-// -----------------------------------------------------------------------------
 // RECIPES + MEAL PLAN
-// -----------------------------------------------------------------------------
 export const listRecipes  = () => get<any[]>("/api/recipes");
 export const addRecipe    = ({ data }: { data: any }) => post("/api/recipes", data);
 export const deleteRecipe = ({ data }: { data: { id: string } }) =>
@@ -127,9 +113,7 @@ export const removeMealPlan = ({ data }: { data: { id: string } }) =>
 export const generateShoppingFromMeals = ({ data }: { data: { from: string; to: string } }) =>
   post("/api/meal-plan/build-shopping", data);
 
-// -----------------------------------------------------------------------------
-// EVENTS (the "calendar auto-updates" pipeline)
-// -----------------------------------------------------------------------------
+// EVENTS
 export const listEvents = async () => {
   const rows = await get<any[]>("/api/events");
   return rows.map(withMember);
@@ -141,3 +125,8 @@ export const upcomingEvents = async () => {
 export const addEvent    = ({ data }: { data: any }) => post("/api/events", data);
 export const deleteEvent = ({ data }: { data: { id: string } }) =>
   del(`/api/events/${encodeURIComponent(data.id)}`);
+
+// BACKUP
+export const exportBackup = () => get<{ version: 1; exported_at: string; mode: string; tables: Record<string, unknown[]> }>("/api/backup/export");
+export const importBackup = ({ data }: { data: { bundle: { version: 1; tables: Record<string, unknown[]> }; mode: "merge" | "replace" } }) =>
+  post("/api/backup/import", data);

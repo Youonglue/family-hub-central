@@ -1,76 +1,70 @@
-## What you're getting
+## Three additions to Family Hub
 
-A **single box** on your home network (Raspberry Pi, old laptop, NAS, mini-PC — anything running Docker) that hosts the Family Hub. Every phone, tablet, and fridge screen on your Wi-Fi opens `http://familyhub.local` and sees the same live data. Zero traffic leaves your house. No accounts to create, no cloud bills, no outages when the internet drops.
+### 1. Parent-approved chore completions
 
-## How it will run at home
+Right now `completeChore` awards points instantly. Change to a two-step flow:
 
-```text
-          ┌──────────────────────────────┐
-          │  Home Wi-Fi router           │
-          └──────────────┬───────────────┘
-                         │
-   ┌──────────┬──────────┼──────────┬──────────┐
-   │          │          │          │          │
- phone     tablet     laptop     fridge    Home Assistant
-   │          │          │          │          │
-   └──────────┴────► http://familyhub.local ◄──┘
-                            │
-                ┌───────────┴────────────┐
-                │  Raspberry Pi / NAS    │
-                │  ┌──────────────────┐  │
-                │  │ familyhub Docker │  │
-                │  │  • Node API      │  │
-                │  │  • SQLite DB     │  │
-                │  │  • Static web    │  │
-                │  │  • WebSocket     │  │
-                │  └──────────────────┘  │
-                └────────────────────────┘
-```
+- **Kid taps "Done"** → creates a completion row with `status = 'pending'`, `points_awarded = 0`. No leaderboard change yet. UI shows a "Waiting for parent ✋" badge on the chore and in "Recent wins".
+- **Parent taps "Approve"** (or "Reject") → sets `status = 'approved'` and awards `points_awarded = chore.points`, or `status = 'rejected'` (no points). Leaderboard, balances, and "Recent wins" only count approved rows.
 
-Everything lives in **one Docker container**. One command to install, one folder to back up.
+Details:
+- Add a `role` column to `family_members` (`'parent' | 'kid'`, default `'kid'`). Family page gets a toggle. First member auto-becomes parent.
+- Add `status` + `approved_by` + `approved_at` columns to `chore_completions`. Existing rows migrate as `approved`.
+- New server functions (mirrored in cloud `hub.functions.ts` and LAN `lan-client.ts` + `server/index.js` + `server/schema.sql`): `pendingApprovals()`, `approveCompletion({id, parent_id})`, `rejectCompletion({id, parent_id})`. Update `completeChore` to insert pending. Update `listPoints` / `recentCompletions` to filter by `status='approved'`.
+- Chores page gets a new **"Approvals"** tab (visible when there's ≥1 pending) with Approve / Reject buttons — parent-only via a simple "acting as" picker at the top of the page (same pattern as the existing member picker; not real auth, it's a family device).
+- Realtime: both cloud `useLiveSync` and LAN `useLanLive` already invalidate on `chore_completions` changes, so approvals push to every device automatically.
 
-## The offline switch
+### 2. LAN Quick Start guide
 
-- **Real-time sync between devices** over your LAN using WebSockets — kid ticks a chore on their tablet, the fridge screen updates instantly, your phone gets the point bump.
-- **Optimistic local writes** with IndexedDB on each device, so if the Wi-Fi hiccups the app stays snappy and reconciles when it reconnects.
-- **Installable on every device** (Add to Home Screen) so it launches like a native app, full-screen, no browser bar.
-- **Zero external calls.** No Google Fonts, no analytics, no telemetry. Fonts and icons bundled in the container.
+Add `QUICKSTART.md` at repo root — a 5-minute path from zero to a working family hub on a Pi/NAS/old laptop. Sections:
 
-## Scope of this pivot
+1. **What you need** — any Linux box with Docker (Pi 4/5, Synology, Mac mini, old laptop), on the same Wi-Fi as your phones/tablets.
+2. **Install in one command** — `curl … | sh` style wrapper around `docker compose up -d` using the published image, plus the manual `git clone` path.
+3. **Find it on your network** — `http://familyhub.local:3000` (mDNS), fallback to `http://<box-ip>:3000`, and how to look up the IP on router / `ip a`.
+4. **Add it to phones/tablets** — "Add to Home Screen" for iOS and Android so it feels like an app; enable the PWA badge.
+5. **Set a family PIN** — uncomment `FAMILY_PIN` in `docker-compose.yml`, restart.
+6. **Backups** — where SQLite lives (`familyhub-data` volume), one-line backup + restore commands.
+7. **Updating** — `docker compose pull && docker compose up -d`.
+8. **Troubleshooting** — port already in use, mDNS not resolving on Android (use IP), clock skew, container logs.
 
-Because you're moving from Lovable Cloud to a self-hosted box, this is a significant refactor — but it's what unlocks Home Assistant, full offline, and single-family privacy. Phases:
+Link it from `README.md` and `SELF_HOST.md` (SELF_HOST becomes the deep reference; QUICKSTART is the friendly on-ramp).
 
-### Phase A — New local backend
-1. Ship a `server/` directory: **Fastify** (Node) API + **better-sqlite3** for storage + **WebSocket** for live sync.
-2. Re-implement every existing server-function endpoint (family, chores, points, rewards, shopping, meals, recipes, calendar) against SQLite. Same shapes so the frontend barely changes.
-3. Optional PIN gate (one shared family PIN) instead of Google login — no accounts, no cloud auth.
+### 3. Secure import / export between devices
 
-### Phase B — Frontend rewire
-1. Replace the `@/lib/hub.functions.ts` server-fn calls with a small `apiClient` that talks to `/api/*` on the same origin.
-2. Add IndexedDB-backed offline queue (writes stored locally, flushed when server reachable).
-3. Subscribe to WebSocket for realtime updates — leaderboard, shopping ticks, chore completions.
-4. Add PWA manifest + service worker for install + full offline read.
-5. Rip out Google fonts CDN link; bundle Inter + Outfit via `@fontsource` locally.
+Goal: move data (family, chores, rewards, points, shopping, meals, recipes, calendar) between a Lovable Cloud instance and a LAN box, or between two LAN boxes, without exposing it in transit.
 
-### Phase C — Packaging & docs
-1. Multi-arch `Dockerfile` (works on Pi 4/5 arm64 and x86 NAS).
-2. `docker-compose.yml` with one volume for the SQLite file and one for uploads.
-3. Optional `avahi` / mDNS so it broadcasts as `familyhub.local` — no need to know its IP.
-4. `README.md`: 3-command install, backup/restore, updating.
-5. GitHub repo with CI that builds the container image on push.
+Approach — **encrypted JSON backup file**:
 
-### Phase D — Home Assistant hook (bonus, later turn)
-- Long-lived HA token stored in the container's env — the Family Hub can push events to HA and read HA calendar/entities. Fully local, no cloud middleman.
+- New **Settings** route `/settings` with an **Import / Export** card (accessible from the sidebar).
+- **Export**: server function `exportBackup()` returns a bundle `{ version, exported_at, tables: { family_members, chores, rewards, chore_completions, redemptions, shopping_items, recipes, meal_plan, events } }`. Client encrypts it with a **user-supplied passphrase** using WebCrypto AES-GCM with PBKDF2 (200k iterations, random salt, random IV). Downloads as `familyhub-backup-YYYY-MM-DD.fhb` (JSON envelope: `{v, kdf, salt, iv, ciphertext}`).
+- **Import**: user picks a `.fhb` file and enters the passphrase. Client decrypts, validates the schema version, then calls `importBackup({data, mode})` where mode is:
+  - **Merge** (default) — upsert by natural keys (member name, chore title+points, event start+title, etc.); skips duplicates.
+  - **Replace** — wipes existing rows then inserts. Requires typing "REPLACE" to confirm.
+- Works in both modes: cloud implementation writes via Supabase with RLS; LAN implementation writes via Fastify to SQLite. Same bundle format on both sides, so a family can start on Lovable Cloud, export, and restore into their LAN box — or vice versa.
+- Passphrase is never sent to the server; encryption/decryption happens entirely in the browser. Bundle carries no plaintext PII.
+- Extra: a **"Copy backup to another device"** button that generates a short-lived (60s) one-time code shown as a QR — the receiving device on the same LAN scans the QR to pull the encrypted bundle over the WebSocket, still passphrase-locked. Cloud mode falls back to file download only.
 
-## Things worth flagging
+### Technical section
 
-- **Lovable Cloud stays on this project** — it can't be disconnected. It'll act only as the dev preview while we build. The self-hosted container is what your family actually uses; it never talks to Lovable Cloud.
-- **The preview inside Lovable won't be truly offline** — it runs inside a browser tab pointed at the sandbox. The offline story only kicks in once you install the container at home. I'll call that out clearly in the README.
-- **Sign-in stays inside Lovable preview only** — the shipped container uses a family PIN (or no gate at all if you prefer). Say the word if you want per-member profiles instead of one shared family box.
-- **Calendar sync (Google/CalDAV) was in the original roadmap** — with fully-isolated mode we drop external calendars by default. If later you want *optional* pull-from-Google when a family member's phone has internet, we can add it as a per-device pull, not a server call.
+- **Migration** (cloud only, applied first): adds `role` to `family_members`; `status`, `approved_by`, `approved_at` to `chore_completions`; backfills existing rows to `approved`; updates the leaderboard/points view to filter `status='approved'`.
+- **`server/schema.sql`** (LAN): mirrors the same column additions with `ALTER TABLE … ADD COLUMN IF NOT EXISTS` guards so existing SQLite files upgrade cleanly on container restart.
+- **Files touched**:
+  - `src/lib/hub.functions.ts`, `src/lib/lan-client.ts`, `src/lib/hub-api.ts` — new `pendingApprovals`, `approveCompletion`, `rejectCompletion`, `updateMemberRole`, `exportBackup`, `importBackup`.
+  - `server/index.js` — new `/api/completions/pending`, `/api/completions/:id/approve`, `/api/completions/:id/reject`, `/api/backup/export`, `/api/backup/import`, WS topic `approvals`.
+  - `src/routes/_authenticated/chores.tsx` — Approvals tab, pending badges.
+  - `src/routes/_authenticated/family.tsx` — role toggle.
+  - `src/routes/_authenticated/settings.tsx` (new) — Import / Export UI + WebCrypto helpers in `src/lib/backup-crypto.ts`.
+  - `src/components/AppShell.tsx` — Settings nav entry.
+  - `QUICKSTART.md` (new), `README.md`, `SELF_HOST.md` — link the quick start.
+- **Realtime**: extend `useLiveSync` / `useLanLive` to also invalidate on `family_members` (role changes) and after import (broadcast `bulk-refresh`).
 
-## First step
+### Order of work
 
-I'll start with **Phase A** — spinning up the local Fastify + SQLite server and rewiring the existing pages to talk to it. That's the biggest chunk and unblocks everything else. Once it's green in preview, Phase B (offline + PWA + WebSocket) and Phase C (Docker + docs) follow.
+1. Migration + schema.sql updates for approvals.
+2. Approval server functions + LAN endpoints + Approvals UI.
+3. Role toggle on Family page.
+4. Settings route + WebCrypto backup module + export/import server functions.
+5. QR-over-WS transfer (LAN only).
+6. `QUICKSTART.md` and README links.
 
-Say the word and I'll begin Phase A. If you'd rather I ship the whole thing in one push (bigger single review, longer wait), let me know and I'll batch it.
+Anything I should tweak before I build — e.g. auto-approve chores under a certain point value, per-parent approval instead of any-parent, or dropping the QR transfer to keep scope tight?

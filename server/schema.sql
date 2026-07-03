@@ -1,11 +1,12 @@
 -- Family Hub — local SQLite schema.
--- Runs at container start. Idempotent.
+-- Runs at container start. Idempotent. Safe on upgrade of existing databases.
 
 CREATE TABLE IF NOT EXISTS family_members (
   id           TEXT PRIMARY KEY,
   name         TEXT NOT NULL,
   avatar_color TEXT NOT NULL DEFAULT 'amber',
   is_kid       INTEGER NOT NULL DEFAULT 1,
+  is_parent    INTEGER NOT NULL DEFAULT 0,
   sort_order   INTEGER NOT NULL DEFAULT 0,
   created_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -25,6 +26,9 @@ CREATE TABLE IF NOT EXISTS chore_completions (
   chore_id       TEXT NOT NULL REFERENCES chores(id) ON DELETE CASCADE,
   member_id      TEXT NOT NULL REFERENCES family_members(id) ON DELETE CASCADE,
   points_awarded INTEGER NOT NULL,
+  status         TEXT NOT NULL DEFAULT 'approved' CHECK (status IN ('pending','approved','rejected')),
+  approved_by    TEXT REFERENCES family_members(id) ON DELETE SET NULL,
+  approved_at    TEXT,
   completed_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -85,6 +89,7 @@ CREATE TABLE IF NOT EXISTS events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_completions_member ON chore_completions(member_id);
+CREATE INDEX IF NOT EXISTS idx_completions_status ON chore_completions(status);
 CREATE INDEX IF NOT EXISTS idx_redemptions_member ON redemptions(member_id);
 CREATE INDEX IF NOT EXISTS idx_events_starts     ON events(starts_at);
 CREATE INDEX IF NOT EXISTS idx_meal_plan_date    ON meal_plan(plan_date);

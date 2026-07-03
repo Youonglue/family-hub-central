@@ -24,6 +24,7 @@ const impl = (HUB_MODE === "selfhost" ? lan : cloud) as typeof cloud;
 // `hub.functions.ts` and `lan-client.ts` — CI typechecking catches drift.
 export const listMembers            = impl.listMembers;
 export const addMember              = impl.addMember;
+export const updateMemberRole       = impl.updateMemberRole;
 export const deleteMember           = impl.deleteMember;
 
 export const listPoints             = impl.listPoints;
@@ -32,6 +33,9 @@ export const listChores             = impl.listChores;
 export const addChore               = impl.addChore;
 export const deleteChore            = impl.deleteChore;
 export const completeChore          = impl.completeChore;
+export const pendingApprovals       = impl.pendingApprovals;
+export const approveCompletion      = impl.approveCompletion;
+export const rejectCompletion       = impl.rejectCompletion;
 export const recentCompletions      = impl.recentCompletions;
 
 export const listRewards            = impl.listRewards;
@@ -58,3 +62,6 @@ export const listEvents             = impl.listEvents;
 export const upcomingEvents         = impl.upcomingEvents;
 export const addEvent               = impl.addEvent;
 export const deleteEvent            = impl.deleteEvent;
+
+export const exportBackup           = impl.exportBackup;
+export const importBackup           = impl.importBackup;
