@@ -6,10 +6,4 @@
 // You can pass additional config via defineConfig({ vite: { ... }, etc... }) if needed.
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 
-export default defineConfig({
-  tanstackStart: {
-    // SPA mode: prerender the root shell so the Node server (Fastify) can serve
-    // dist/client/index.html directly. No SSR needed for a home-LAN app.
-    spa: { enabled: true, maskPath: "/" },
-  },
-});
+export default defineConfig({});
