@@ -6,4 +6,8 @@
 // You can pass additional config via defineConfig({ vite: { ... }, etc... }) if needed.
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 
-export default defineConfig({});
+// Build a plain Node server bundle so the Fastify runtime can import it and
+// mount SSR alongside /api. No Cloudflare Worker in production.
+export default defineConfig({
+  nitro: { preset: "node-server" },
+});
