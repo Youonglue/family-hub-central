@@ -616,11 +616,49 @@ app.register(async (instance) => {
 // -----------------------------------------------------------------------------
 // Static SPA + SPA fallback
 // -----------------------------------------------------------------------------
+// The Vite build emits hashed assets into <STATIC_DIR>/assets/index-*.{js,css}
+// but no top-level index.html (TanStack Start does SSR by default). We generate
+// the SPA shell here so a home server only needs to run `npm run build` and
+// `npm start` — no separate SSR process, no Nitro output required.
+import { readdirSync } from "node:fs";
+function findEntryAssets() {
+  const assetsDir = join(STATIC_DIR, "assets");
+  if (!existsSync(assetsDir)) return { js: null, css: null };
+  const files = readdirSync(assetsDir);
+  const js = files.find((f) => /^index-.*\.js$/.test(f));
+  const css = files.find((f) => /^index-.*\.css$/.test(f));
+  return { js: js ? `/assets/${js}` : null, css: css ? `/assets/${css}` : null };
+}
+function renderIndexHtml() {
+  const { js, css } = findEntryAssets();
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Family Hub</title>
+  <meta name="description" content="Your family's private chores, shopping, meals and calendar hub." />
+  <meta name="theme-color" content="#0f172a" />
+  <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
+  <link rel="apple-touch-icon" href="/icon-192.png" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  ${css ? `<link rel="stylesheet" href="${css}" />` : ""}
+</head>
+<body>
+  <div id="root"></div>
+  ${js ? `<script type="module" src="${js}"></script>` : "<p style=\"padding:2rem;font-family:system-ui\">Build not found. Run <code>npm run build</code> and restart.</p>"}
+</body>
+</html>`;
+}
+
 if (existsSync(STATIC_DIR)) {
-  await app.register(fastifyStatic, { root: STATIC_DIR, wildcard: false });
+  await app.register(fastifyStatic, { root: STATIC_DIR, wildcard: false, index: false });
+  // Root and every non-asset, non-API path serves the SPA shell.
+  const sendShell = (_req, reply) => reply.type("text/html; charset=utf-8").send(renderIndexHtml());
+  app.get("/", sendShell);
   app.setNotFoundHandler((req, reply) => {
     if (req.url.startsWith("/api/") || req.url.startsWith("/ws")) return reply.code(404).send({ error: "Not found" });
-    return reply.sendFile("index.html");
+    return sendShell(req, reply);
   });
 } else {
   app.get("/", async () => ({ ok: true, hint: `Static bundle not found at ${STATIC_DIR}. Run \`npm run build\` first.` }));
