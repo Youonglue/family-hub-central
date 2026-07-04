@@ -8,9 +8,8 @@ import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 
 export default defineConfig({
   tanstackStart: {
-    // Ship as a plain SPA so the Node server (Fastify) can serve dist/client/index.html directly.
-    // No SSR is needed for a home-LAN app; auth/session lives in an HttpOnly cookie the browser reads.
+    // SPA mode: prerender the root shell so the Node server (Fastify) can serve
+    // dist/client/index.html directly. No SSR needed for a home-LAN app.
     spa: { enabled: true, maskPath: "/" },
-    server: { entry: "server" },
   },
 });
