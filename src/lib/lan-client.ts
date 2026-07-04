@@ -110,7 +110,7 @@ export const listMealPlan = ({ data }: { data: { from: string; to: string } }) =
 export const setMealPlan    = ({ data }: { data: any }) => post("/api/meal-plan", data);
 export const removeMealPlan = ({ data }: { data: { id: string } }) =>
   del(`/api/meal-plan/${encodeURIComponent(data.id)}`);
-export const generateShoppingFromMeals = ({ data }: { data: { from: string; to: string } }) =>
+export const generateShoppingFromMeals = ({ data }: { data: { from: string; to: string } }): Promise<{ added: number }> =>
   post("/api/meal-plan/build-shopping", data);
 
 // EVENTS
