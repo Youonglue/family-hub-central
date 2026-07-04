@@ -1,70 +1,67 @@
-## Three additions to Family Hub
+# Fully Local: Node + SQLite, No Supabase
 
-### 1. Parent-approved chore completions
+Goal: rip Supabase out of the runtime path so the app runs entirely on your home server. One process serves the built React app AND the API AND the WebSocket, and stores everything in a single SQLite file inside the project.
 
-Right now `completeChore` awards points instantly. Change to a two-step flow:
+## What changes
 
-- **Kid taps "Done"** → creates a completion row with `status = 'pending'`, `points_awarded = 0`. No leaderboard change yet. UI shows a "Waiting for parent ✋" badge on the chore and in "Recent wins".
-- **Parent taps "Approve"** (or "Reject") → sets `status = 'approved'` and awards `points_awarded = chore.points`, or `status = 'rejected'` (no points). Leaderboard, balances, and "Recent wins" only count approved rows.
+### 1. Backend — one Node process, SQLite on disk
+- Keep the existing `server/` folder (Fastify + `better-sqlite3` + `@fastify/websocket` are already wired for your LAN mode). Fastify is Express-compatible and already integrated — swapping to Express would be busywork with no user-visible benefit. I'll call it "the Node server" in the README so the terminology matches your request.
+- Add a `users` table + username/password auth (bcrypt hash, signed httpOnly session cookie). Endpoints: `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`. First user registered becomes the parent/admin; subsequent registrations require being signed in as a parent (prevents randos on your LAN creating accounts).
+- All existing `/api/*` routes stay; add a session-check hook so they require a logged-in user.
+- SQLite file path: `./data/familyhub.db` at the project root (created on first boot). Configurable via `DATA_DIR` env var; default resolves to `<project>/data` so it writes to your server's storage exactly where you expect.
+- Serve the built SPA (`dist/`) from the same Node server so it's one port, one process.
 
-Details:
-- Add a `role` column to `family_members` (`'parent' | 'kid'`, default `'kid'`). Family page gets a toggle. First member auto-becomes parent.
-- Add `status` + `approved_by` + `approved_at` columns to `chore_completions`. Existing rows migrate as `approved`.
-- New server functions (mirrored in cloud `hub.functions.ts` and LAN `lan-client.ts` + `server/index.js` + `server/schema.sql`): `pendingApprovals()`, `approveCompletion({id, parent_id})`, `rejectCompletion({id, parent_id})`. Update `completeChore` to insert pending. Update `listPoints` / `recentCompletions` to filter by `status='approved'`.
-- Chores page gets a new **"Approvals"** tab (visible when there's ≥1 pending) with Approve / Reject buttons — parent-only via a simple "acting as" picker at the top of the page (same pattern as the existing member picker; not real auth, it's a family device).
-- Realtime: both cloud `useLiveSync` and LAN `useLanLive` already invalidate on `chore_completions` changes, so approvals push to every device automatically.
+### 2. Frontend — remove Supabase entirely
+- Delete `src/integrations/supabase/` (client, client.server, auth-middleware, auth-attacher, types).
+- Delete `supabase/` migrations folder and `supabase/config.toml`.
+- Delete cloud-only code: `src/lib/hub.functions.ts`, `src/hooks/useLiveSync.ts`, the `HUB_MODE` switch, and the TanStack Start server-function plumbing that assumed Supabase (`src/start.ts` bearer attacher, `_authenticated/route.tsx` Supabase gate).
+- `src/lib/hub-api.ts` becomes a thin re-export of `lan-client.ts` (the LAN client is already the full API surface).
+- Auth page (`src/routes/auth.tsx`): real username/password form that hits `/api/auth/login` and `/api/auth/register`. Cookie-based session — no more `localStorage.fake_session`.
+- `_authenticated` gate: fetch `/api/auth/me`; redirect to `/auth` if 401.
+- Drop `@supabase/*`, `@supabase/ssr` from `package.json`.
 
-### 2. LAN Quick Start guide
+### 3. Build & run — Vite SPA + Node server
+- Switch `vite.config.ts` to a plain SPA build (no TanStack Start SSR, no Cloudflare Worker target). SSR was there for Supabase/Lovable Cloud; a local home server doesn't need it and it complicates the Node runtime.
+- `npm run build` → outputs `dist/`. Node server serves `dist/` in production.
+- Dev: two commands (`npm run dev` for Vite on 5173 with API proxy → 3000, `npm run server` for Node). Prod: one command (`npm start`).
 
-Add `QUICKSTART.md` at repo root — a 5-minute path from zero to a working family hub on a Pi/NAS/old laptop. Sections:
+### 4. README.md — exact commands
+Rewrite the README with:
+- Prerequisites (Node 20+)
+- `git clone` / `cd`
+- `npm install` (root) and `cd server && npm install`
+- `npm run build`
+- `npm start` (starts Node server on port 3000, serves SPA + API + WS)
+- How to open `http://<server-ip>:3000` from any device on your LAN
+- Where the DB file lives (`./data/familyhub.db`), how to back it up (just copy the file), how to reset (delete it)
+- Optional: `pm2` / `systemd` snippet to keep it running on boot
+- Dev mode section for making changes
 
-1. **What you need** — any Linux box with Docker (Pi 4/5, Synology, Mac mini, old laptop), on the same Wi-Fi as your phones/tablets.
-2. **Install in one command** — `curl … | sh` style wrapper around `docker compose up -d` using the published image, plus the manual `git clone` path.
-3. **Find it on your network** — `http://familyhub.local:3000` (mDNS), fallback to `http://<box-ip>:3000`, and how to look up the IP on router / `ip a`.
-4. **Add it to phones/tablets** — "Add to Home Screen" for iOS and Android so it feels like an app; enable the PWA badge.
-5. **Set a family PIN** — uncomment `FAMILY_PIN` in `docker-compose.yml`, restart.
-6. **Backups** — where SQLite lives (`familyhub-data` volume), one-line backup + restore commands.
-7. **Updating** — `docker compose pull && docker compose up -d`.
-8. **Troubleshooting** — port already in use, mDNS not resolving on Android (use IP), clock skew, container logs.
+## Technical section
 
-Link it from `README.md` and `SELF_HOST.md` (SELF_HOST becomes the deep reference; QUICKSTART is the friendly on-ramp).
+```text
+project/
+├── data/familyhub.db          ← SQLite, created on first run
+├── dist/                      ← Vite build output, served by Node
+├── server/
+│   ├── index.js               ← Fastify + WS + auth + static
+│   ├── schema.sql             ← + users table
+│   └── package.json
+├── src/                       ← React app, no Supabase imports
+└── README.md
+```
 
-### 3. Secure import / export between devices
+Auth flow: bcrypt(password) stored in `users.password_hash`. Login issues a random 32-byte session token, stored server-side in a `sessions` table with 30-day expiry, sent as `HttpOnly; SameSite=Lax` cookie. Every `/api/*` request (except `/api/auth/*`) checks the cookie.
 
-Goal: move data (family, chores, rewards, points, shopping, meals, recipes, calendar) between a Lovable Cloud instance and a LAN box, or between two LAN boxes, without exposing it in transit.
+Files touched:
+- **Create**: `server/auth.js`, updated `server/schema.sql`, new `README.md`.
+- **Modify**: `server/index.js`, `server/package.json` (add bcrypt), `src/routes/auth.tsx`, `src/routes/_authenticated/route.tsx`, `src/lib/hub-api.ts`, `src/lib/lan-client.ts` (add auth calls), `package.json`, `vite.config.ts`, `src/router.tsx`, `src/routes/__root.tsx`.
+- **Delete**: `src/integrations/supabase/`, `supabase/`, `src/lib/hub.functions.ts`, `src/hooks/useLiveSync.ts`, `Dockerfile`, `docker-compose.yml` (optional — say the word if you want to keep Docker as an alternative), `src/start.ts` if it becomes vestigial.
 
-Approach — **encrypted JSON backup file**:
+## Open questions before I build
 
-- New **Settings** route `/settings` with an **Import / Export** card (accessible from the sidebar).
-- **Export**: server function `exportBackup()` returns a bundle `{ version, exported_at, tables: { family_members, chores, rewards, chore_completions, redemptions, shopping_items, recipes, meal_plan, events } }`. Client encrypts it with a **user-supplied passphrase** using WebCrypto AES-GCM with PBKDF2 (200k iterations, random salt, random IV). Downloads as `familyhub-backup-YYYY-MM-DD.fhb` (JSON envelope: `{v, kdf, salt, iv, ciphertext}`).
-- **Import**: user picks a `.fhb` file and enters the passphrase. Client decrypts, validates the schema version, then calls `importBackup({data, mode})` where mode is:
-  - **Merge** (default) — upsert by natural keys (member name, chore title+points, event start+title, etc.); skips duplicates.
-  - **Replace** — wipes existing rows then inserts. Requires typing "REPLACE" to confirm.
-- Works in both modes: cloud implementation writes via Supabase with RLS; LAN implementation writes via Fastify to SQLite. Same bundle format on both sides, so a family can start on Lovable Cloud, export, and restore into their LAN box — or vice versa.
-- Passphrase is never sent to the server; encryption/decryption happens entirely in the browser. Bundle carries no plaintext PII.
-- Extra: a **"Copy backup to another device"** button that generates a short-lived (60s) one-time code shown as a QR — the receiving device on the same LAN scans the QR to pull the encrypted bundle over the WebSocket, still passphrase-locked. Cloud mode falls back to file download only.
+1. **First-user bootstrap**: is "first registration wins admin, then parents invite others" fine, or do you want a fixed admin username set via env var (e.g. `ADMIN_USERNAME=dad`) on first boot?
+2. **Keep Docker files?** You asked earlier for a Docker/LAN quickstart. I can keep `Dockerfile` + `docker-compose.yml` updated for the new stack, or delete them if you're running bare-metal Node only.
+3. **TanStack Start → plain Vite SPA**: this is the cleanest path for a local server. Confirm you're OK losing SSR (you don't need it for a home-LAN app — SEO/social previews are irrelevant).
 
-### Technical section
-
-- **Migration** (cloud only, applied first): adds `role` to `family_members`; `status`, `approved_by`, `approved_at` to `chore_completions`; backfills existing rows to `approved`; updates the leaderboard/points view to filter `status='approved'`.
-- **`server/schema.sql`** (LAN): mirrors the same column additions with `ALTER TABLE … ADD COLUMN IF NOT EXISTS` guards so existing SQLite files upgrade cleanly on container restart.
-- **Files touched**:
-  - `src/lib/hub.functions.ts`, `src/lib/lan-client.ts`, `src/lib/hub-api.ts` — new `pendingApprovals`, `approveCompletion`, `rejectCompletion`, `updateMemberRole`, `exportBackup`, `importBackup`.
-  - `server/index.js` — new `/api/completions/pending`, `/api/completions/:id/approve`, `/api/completions/:id/reject`, `/api/backup/export`, `/api/backup/import`, WS topic `approvals`.
-  - `src/routes/_authenticated/chores.tsx` — Approvals tab, pending badges.
-  - `src/routes/_authenticated/family.tsx` — role toggle.
-  - `src/routes/_authenticated/settings.tsx` (new) — Import / Export UI + WebCrypto helpers in `src/lib/backup-crypto.ts`.
-  - `src/components/AppShell.tsx` — Settings nav entry.
-  - `QUICKSTART.md` (new), `README.md`, `SELF_HOST.md` — link the quick start.
-- **Realtime**: extend `useLiveSync` / `useLanLive` to also invalidate on `family_members` (role changes) and after import (broadcast `bulk-refresh`).
-
-### Order of work
-
-1. Migration + schema.sql updates for approvals.
-2. Approval server functions + LAN endpoints + Approvals UI.
-3. Role toggle on Family page.
-4. Settings route + WebCrypto backup module + export/import server functions.
-5. QR-over-WS transfer (LAN only).
-6. `QUICKSTART.md` and README links.
-
-Anything I should tweak before I build — e.g. auto-approve chores under a certain point value, per-parent approval instead of any-parent, or dropping the QR transfer to keep scope tight?
+Say the word and I'll execute. If you want tweaks, tell me which.

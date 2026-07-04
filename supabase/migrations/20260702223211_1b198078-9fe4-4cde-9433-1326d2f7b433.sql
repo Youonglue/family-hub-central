@@ -1,1 +1,0 @@
-alter view public.member_points set (security_invoker = true);

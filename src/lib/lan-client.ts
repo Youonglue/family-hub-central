@@ -72,10 +72,10 @@ export const pendingApprovals = async () => {
   const rows = await get<any[]>("/api/completions/pending");
   return rows.map(withChoreAndMember);
 };
-export const approveCompletion = ({ data }: { data: { id: string; parent_id: string } }) =>
-  post(`/api/completions/${encodeURIComponent(data.id)}/approve`, { parent_id: data.parent_id });
-export const rejectCompletion = ({ data }: { data: { id: string; parent_id: string } }) =>
-  post(`/api/completions/${encodeURIComponent(data.id)}/reject`, { parent_id: data.parent_id });
+export const approveCompletion = ({ data }: { data: { id: string; approver_id: string } }) =>
+  post(`/api/completions/${encodeURIComponent(data.id)}/approve`, { approver_id: data.approver_id });
+export const rejectCompletion = ({ data }: { data: { id: string; approver_id: string } }) =>
+  post(`/api/completions/${encodeURIComponent(data.id)}/reject`, { approver_id: data.approver_id });
 
 export const recentCompletions = async () => {
   const rows = await get<any[]>("/api/completions/recent");
@@ -110,7 +110,7 @@ export const listMealPlan = ({ data }: { data: { from: string; to: string } }) =
 export const setMealPlan    = ({ data }: { data: any }) => post("/api/meal-plan", data);
 export const removeMealPlan = ({ data }: { data: { id: string } }) =>
   del(`/api/meal-plan/${encodeURIComponent(data.id)}`);
-export const generateShoppingFromMeals = ({ data }: { data: { from: string; to: string } }) =>
+export const generateShoppingFromMeals = ({ data }: { data: { from: string; to: string } }): Promise<{ added: number }> =>
   post("/api/meal-plan/build-shopping", data);
 
 // EVENTS

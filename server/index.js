@@ -1,17 +1,18 @@
-// Family Hub — self-hosted server
-// -----------------------------------------------------------------------------
-// Node 20+, Fastify, better-sqlite3, WebSocket broadcast for LAN real-time sync.
-// Serves the built SPA from ../dist and exposes /api/* endpoints.
-// Zero external calls: everything stays on your home network.
+// Family Hub — self-hosted Node server (Fastify + better-sqlite3 + WebSocket).
+// One process serves the SPA, the /api, and the /ws live-sync feed.
+// Everything stays on your LAN — no cloud, no Supabase.
+//
+// Storage:  <project>/data/familyhub.db  (override with DATA_DIR)
+// Static:   <project>/dist               (override with STATIC_DIR)
 
 import Fastify from "fastify";
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
 import Database from "better-sqlite3";
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdirSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
-import { randomUUID, timingSafeEqual, createHash } from "node:crypto";
+import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -22,22 +23,19 @@ const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "0.0.0.0";
 const DATA_DIR = process.env.DATA_DIR || resolve(__dirname, "..", "data");
 const DB_PATH = process.env.DB_PATH || join(DATA_DIR, "familyhub.db");
-const STATIC_DIR = process.env.STATIC_DIR || resolve(__dirname, "..", "dist");
-const FAMILY_PIN = process.env.FAMILY_PIN || ""; // empty = no gate
+const STATIC_DIR = process.env.STATIC_DIR || resolve(__dirname, "..", "dist", "client");
+const SESSION_TTL_DAYS = 30;
 
 // -----------------------------------------------------------------------------
 // Database
 // -----------------------------------------------------------------------------
-import { mkdirSync } from "node:fs";
 mkdirSync(DATA_DIR, { recursive: true });
-
 const db = new Database(DB_PATH);
 db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
 db.exec(readFileSync(join(__dirname, "schema.sql"), "utf8"));
 
-// Idempotent upgrades for pre-existing databases created before the approval
-// workflow. `ADD COLUMN IF NOT EXISTS` isn't in older SQLite, so we check first.
+// Idempotent column upgrades for older databases.
 function ensureColumn(table, col, ddl) {
   const cols = db.prepare(`PRAGMA table_info(${table})`).all();
   if (!cols.find((c) => c.name === col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
@@ -49,6 +47,59 @@ ensureColumn("chore_completions", "approved_at", "approved_at TEXT");
 
 const now = () => new Date().toISOString();
 const uid = () => randomUUID();
+
+// -----------------------------------------------------------------------------
+// Password hashing (scrypt from node:crypto — no native deps)
+// -----------------------------------------------------------------------------
+function hashPassword(password) {
+  const salt = randomBytes(16);
+  const key = scryptSync(String(password), salt, 64);
+  return `scrypt$${salt.toString("hex")}$${key.toString("hex")}`;
+}
+function verifyPassword(password, stored) {
+  const [scheme, saltHex, keyHex] = String(stored || "").split("$");
+  if (scheme !== "scrypt" || !saltHex || !keyHex) return false;
+  const salt = Buffer.from(saltHex, "hex");
+  const expected = Buffer.from(keyHex, "hex");
+  const derived = scryptSync(String(password), salt, expected.length);
+  return derived.length === expected.length && timingSafeEqual(derived, expected);
+}
+
+// -----------------------------------------------------------------------------
+// Session helpers
+// -----------------------------------------------------------------------------
+function newSession(userId) {
+  const token = randomBytes(32).toString("hex");
+  const expires = new Date(Date.now() + SESSION_TTL_DAYS * 86400_000).toISOString();
+  db.prepare("INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)").run(token, userId, expires);
+  return { token, expires };
+}
+function readSession(cookieHeader) {
+  const m = /(?:^|;\s*)fh_sid=([^;]+)/.exec(cookieHeader || "");
+  if (!m) return null;
+  const token = decodeURIComponent(m[1]);
+  const row = db.prepare(
+    `SELECT u.id, u.username, u.is_admin, s.expires_at
+       FROM sessions s JOIN users u ON u.id = s.user_id
+      WHERE s.token = ?`,
+  ).get(token);
+  if (!row) return null;
+  if (new Date(row.expires_at) < new Date()) {
+    db.prepare("DELETE FROM sessions WHERE token = ?").run(token);
+    return null;
+  }
+  return { token, id: row.id, username: row.username, is_admin: !!row.is_admin };
+}
+function setSessionCookie(reply, token) {
+  const maxAge = SESSION_TTL_DAYS * 86400;
+  reply.header("set-cookie", `fh_sid=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}`);
+}
+function clearSessionCookie(reply) {
+  reply.header("set-cookie", `fh_sid=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`);
+}
+function userCount() {
+  return db.prepare("SELECT COUNT(*) AS n FROM users").get().n;
+}
 
 // -----------------------------------------------------------------------------
 // Fastify + WS
@@ -66,36 +117,79 @@ function broadcastAll() {
 }
 
 // -----------------------------------------------------------------------------
-// Auth (optional shared family PIN)
+// Auth gate: every /api/* request (except /api/auth/*) requires a session.
 // -----------------------------------------------------------------------------
-function hashPin(pin) { return createHash("sha256").update(String(pin), "utf8").digest(); }
-function pinMatches(input) {
-  if (!FAMILY_PIN) return true;
-  const a = hashPin(input); const b = hashPin(FAMILY_PIN);
-  return a.length === b.length && timingSafeEqual(a, b);
-}
+const PUBLIC_PATHS = new Set(["/api/health", "/api/auth/me", "/api/auth/login", "/api/auth/register", "/api/auth/logout"]);
 
 app.addHook("onRequest", async (req, reply) => {
-  const url = req.url;
-  if (!FAMILY_PIN || url.startsWith("/api/health") || url.startsWith("/api/pin") ||
-      url.startsWith("/ws") || !url.startsWith("/api/")) return;
-  const cookie = req.headers.cookie || "";
-  const match = /(?:^|;\s*)fh_unlocked=([^;]+)/.exec(cookie);
-  if (!match || !pinMatches(decodeURIComponent(match[1]))) {
-    return reply.code(401).send({ error: "Locked. POST /api/pin with { pin }." });
-  }
+  const url = req.url.split("?")[0];
+  if (!url.startsWith("/api/")) return;
+  if (PUBLIC_PATHS.has(url)) return;
+  const session = readSession(req.headers.cookie);
+  if (!session) return reply.code(401).send({ error: "Not signed in" });
+  req.session = session;
 });
 
-app.get("/api/health", async () => ({ ok: true, version: "1.1.0", pin_required: !!FAMILY_PIN }));
-app.post("/api/pin", async (req, reply) => {
-  const { pin } = (req.body || {});
-  if (!FAMILY_PIN) return { ok: true };
-  if (!pinMatches(pin)) return reply.code(401).send({ ok: false, error: "Wrong PIN" });
-  reply.header("set-cookie", `fh_unlocked=${encodeURIComponent(pin)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${60*60*24*30}`);
-  return { ok: true };
+// -----------------------------------------------------------------------------
+// Auth endpoints
+// -----------------------------------------------------------------------------
+app.get("/api/health", async () => ({ ok: true, version: "2.0.0" }));
+
+app.get("/api/auth/me", async (req, reply) => {
+  const session = readSession(req.headers.cookie);
+  if (!session) return reply.code(401).send({ error: "Not signed in", first_run: userCount() === 0 });
+  return { id: session.id, username: session.username, is_admin: session.is_admin, first_run: false };
 });
-app.post("/api/pin/clear", async (_req, reply) => {
-  reply.header("set-cookie", "fh_unlocked=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0");
+
+app.post("/api/auth/register", async (req, reply) => {
+  const { username, password } = req.body || {};
+  const u = String(username || "").trim();
+  const p = String(password || "");
+  if (u.length < 2 || u.length > 40) return reply.code(400).send({ error: "Username must be 2–40 characters." });
+  if (p.length < 6) return reply.code(400).send({ error: "Password must be at least 6 characters." });
+
+  const totalUsers = userCount();
+  // First user creates the admin. After that, only an admin can add new users.
+  if (totalUsers > 0) {
+    const session = readSession(req.headers.cookie);
+    if (!session || !session.is_admin) {
+      return reply.code(403).send({ error: "Only the admin can create new accounts. Ask them to sign you up." });
+    }
+  }
+  const existing = db.prepare("SELECT id FROM users WHERE username = ? COLLATE NOCASE").get(u);
+  if (existing) return reply.code(409).send({ error: "That username is taken." });
+
+  const id = uid();
+  const isAdmin = totalUsers === 0 ? 1 : 0;
+  db.prepare("INSERT INTO users (id, username, password_hash, is_admin, created_at) VALUES (?, ?, ?, ?, ?)")
+    .run(id, u, hashPassword(p), isAdmin, now());
+
+  // Auto-sign-in the first user; otherwise the admin stays signed in.
+  if (totalUsers === 0) {
+    const { token } = newSession(id);
+    setSessionCookie(reply, token);
+    return { id, username: u, is_admin: true, first_run: false };
+  }
+  return { id, username: u, is_admin: false, first_run: false };
+});
+
+app.post("/api/auth/login", async (req, reply) => {
+  const { username, password } = req.body || {};
+  const u = String(username || "").trim();
+  const p = String(password || "");
+  const row = db.prepare("SELECT id, username, password_hash, is_admin FROM users WHERE username = ? COLLATE NOCASE").get(u);
+  if (!row || !verifyPassword(p, row.password_hash)) {
+    return reply.code(401).send({ error: "Wrong username or password." });
+  }
+  const { token } = newSession(row.id);
+  setSessionCookie(reply, token);
+  return { id: row.id, username: row.username, is_admin: !!row.is_admin, first_run: false };
+});
+
+app.post("/api/auth/logout", async (req, reply) => {
+  const m = /(?:^|;\s*)fh_sid=([^;]+)/.exec(req.headers.cookie || "");
+  if (m) db.prepare("DELETE FROM sessions WHERE token = ?").run(decodeURIComponent(m[1]));
+  clearSessionCookie(reply);
   return { ok: true };
 });
 
@@ -109,7 +203,6 @@ app.get("/api/members", async () =>
 app.post("/api/members", async (req, reply) => {
   const { name, avatar_color, is_kid, is_parent } = req.body || {};
   if (!name || !avatar_color) return reply.code(400).send({ error: "name and avatar_color required" });
-  // First member becomes an approver automatically.
   const existing = db.prepare("SELECT COUNT(*) AS n FROM family_members").get().n;
   const row = {
     id: uid(),
@@ -208,7 +301,6 @@ app.post("/api/chores/:id/complete", async (req, reply) => {
   return { ok: true, points: chore.points, status: "pending" };
 });
 
-// Approvals queue
 app.get("/api/completions/pending", async () =>
   db.prepare(
     `SELECT cc.id, cc.points_awarded, cc.completed_at, cc.status,
@@ -223,26 +315,26 @@ app.get("/api/completions/pending", async () =>
 );
 
 app.post("/api/completions/:id/approve", async (req, reply) => {
-  const { parent_id } = req.body || {};
-  if (!parent_id) return reply.code(400).send({ error: "parent_id required" });
-  const parent = db.prepare("SELECT is_parent FROM family_members WHERE id = ?").get(parent_id);
+  const { approver_id } = req.body || {};
+  if (!approver_id) return reply.code(400).send({ error: "approver_id required" });
+  const parent = db.prepare("SELECT is_parent FROM family_members WHERE id = ?").get(approver_id);
   if (!parent || !parent.is_parent) return reply.code(403).send({ error: "Only approvers can approve." });
   const r = db.prepare(
     "UPDATE chore_completions SET status = 'approved', approved_by = ?, approved_at = ? WHERE id = ? AND status = 'pending'",
-  ).run(parent_id, now(), req.params.id);
+  ).run(approver_id, now(), req.params.id);
   if (r.changes === 0) return reply.code(404).send({ error: "Not pending" });
   broadcast("completions"); broadcast("points"); broadcast("chores");
   return { ok: true };
 });
 
 app.post("/api/completions/:id/reject", async (req, reply) => {
-  const { parent_id } = req.body || {};
-  if (!parent_id) return reply.code(400).send({ error: "parent_id required" });
-  const parent = db.prepare("SELECT is_parent FROM family_members WHERE id = ?").get(parent_id);
+  const { approver_id } = req.body || {};
+  if (!approver_id) return reply.code(400).send({ error: "approver_id required" });
+  const parent = db.prepare("SELECT is_parent FROM family_members WHERE id = ?").get(approver_id);
   if (!parent || !parent.is_parent) return reply.code(403).send({ error: "Only approvers can reject." });
   db.prepare(
     "UPDATE chore_completions SET status = 'rejected', approved_by = ?, approved_at = ?, points_awarded = 0 WHERE id = ? AND status = 'pending'",
-  ).run(parent_id, now(), req.params.id);
+  ).run(approver_id, now(), req.params.id);
   broadcast("completions"); broadcast("points");
   return { ok: true };
 });
@@ -458,9 +550,7 @@ app.delete("/api/events/:id", async (req) => {
 });
 
 // -----------------------------------------------------------------------------
-// Backup export / import (encryption happens in the browser; server only sees
-// plaintext table rows over the private LAN. The exported .fhb file the user
-// downloads is encrypted client-side, so it's safe to move between devices.)
+// Backup export / import (client-side encrypted .fhb bundles)
 // -----------------------------------------------------------------------------
 const BACKUP_TABLES = [
   "family_members", "chores", "chore_completions", "rewards", "redemptions",
@@ -479,7 +569,6 @@ app.post("/api/backup/import", async (req, reply) => {
   const wipe = mode === "replace";
   const tx = db.transaction(() => {
     if (wipe) {
-      // Order matters for FK: dependents first
       for (const t of ["chore_completions", "redemptions", "meal_plan", "events", "shopping_items", "chores", "rewards", "recipes", "family_members"]) {
         db.prepare(`DELETE FROM ${t}`).run();
       }
@@ -487,7 +576,6 @@ app.post("/api/backup/import", async (req, reply) => {
     for (const t of BACKUP_TABLES) {
       const rows = bundle.tables[t];
       if (!Array.isArray(rows) || rows.length === 0) continue;
-      // Column intersect
       const info = db.prepare(`PRAGMA table_info(${t})`).all();
       const colNames = info.map((c) => c.name);
       for (const row of rows) {
@@ -504,7 +592,7 @@ app.post("/api/backup/import", async (req, reply) => {
         const sql = wipe
           ? `INSERT INTO ${t} (${cols.join(",")}) VALUES (${placeholders})`
           : `INSERT OR IGNORE INTO ${t} (${cols.join(",")}) VALUES (${placeholders})`;
-        try { db.prepare(sql).run(...values); } catch (_e) { /* skip malformed rows */ }
+        try { db.prepare(sql).run(...values); } catch { /* skip malformed rows */ }
       }
     }
   });
@@ -514,7 +602,7 @@ app.post("/api/backup/import", async (req, reply) => {
 });
 
 // -----------------------------------------------------------------------------
-// WebSocket
+// WebSocket (unauthenticated — read-only invalidation pings, no data payload)
 // -----------------------------------------------------------------------------
 app.register(async (instance) => {
   instance.get("/ws", { websocket: true }, (socket) => {
@@ -526,17 +614,54 @@ app.register(async (instance) => {
 });
 
 // -----------------------------------------------------------------------------
-// Static SPA + fallback
+// Static SPA + SPA fallback
 // -----------------------------------------------------------------------------
-import { existsSync } from "node:fs";
+// The Vite build emits hashed assets into <STATIC_DIR>/assets/index-*.{js,css}
+// but no top-level index.html (TanStack Start does SSR by default). We generate
+// the SPA shell here so a home server only needs to run `npm run build` and
+// `npm start` — no separate SSR process, no Nitro output required.
+import { readdirSync } from "node:fs";
+function findEntryAssets() {
+  const assetsDir = join(STATIC_DIR, "assets");
+  if (!existsSync(assetsDir)) return { js: null, css: null };
+  const files = readdirSync(assetsDir);
+  const js = files.find((f) => /^index-.*\.js$/.test(f));
+  const css = files.find((f) => /^index-.*\.css$/.test(f));
+  return { js: js ? `/assets/${js}` : null, css: css ? `/assets/${css}` : null };
+}
+function renderIndexHtml() {
+  const { js, css } = findEntryAssets();
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Family Hub</title>
+  <meta name="description" content="Your family's private chores, shopping, meals and calendar hub." />
+  <meta name="theme-color" content="#0f172a" />
+  <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
+  <link rel="apple-touch-icon" href="/icon-192.png" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  ${css ? `<link rel="stylesheet" href="${css}" />` : ""}
+</head>
+<body>
+  <div id="root"></div>
+  ${js ? `<script type="module" src="${js}"></script>` : "<p style=\"padding:2rem;font-family:system-ui\">Build not found. Run <code>npm run build</code> and restart.</p>"}
+</body>
+</html>`;
+}
+
 if (existsSync(STATIC_DIR)) {
-  await app.register(fastifyStatic, { root: STATIC_DIR, wildcard: false });
+  await app.register(fastifyStatic, { root: STATIC_DIR, wildcard: false, index: false });
+  // Root and every non-asset, non-API path serves the SPA shell.
+  const sendShell = (_req, reply) => reply.type("text/html; charset=utf-8").send(renderIndexHtml());
+  app.get("/", sendShell);
   app.setNotFoundHandler((req, reply) => {
     if (req.url.startsWith("/api/") || req.url.startsWith("/ws")) return reply.code(404).send({ error: "Not found" });
-    return reply.sendFile("index.html");
+    return sendShell(req, reply);
   });
 } else {
-  app.get("/", async () => ({ ok: true, hint: "Static bundle not found. Build the frontend with `npm run build` first." }));
+  app.get("/", async () => ({ ok: true, hint: `Static bundle not found at ${STATIC_DIR}. Run \`npm run build\` first.` }));
 }
 
 function safeJson(str, fallback) {
@@ -547,4 +672,5 @@ function safeJson(str, fallback) {
 await app.listen({ port: PORT, host: HOST });
 app.log.info(`Family Hub listening on http://${HOST}:${PORT}`);
 app.log.info(`Database: ${DB_PATH}`);
-app.log.info(FAMILY_PIN ? "PIN gate: ENABLED" : "PIN gate: disabled (set FAMILY_PIN to enable)");
+app.log.info(`Static:   ${STATIC_DIR}`);
+if (userCount() === 0) app.log.info("No users yet — first person to register becomes the admin.");
