@@ -7,10 +7,7 @@
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 
 export default defineConfig({
-  nitro: {
-    preset: "node-server",
-  },
-  tanstackStart: {
-    target: "node-server",
-  },
+  // Stripped out the unused Nitro and TanStack node-server targets.
+  // This ensures Vite only builds the frontend assets that Fastify expects in dist/client.
 });
+
