@@ -23,7 +23,7 @@ const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "0.0.0.0";
 const DATA_DIR = process.env.DATA_DIR || resolve(__dirname, "..", "data");
 const DB_PATH = process.env.DB_PATH || join(DATA_DIR, "familyhub.db");
-const STATIC_DIR = process.env.STATIC_DIR || resolve(__dirname, "..", "dist", "client");
+const STATIC_DIR = process.env.STATIC_DIR || resolve(__dirname, "..", ".output", "public");
 const SESSION_TTL_DAYS = 30;
 
 // -----------------------------------------------------------------------------
