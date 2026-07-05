@@ -47,45 +47,7 @@ function isH3SwallowedErrorBody(body: string): boolean {
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
     console.log("Incoming Request URL:", request.url);
-// --- API INTERCEPTOR BLOCK ---
-    // 1. Handle Registration
-    if (request.url.includes('/api/auth/register') && request.method === 'POST') {
-      const body = await request.json();
-      return new Response(JSON.stringify({ 
-        id: '12345', 
-        username: body.username, 
-        is_admin: false, 
-        first_run: false 
-      }), {
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-
-    // 2. Handle Login
-    if (request.url.includes('/api/auth/login') && request.method === 'POST') {
-      const body = await request.json();
-      return new Response(JSON.stringify({ 
-        id: '12345', 
-        username: body.username, 
-        is_admin: false, 
-        first_run: false 
-      }), {
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-
-    // 3. Handle 'Me' (Session Check)
-    if (request.url.includes('/api/auth/me') && request.method === 'GET') {
-      return new Response(JSON.stringify({ 
-        id: '12345', 
-        username: 'test-user', 
-        is_admin: false, 
-        first_run: false 
-      }), {
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-    // --- END OF INTERCEPTOR ---     
+    
     try {
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
@@ -99,3 +61,4 @@ export default {
     }
   },
 };
+
