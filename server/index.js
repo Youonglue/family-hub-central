@@ -23,7 +23,13 @@ const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "0.0.0.0";
 const DATA_DIR = process.env.DATA_DIR || resolve(__dirname, "..", "data");
 const DB_PATH = process.env.DB_PATH || join(DATA_DIR, "familyhub.db");
-const STATIC_DIR = process.env.STATIC_DIR || resolve(__dirname, "..", ".output", "public");
+// Vite/TanStack Start emits the client bundle to dist/client/. Fall back to
+// .output/public (Nitro preset) then dist/ so this works regardless of preset.
+const STATIC_DIR = process.env.STATIC_DIR || [
+  resolve(__dirname, "..", "dist", "client"),
+  resolve(__dirname, "..", ".output", "public"),
+  resolve(__dirname, "..", "dist"),
+].find((p) => existsSync(join(p, "assets"))) || resolve(__dirname, "..", "dist", "client");
 const SESSION_TTL_DAYS = 30;
 
 // -----------------------------------------------------------------------------
