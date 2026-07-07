@@ -51,3 +51,30 @@ export function logout(): Promise<{ ok: true }> {
     credentials: "same-origin",
   }).then(j);
 }
+
+function post(path: string, body: unknown) {
+  return fetch(path, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  }).then(j);
+}
+
+export const changePassword = (current: string, next: string) =>
+  post("/api/auth/change-password", { current, next });
+
+export const changeUsername = (current_password: string, username: string) =>
+  post("/api/auth/change-username", { current_password, username });
+
+export const getPinStatus = (): Promise<{ has_pin: boolean }> =>
+  fetch("/api/auth/pin-status", { credentials: "same-origin" }).then(j);
+
+export const setPin = (current_password: string, pin: string) =>
+  post("/api/auth/set-pin", { current_password, pin });
+
+export const clearPin = (current_password: string) =>
+  post("/api/auth/clear-pin", { current_password });
+
+export const verifyPin = (pin: string) =>
+  post("/api/auth/verify-pin", { pin });
