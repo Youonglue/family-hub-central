@@ -1,4 +1,4 @@
-import { useAppStore } from './store'
+import { useAppStore } from '../store'
 
 export function ProfileComponent() {
   // Select only the specific fields needed to prevent unnecessary re-renders
