@@ -50,6 +50,7 @@ ensureColumn("family_members", "is_parent", "is_parent INTEGER NOT NULL DEFAULT 
 ensureColumn("chore_completions", "status", "status TEXT NOT NULL DEFAULT 'approved'");
 ensureColumn("chore_completions", "approved_by", "approved_by TEXT");
 ensureColumn("chore_completions", "approved_at", "approved_at TEXT");
+ensureColumn("users", "pin_hash", "pin_hash TEXT");
 
 const now = () => new Date().toISOString();
 const uid = () => randomUUID();
@@ -196,6 +197,73 @@ app.post("/api/auth/logout", async (req, reply) => {
   const m = /(?:^|;\s*)fh_sid=([^;]+)/.exec(req.headers.cookie || "");
   if (m) db.prepare("DELETE FROM sessions WHERE token = ?").run(decodeURIComponent(m[1]));
   clearSessionCookie(reply);
+  return { ok: true };
+});
+
+// --- Account management (session required) -----------------------------------
+function requireSession(req, reply) {
+  const s = readSession(req.headers.cookie);
+  if (!s) { reply.code(401).send({ error: "Not signed in" }); return null; }
+  return s;
+}
+
+app.post("/api/auth/change-password", async (req, reply) => {
+  const s = requireSession(req, reply); if (!s) return;
+  const { current, next } = req.body || {};
+  if (!next || String(next).length < 6) return reply.code(400).send({ error: "New password must be at least 6 characters." });
+  const row = db.prepare("SELECT password_hash FROM users WHERE id = ?").get(s.id);
+  if (!row || !verifyPassword(current, row.password_hash)) return reply.code(401).send({ error: "Current password is wrong." });
+  db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(hashPassword(String(next)), s.id);
+  // Invalidate other sessions for this user, keep current one
+  db.prepare("DELETE FROM sessions WHERE user_id = ? AND token != ?").run(s.id, s.token);
+  return { ok: true };
+});
+
+app.post("/api/auth/change-username", async (req, reply) => {
+  const s = requireSession(req, reply); if (!s) return;
+  const { current_password, username } = req.body || {};
+  const u = String(username || "").trim();
+  if (u.length < 2 || u.length > 40) return reply.code(400).send({ error: "Username must be 2–40 characters." });
+  const row = db.prepare("SELECT password_hash FROM users WHERE id = ?").get(s.id);
+  if (!row || !verifyPassword(current_password, row.password_hash)) return reply.code(401).send({ error: "Current password is wrong." });
+  const clash = db.prepare("SELECT id FROM users WHERE username = ? COLLATE NOCASE AND id != ?").get(u, s.id);
+  if (clash) return reply.code(409).send({ error: "That username is taken." });
+  db.prepare("UPDATE users SET username = ? WHERE id = ?").run(u, s.id);
+  return { ok: true, username: u };
+});
+
+app.get("/api/auth/pin-status", async (req, reply) => {
+  const s = requireSession(req, reply); if (!s) return;
+  const row = db.prepare("SELECT pin_hash FROM users WHERE id = ?").get(s.id);
+  return { has_pin: !!(row && row.pin_hash) };
+});
+
+app.post("/api/auth/set-pin", async (req, reply) => {
+  const s = requireSession(req, reply); if (!s) return;
+  const { current_password, pin } = req.body || {};
+  const p = String(pin || "");
+  if (!/^\d{4,8}$/.test(p)) return reply.code(400).send({ error: "PIN must be 4–8 digits." });
+  const row = db.prepare("SELECT password_hash FROM users WHERE id = ?").get(s.id);
+  if (!row || !verifyPassword(current_password, row.password_hash)) return reply.code(401).send({ error: "Current password is wrong." });
+  db.prepare("UPDATE users SET pin_hash = ? WHERE id = ?").run(hashPassword(p), s.id);
+  return { ok: true };
+});
+
+app.post("/api/auth/clear-pin", async (req, reply) => {
+  const s = requireSession(req, reply); if (!s) return;
+  const { current_password } = req.body || {};
+  const row = db.prepare("SELECT password_hash FROM users WHERE id = ?").get(s.id);
+  if (!row || !verifyPassword(current_password, row.password_hash)) return reply.code(401).send({ error: "Current password is wrong." });
+  db.prepare("UPDATE users SET pin_hash = NULL WHERE id = ?").run(s.id);
+  return { ok: true };
+});
+
+app.post("/api/auth/verify-pin", async (req, reply) => {
+  const s = requireSession(req, reply); if (!s) return;
+  const { pin } = req.body || {};
+  const row = db.prepare("SELECT pin_hash FROM users WHERE id = ?").get(s.id);
+  if (!row || !row.pin_hash) return reply.code(400).send({ error: "No PIN set." });
+  if (!verifyPassword(String(pin || ""), row.pin_hash)) return reply.code(401).send({ error: "Wrong PIN." });
   return { ok: true };
 });
 
