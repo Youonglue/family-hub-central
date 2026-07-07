@@ -50,6 +50,7 @@ ensureColumn("family_members", "is_parent", "is_parent INTEGER NOT NULL DEFAULT 
 ensureColumn("chore_completions", "status", "status TEXT NOT NULL DEFAULT 'approved'");
 ensureColumn("chore_completions", "approved_by", "approved_by TEXT");
 ensureColumn("chore_completions", "approved_at", "approved_at TEXT");
+ensureColumn("users", "pin_hash", "pin_hash TEXT");
 
 const now = () => new Date().toISOString();
 const uid = () => randomUUID();
