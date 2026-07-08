@@ -1,13 +1,21 @@
-// The Fastify server in server/index.js serves the built client bundle from
-// dist/client and provides /api + /ws. The Nitro output is unused by that
-// self-hosted flow — we still ask Nitro for the node-server preset so if you
-// ever want to run `.output/server/index.mjs` directly it works on any Linux
-// VPS. Inside the Lovable sandbox this override is ignored (Lovable forces
-// its own Cloudflare preset), which is fine.
-import { defineConfig } from "@lovable.dev/vite-tanstack-config";
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import { TanStackRouterVite } from "@tanstack/router-plugin/vite";
+import path from "path";
 
 export default defineConfig({
-  // Stripped out the unused Nitro and TanStack node-server targets.
-  // This ensures Vite only builds the frontend assets that Fastify expects in dist/client.
+  plugins: [TanStackRouterVite(), react()],
+  resolve: {
+    alias: {
+      "@": path.resolve(__dirname, "./src"),
+    },
+  },
+  server: {
+    host: "0.0.0.0",
+    port: 8080,
+    proxy: {
+      "/api": "http://localhost:3000",
+      "/ws": { target: "ws://localhost:3000", ws: true },
+    },
+  },
 });
-
