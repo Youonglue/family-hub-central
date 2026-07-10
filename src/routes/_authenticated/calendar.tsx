@@ -84,12 +84,12 @@ function CalendarPage() {
   const byDay = useMemo(() => {
     const m = new Map<string, any[]>();
     for (const e of eventList) {
-      const key = e.starts_at; // Matches the DB field
+      const key = e.starts_at; 
       const arr = m.get(key) ?? [];
       arr.push(e); m.set(key, arr);
     }
     return m;
-  }, [eventList, memberFilter]);
+  }, [eventList]);
 
   const filteredEvents = useMemo(() => {
     return eventList.filter((e: any) => !memberFilter || e.member_id === memberFilter);
@@ -101,8 +101,6 @@ function CalendarPage() {
       return d.getMonth() === anchor.getMonth() && d.getFullYear() === anchor.getFullYear();
     }).sort((a: any, b: any) => a.starts_at.localeCompare(b.starts_at));
   }, [filteredEvents, anchor]);
-
-  const holidays = useMemo(() => holidayMapForYears([anchor.getFullYear()]), [anchor]);
 
   function navigate(dir: -1 | 1) {
     const d = new Date(anchor);
@@ -131,20 +129,20 @@ function CalendarPage() {
         {/* HEADER */}
         <header className="mb-8 flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-4">
-             <div className="p-3 bg-indigo-100 rounded-2xl">
+             <div className="p-3 bg-indigo-100 rounded-2xl shadow-inner">
                <CalendarIcon className="size-8 text-indigo-600" />
              </div>
              <div>
                <h1 className="font-display text-4xl font-black tracking-tight text-slate-900 uppercase italic">Family Quests</h1>
-               <p className="text-slate-500 font-bold uppercase text-[10px] tracking-widest">Adventure Log</p>
+               <p className="text-slate-400 font-bold uppercase text-[10px] tracking-widest italic">Adventure Log</p>
              </div>
           </div>
           
           <div className="flex items-center gap-3">
-            <button onClick={handleWipeCurrentView} className="flex items-center gap-2 rounded-2xl bg-rose-50 px-6 py-4 text-xs font-black text-rose-600 border-2 border-rose-100 hover:bg-rose-100 transition-all">
+            <button onClick={handleWipeCurrentView} className="flex items-center gap-2 rounded-2xl bg-rose-50 px-6 py-4 text-xs font-black text-rose-600 border-2 border-rose-100 hover:bg-rose-100 transition-all shadow-sm">
               <Trash2 className="size-4" /> CLEAR {view.toUpperCase()}
             </button>
-            <button onClick={() => setShowAddModal(true)} className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-8 py-4 text-sm font-black text-white shadow-xl hover:bg-primary transition-all">
+            <button onClick={() => setShowAddModal(true)} className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-8 py-4 text-sm font-black text-white shadow-xl hover:bg-indigo-600 transition-all">
               <CalendarPlus className="size-5" /> NEW QUEST
             </button>
           </div>
@@ -160,9 +158,9 @@ function CalendarPage() {
             ))}
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={() => navigate(-1)} className="p-3 bg-white border-4 border-slate-50 rounded-2xl shadow-sm"><ChevronLeft /></button>
-            <button onClick={() => setAnchor(new Date())} className="px-6 py-3 bg-white border-4 border-slate-50 rounded-2xl shadow-sm font-black text-xs uppercase tracking-widest">Today</button>
-            <button onClick={() => navigate(1)} className="p-3 bg-white border-4 border-slate-50 rounded-2xl shadow-sm"><ChevronRight /></button>
+            <button onClick={() => navigate(-1)} className="p-3 bg-white border-4 border-slate-50 rounded-2xl shadow-sm hover:bg-slate-100"><ChevronLeft /></button>
+            <button onClick={() => setAnchor(new Date())} className="px-6 py-3 bg-white border-4 border-slate-50 rounded-2xl shadow-sm font-black text-xs uppercase tracking-widest hover:bg-slate-100">Today</button>
+            <button onClick={() => navigate(1)} className="p-3 bg-white border-4 border-slate-50 rounded-2xl shadow-sm hover:bg-slate-100"><ChevronRight /></button>
           </div>
           <h2 className="text-2xl font-black text-slate-800 uppercase italic ml-2">{headerLabel}</h2>
         </div>
@@ -178,17 +176,20 @@ function CalendarPage() {
           <aside className="space-y-8">
              <section className="bg-white p-8 rounded-[3rem] border-4 border-slate-50 shadow-xl min-h-[500px]">
                <h3 className="text-xl font-black uppercase italic tracking-tighter mb-6 flex items-center gap-2 text-slate-900">
-                 <CalendarIcon className="text-primary" /> Agenda
+                 <CalendarIcon className="text-indigo-500" /> Agenda
                </h3>
                <div className="space-y-4">
                  {monthAgenda.map((e: any) => (
                    <div key={e.id} className="group flex gap-4 items-start relative">
                       <div className="text-center min-w-[40px]">
                          <p className="text-[10px] font-black text-slate-400 uppercase">{new Date(e.starts_at).toLocaleDateString(undefined, { weekday: 'short' })}</p>
-                         <p className="text-2xl font-black text-slate-900">{new Date(e.starts_at).getDate()}</p>
+                         <p className="text-2xl font-black text-slate-900 leading-none">{new Date(e.starts_at).getDate()}</p>
                       </div>
                       <div className="flex-1 bg-slate-50 p-4 rounded-2xl group-hover:bg-slate-100 transition-all border-l-4 relative" style={{ borderColor: e.color || 'gray' }}>
-                         <p className="font-black text-sm text-slate-800 leading-tight">{e.title}</p>
+                         {/* FIX: High Contrast Text with Shadow */}
+                         <p className="font-black text-sm text-slate-900 leading-tight drop-shadow-[0_1px_1px_rgba(255,255,255,1)]">
+                           {e.title}
+                         </p>
                          <button onClick={() => del.mutate(e.id)} className="absolute right-2 top-2 p-2 text-slate-300 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all">
                            <X size={16} />
                          </button>
@@ -206,16 +207,16 @@ function CalendarPage() {
             <div className="w-full max-w-2xl bg-white rounded-[3rem] p-8 shadow-2xl border-[12px] border-slate-50" onClick={e => e.stopPropagation()}>
                <div className="flex justify-between items-center mb-6">
                  <h2 className="text-3xl font-black uppercase italic tracking-tighter text-slate-900">{dayViewDate.toLocaleDateString()}</h2>
-                 <button onClick={() => setDayViewDate(null)} className="p-3 bg-slate-100 rounded-full"><X /></button>
+                 <button onClick={() => setDayViewDate(null)} className="p-3 bg-slate-100 rounded-full hover:text-rose-500 transition-all"><X /></button>
                </div>
-               <div className="space-y-4 max-h-[60vh] overflow-y-auto">
+               <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
                  {(byDay.get(ymd(dayViewDate)) ?? []).map((e: any) => (
                    <div key={e.id} className="bg-slate-50 p-6 rounded-[2rem] flex items-center justify-between border-2 border-slate-100">
                       <div className="flex items-center gap-4">
-                        <div className="h-16 w-16 rounded-2xl flex items-center justify-center text-white" style={{backgroundColor: e.color || 'gray'}}><Sword /></div>
-                        <p className="font-black text-2xl uppercase tracking-tighter text-slate-800">{e.title}</p>
+                        <div className="h-16 w-16 rounded-2xl flex items-center justify-center text-white shadow-lg" style={{backgroundColor: e.color || 'gray'}}><Sword /></div>
+                        <p className="font-black text-2xl uppercase tracking-tighter text-slate-900 drop-shadow-[0_1px_1px_rgba(255,255,255,0.5)]">{e.title}</p>
                       </div>
-                      <button onClick={() => { del.mutate(e.id); setDayViewDate(null); }} className="h-20 w-20 bg-white text-rose-500 rounded-2xl flex items-center justify-center shadow-lg active:scale-90 transition-all">
+                      <button onClick={() => { del.mutate(e.id); setDayViewDate(null); }} className="h-20 w-20 bg-white text-rose-500 rounded-2xl border-4 border-rose-50 flex items-center justify-center shadow-lg active:scale-90 transition-all">
                         <Trash2 size={32} />
                       </button>
                    </div>
@@ -228,7 +229,7 @@ function CalendarPage() {
         {/* NEW QUEST MODAL */}
         {showAddModal && (
           <div className="fixed inset-0 z-[100] grid place-items-center bg-slate-900/60 backdrop-blur-md p-4" onClick={() => setShowAddModal(false)}>
-             <div className="w-full max-w-xl bg-white rounded-[4rem] p-10 shadow-2xl border-[12px] border-slate-50" onClick={e => e.stopPropagation()}>
+             <div className="w-full max-w-xl bg-white rounded-[4rem] p-10 shadow-2xl border-[12px] border-slate-50 animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
                <h2 className="text-4xl font-black italic uppercase tracking-tighter text-slate-900 mb-8">New Quest</h2>
                <form className="space-y-6" onSubmit={async (e) => {
                   e.preventDefault();
@@ -248,8 +249,8 @@ function CalendarPage() {
                   toast.success("Quests Logged!");
                   setSelectedDates([]); setShowAddModal(false); inv();
                }}>
-                  <input name="title" required placeholder="Quest Name" className="w-full p-6 bg-slate-50 rounded-3xl border-4 border-transparent focus:border-primary outline-none font-black text-xl" />
-                  <input name="location" placeholder="Location" className="w-full p-6 bg-slate-50 rounded-3xl border-4 border-transparent focus:border-primary outline-none font-bold" />
+                  <input name="title" required placeholder="Quest Name" className="w-full p-6 bg-slate-50 rounded-3xl border-4 border-transparent focus:border-indigo-500 outline-none font-black text-xl" />
+                  <input name="location" placeholder="Location" className="w-full p-6 bg-slate-50 rounded-3xl border-4 border-transparent focus:border-indigo-500 outline-none font-bold" />
                   <div className="grid grid-cols-2 gap-4">
                     <select name="member" className="p-5 bg-slate-50 rounded-3xl font-black uppercase text-xs">
                       <option value="">Whole Family</option>
@@ -259,7 +260,7 @@ function CalendarPage() {
                       {EVENT_COLORS.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
                   </div>
-                  <button type="submit" className="w-full bg-slate-900 text-white py-6 rounded-[2.5rem] font-black text-2xl shadow-2xl hover:bg-primary transition-all flex items-center justify-center gap-3">
+                  <button type="submit" className="w-full bg-slate-900 text-white py-6 rounded-[2.5rem] font-black text-2xl shadow-2xl hover:bg-indigo-600 transition-all active:scale-95 flex items-center justify-center gap-3">
                     <Check size={32} /> LOG QUESTS
                   </button>
                </form>
@@ -282,15 +283,15 @@ function YearView({ year, byDay, onPickMonth }: any) {
         const gridStart = startOfMonthGrid(new Date(year, mi, 1));
         const days = Array.from({ length: 42 }, (_, i) => addDaysL(gridStart, i));
         return (
-          <button key={mi} onClick={() => onPickMonth(mi)} className="rounded-[2.5rem] border-4 border-slate-50 bg-white p-6 text-left shadow-lg hover:shadow-2xl transition-all">
-            <p className="mb-4 font-black text-xl uppercase italic tracking-tighter">{name}</p>
+          <button key={mi} onClick={() => onPickMonth(mi)} className="rounded-[2.5rem] border-4 border-slate-50 bg-white p-6 text-left shadow-lg hover:shadow-2xl transition-all group">
+            <p className="mb-4 font-black text-xl uppercase italic tracking-tighter group-hover:text-indigo-600 transition-colors">{name}</p>
             <div className="grid grid-cols-7 gap-1 text-[9px] font-black text-slate-300">
               {days.map(d => {
                 const hasEv = (byDay.get(ymd(d)) ?? []).length > 0;
                 return (
                   <div key={ymd(d)} className={`aspect-square grid place-items-center relative ${d.getMonth() === mi ? "text-slate-900" : "text-slate-100"}`}>
                     {d.getDate()}
-                    {hasEv && d.getMonth() === mi && <div className="absolute bottom-0 size-1 bg-primary rounded-full" />}
+                    {hasEv && d.getMonth() === mi && <div className="absolute bottom-0 size-1 bg-indigo-500 rounded-full" />}
                   </div>
                 );
               })}
@@ -318,20 +319,29 @@ function MonthView({ anchor, byDay, onPickDay, onToggleDate, selectedDates }: an
               key={key}
               onClick={() => onToggleDate(key)}
               className={`min-h-[90px] md:min-h-[140px] p-2 md:p-3 rounded-2xl md:rounded-[2rem] border-2 md:border-4 transition-all cursor-pointer flex flex-col ${
-                isSelected ? "border-primary bg-primary/5 scale-95" : 
-                isToday ? "border-slate-900 bg-slate-50" : "border-slate-50 bg-white hover:border-slate-200"
+                isSelected ? "border-indigo-500 bg-indigo-50 scale-95 shadow-inner" : 
+                isToday ? "border-slate-900 bg-slate-50 shadow-sm" : "border-slate-50 bg-white hover:border-slate-200"
               } ${d.getMonth() !== anchor.getMonth() ? "opacity-20" : ""}`}
             >
               <div className="flex justify-between items-center mb-1 md:mb-2">
-                <span onClick={(e) => { e.stopPropagation(); onPickDay(d); }} className="text-[10px] md:text-sm font-black p-1 bg-slate-100 rounded-lg hover:underline">{d.getDate()}</span>
-                {isSelected && <Check className="size-3 text-primary" />}
+                <span onClick={(e) => { e.stopPropagation(); onPickDay(d); }} className={`text-[10px] md:text-sm font-black p-1 rounded-lg hover:underline ${isToday ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-500'}`}>{d.getDate()}</span>
+                {isSelected && <Check className="size-3 text-indigo-500" />}
               </div>
               <div className="space-y-0.5 md:space-y-1">
                 {evs.slice(0, 3).map((e: any) => (
-                  <div key={e.id} className="text-[7px] md:text-[9px] font-bold px-1 py-0.5 rounded shadow-sm text-white truncate" style={{ backgroundColor: e.color || 'gray' }}>
+                  <div 
+                    key={e.id} 
+                    className="text-[7px] md:text-[9px] font-black px-1.5 py-0.5 rounded shadow-sm text-slate-900 truncate" 
+                    style={{ 
+                        backgroundColor: e.color || 'gray',
+                        /* FIX: Thick white glow behind text for visibility */
+                        textShadow: '0px 0px 3px rgba(255,255,255,1), 0px 0px 2px rgba(255,255,255,1)' 
+                    }}
+                  >
                     {e.title}
                   </div>
                 ))}
+                {evs.length > 3 && <p className="text-[7px] font-black text-slate-300">+{evs.length - 3} more</p>}
               </div>
             </div>
           );
@@ -350,12 +360,19 @@ function WeekView({ anchor, byDay, onPickDay }: any) {
         const key = ymd(d);
         const evs = byDay.get(key) ?? [];
         return (
-          <div key={key} className="bg-white rounded-[2.5rem] border-4 border-slate-50 p-6 min-h-[400px] shadow-lg cursor-pointer hover:border-slate-200 transition-all" onClick={() => onPickDay(d)}>
-             <p className="text-3xl font-black mb-6 text-slate-900">{d.getDate()}</p>
+          <div key={key} className="bg-white rounded-[2.5rem] border-4 border-slate-50 p-6 min-h-[400px] shadow-lg cursor-pointer hover:border-slate-200 transition-all group" onClick={() => onPickDay(d)}>
+             <p className="text-3xl font-black mb-6 text-slate-900 group-hover:text-indigo-600 transition-colors">{d.getDate()}</p>
              <div className="space-y-3">
                {evs.map((e: any) => (
-                 <div key={e.id} className="p-4 rounded-2xl bg-slate-50 border-l-4" style={{ borderLeftColor: e.color || 'gray' }}>
-                    <p className="font-black text-sm leading-tight text-slate-800">{e.title}</p>
+                 <div 
+                    key={e.id} 
+                    className="p-4 rounded-2xl bg-slate-50 border-l-8 shadow-sm" 
+                    style={{ borderLeftColor: e.color || 'gray' }}
+                 >
+                    {/* FIX: Bold dark text */}
+                    <p className="font-black text-sm leading-tight text-slate-900 drop-shadow-[0_1px_1px_rgba(255,255,255,1)]">
+                        {e.title}
+                    </p>
                  </div>
                ))}
              </div>
@@ -369,19 +386,19 @@ function WeekView({ anchor, byDay, onPickDay }: any) {
 function DayView({ day, byDay, onDelete }: any) {
   const evs = byDay.get(ymd(day)) ?? [];
   return (
-    <div className="bg-white rounded-[4rem] border-8 border-slate-50 p-10 shadow-2xl min-h-[600px]">
+    <div className="bg-white rounded-[4rem] border-8 border-slate-50 p-10 shadow-2xl min-h-[600px] animate-in slide-in-from-bottom-5">
        <h2 className="text-5xl font-black uppercase italic tracking-tighter text-slate-900 mb-10">Daily Log</h2>
        <div className="grid gap-6">
          {evs.map((e: any) => (
-           <div key={e.id} className="flex items-center gap-6 p-6 bg-slate-50 rounded-[2.5rem] border-2 border-transparent hover:border-slate-200">
+           <div key={e.id} className="flex items-center gap-6 p-6 bg-slate-50 rounded-[2.5rem] border-2 border-transparent hover:border-indigo-100 transition-all shadow-sm">
               <div className="size-20 rounded-3xl flex items-center justify-center shadow-lg text-white" style={{ backgroundColor: e.color || 'gray' }}>
                 <Sword size={40} />
               </div>
               <div className="flex-1">
-                 <h4 className="text-2xl font-black text-slate-900 uppercase tracking-tighter">{e.title}</h4>
+                 <h4 className="text-2xl font-black text-slate-900 uppercase tracking-tighter drop-shadow-[0_1px_1px_rgba(255,255,255,0.5)]">{e.title}</h4>
                  <p className="text-xs font-black text-slate-400 uppercase mt-1">{e.location || "Base"}</p>
               </div>
-              <button onClick={() => onDelete(e.id)} className="h-16 w-16 rounded-2xl bg-white text-rose-500 shadow-sm flex items-center justify-center hover:scale-110 active:scale-90 transition-all">
+              <button onClick={() => onDelete(e.id)} className="h-16 w-16 rounded-2xl bg-white text-rose-500 shadow-lg flex items-center justify-center hover:scale-110 hover:bg-rose-50 active:scale-95 transition-all">
                  <Trash2 size={24} />
               </button>
            </div>

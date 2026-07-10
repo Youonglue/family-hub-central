@@ -1,6 +1,9 @@
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
-import { LayoutDashboard, Trophy, ShoppingCart, ChefHat, Calendar, Users, Settings, LogOut, ShieldCheck, Lock } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { 
+  LayoutDashboard, Trophy, ShoppingCart, ChefHat, 
+  Calendar, Users, Settings, LogOut, ShieldCheck, Lock, Loader2 
+} from "lucide-react";
+import { useState, type ReactNode, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLanLive } from "@/hooks/useLanLive";
 import { logout, getMe } from "@/lib/auth-client";
@@ -20,49 +23,79 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const qc = useQueryClient();
+  
+  // Connect real-time muscle
   useLanLive(); 
 
-  // Fetch current user to check for PIN setup requirement
-  const me = useQuery({ queryKey: ["me"], queryFn: () => getMe() });
   const [pinInput, setPinInput] = useState("");
   const [isSubmittingPin, setIsSubmittingPin] = useState(false);
+
+  // MUSCLE: Check Auth Status with full error safety
+  const { data: me, isLoading, isError } = useQuery({ 
+    queryKey: ["me"], 
+    queryFn: () => getMe(),
+    retry: 1
+  });
+
+  const isKiosk = pathname.startsWith("/kiosk");
 
   async function signOut() {
     await qc.cancelQueries();
     qc.clear();
-    try { await logout(); } catch { /* ignore */ }
+    try { await logout(); } catch { /* silient */ }
     navigate({ to: "/auth", replace: true });
   }
 
-  // --- 6-DIGIT PIN GATEKEEPER ---
-  // If the user has been promoted to Admin, they MUST set a PIN before accessing the app.
-  if (me.data && "needs_pin_setup" in me.data && me.data.needs_pin_setup === 1) {
+  // 1. SPLASH SCREEN (Prevents UI Jitter)
+  if (isLoading) {
     return (
-      <div className="fixed inset-0 z-[9999] bg-slate-900 flex items-center justify-center p-4 overflow-hidden">
-        <div className="absolute inset-0 opacity-20">
-          <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-indigo-500 rounded-full blur-[120px]" />
-          <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-rose-500 rounded-full blur-[120px]" />
+      <div className="fixed inset-0 bg-slate-50 flex flex-col items-center justify-center">
+        <div className="size-20 bg-slate-900 rounded-[2rem] flex items-center justify-center shadow-2xl animate-bounce">
+          <span className="text-white font-black text-3xl italic">H</span>
+        </div>
+        <div className="mt-8 flex items-center gap-2 text-slate-400 font-black text-xs uppercase tracking-[0.3em]">
+          <Loader2 className="animate-spin size-4" />
+          Synchronizing Hub
+        </div>
+      </div>
+    );
+  }
+
+  // 2. REDIRECT IF SESSION LOST
+  if (isError || !me) {
+    navigate({ to: "/auth" });
+    return null;
+  }
+
+  // 3. THE ARMORED PIN GATE (Muscle Version)
+  if (me?.needs_pin_setup === 1) {
+    return (
+      <div className="fixed inset-0 z-[9999] bg-slate-950 flex items-center justify-center p-4">
+        <div className="absolute inset-0 overflow-hidden">
+            <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-indigo-500/20 rounded-full blur-[120px] animate-pulse" />
+            <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-rose-500/20 rounded-full blur-[120px] animate-pulse" />
         </div>
 
-        <div className="relative w-full max-w-md bg-white rounded-[4rem] p-10 shadow-2xl border-[16px] border-slate-50 text-center animate-in zoom-in-95 duration-300">
-          <div className="size-20 bg-indigo-100 rounded-3xl flex items-center justify-center mx-auto mb-6 text-indigo-600">
-            <ShieldCheck size={40} />
+        <div className="relative w-full max-w-md bg-white rounded-[4rem] p-10 shadow-[0_0_100px_rgba(0,0,0,0.5)] border-[12px] border-slate-50 text-center">
+          <div className="size-24 bg-slate-900 rounded-[2.5rem] flex items-center justify-center mx-auto mb-8 text-indigo-400 shadow-2xl border-4 border-indigo-500/20">
+            <ShieldCheck size={48} />
           </div>
           
-          <h2 className="text-3xl font-black uppercase italic tracking-tighter text-slate-900 mb-2">Secure Your Status</h2>
-          <p className="text-slate-400 font-bold text-[10px] uppercase tracking-widest mb-8 leading-relaxed">
-            You've been promoted to Admin!<br/>Set a 6-digit PIN to protect the Family Hub.
+          <h2 className="text-4xl font-black uppercase italic tracking-tighter text-slate-900 mb-2">Elevate Security</h2>
+          <p className="text-slate-400 font-bold text-[10px] uppercase tracking-[0.2em] mb-10 leading-relaxed">
+            Admin status detected.<br/>Set your 6-digit access code.
           </p>
 
-          <div className="relative mb-6">
+          <div className="relative mb-8">
             <Lock className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-300 size-6" />
             <input 
               type="password" 
               inputMode="numeric"
               maxLength={6}
+              autoFocus
               value={pinInput}
               onChange={(e) => setPinInput(e.target.value.replace(/\D/g, ""))}
-              placeholder="000000"
+              placeholder="••••••"
               className="w-full text-center text-5xl tracking-[0.4em] font-black p-8 bg-slate-50 rounded-[2.5rem] border-4 border-transparent focus:border-indigo-500 outline-none transition-all placeholder:text-slate-200"
             />
           </div>
@@ -79,103 +112,108 @@ export function AppShell({ children }: { children: ReactNode }) {
                 });
                 
                 if (res.ok) {
-                  toast.success("Security Active! Welcome, Admin.");
-                  await qc.invalidateQueries({ queryKey: ["me"] });
-                  // Force a reload to ensure all admin privileges are active
-                  window.location.reload();
+                  toast.success("Identity Verified. Welcome Admin.");
+                  window.location.reload(); 
                 } else {
-                  toast.error("Failed to set PIN. Try again.");
+                  toast.error("Security mismatch. Try again.");
                 }
               } catch (err) {
-                toast.error("Connection error");
+                toast.error("Network interface error.");
               } finally {
                 setIsSubmittingPin(false);
               }
             }}
-            className="w-full py-6 bg-slate-900 text-white rounded-[2rem] font-black text-xl shadow-xl hover:bg-indigo-600 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-20 disabled:scale-100"
+            className="w-full py-6 bg-slate-900 text-white rounded-[2.5rem] font-black text-2xl shadow-xl hover:bg-indigo-600 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-20"
           >
-            {isSubmittingPin ? "SECURING..." : "ACTIVATE ADMIN"}
+            {isSubmittingPin ? "ENCRYPTING..." : "ACTIVATE ARMOR"}
           </button>
           
-          <button onClick={signOut} className="mt-6 text-[10px] font-black text-slate-300 uppercase tracking-widest hover:text-rose-500 transition-colors">
-            Cancel & Sign Out
+          <button onClick={signOut} className="mt-8 text-[10px] font-black text-slate-300 uppercase tracking-widest hover:text-rose-500 transition-colors">
+            Exit to Gateway
           </button>
         </div>
       </div>
     );
   }
 
-  // --- STANDARD APP LAYOUT ---
+  // 4. MAIN LAYOUT
   return (
-    <div className="min-h-screen bg-canvas">
-      {/* Sidebar (desktop) */}
-      <aside className="fixed left-0 top-0 hidden h-screen w-64 flex-col border-r border-border bg-panel/70 backdrop-blur md:flex">
-        <Link to="/dashboard" className="flex items-center gap-2 px-6 py-6">
-          <div className="grid size-9 place-items-center rounded-2xl bg-primary text-primary-foreground font-display font-bold">
-            H
-          </div>
-          <span className="font-display text-lg font-bold">Family Hub</span>
-        </Link>
-        <nav className="flex-1 space-y-1 px-3">
-          {nav.map((item) => {
+    <div className="min-h-screen bg-white">
+      {/* Sidebar - Hidden on Kiosk */}
+      {!isKiosk && (
+        <aside className="fixed left-0 top-0 hidden h-screen w-64 flex-col border-r-4 border-slate-50 bg-white md:flex z-40">
+            <Link to="/dashboard" className="flex items-center gap-3 px-8 py-10">
+            <div className="grid size-10 place-items-center rounded-2xl bg-slate-900 text-white font-black text-xl italic shadow-lg">
+                H
+            </div>
+            <span className="font-display text-xl font-black uppercase italic tracking-tighter">The Hub</span>
+            </Link>
+            
+            <nav className="flex-1 space-y-2 px-4">
+            {nav.map((item) => {
+                const active = pathname === item.to || (item.to !== "/dashboard" && pathname.startsWith(item.to));
+                return (
+                <Link
+                    key={item.to}
+                    to={item.to}
+                    className={`flex items-center gap-4 rounded-2xl px-5 py-4 text-xs font-black uppercase tracking-widest transition-all ${
+                    active 
+                        ? 'bg-slate-900 text-white shadow-xl translate-x-2' 
+                        : 'text-slate-400 hover:bg-slate-50 hover:text-slate-600'
+                    }`}
+                >
+                    <item.icon className={`size-5 ${active ? 'text-indigo-400' : ''}`} />
+                    {item.label}
+                </Link>
+                );
+            })}
+            </nav>
+
+            <div className="p-4 border-t-4 border-slate-50">
+            <button
+                onClick={signOut}
+                className="flex w-full items-center gap-4 rounded-2xl px-5 py-4 text-xs font-black uppercase tracking-widest text-rose-300 hover:bg-rose-50 hover:text-rose-500 transition-all"
+            >
+                <LogOut className="size-5" />
+                Disconnect
+            </button>
+            </div>
+        </aside>
+      )}
+
+      {/* Mobile Nav - Hidden on Kiosk */}
+      {!isKiosk && (
+        <nav className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-[2.5rem] border-4 border-white bg-slate-900/90 backdrop-blur-xl px-3 py-3 shadow-2xl md:hidden">
+            {nav.slice(0, 5).map((item) => {
             const active = pathname === item.to || (item.to !== "/dashboard" && pathname.startsWith(item.to));
             return (
-              <Link
+                <Link
                 key={item.to}
                 to={item.to}
-                className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors ${
-                  active ? "bg-primary text-primary-foreground" : "text-foreground hover:bg-muted"
+                className={`grid size-14 place-items-center rounded-[1.5rem] transition-all ${
+                    active ? "bg-white text-slate-900 scale-110 shadow-lg" : "text-slate-400 hover:bg-white/10"
                 }`}
-              >
-                <item.icon className="size-4" />
-                {item.label}
-              </Link>
+                >
+                <item.icon className="size-6" />
+                </Link>
             );
-          })}
+            })}
         </nav>
-        <div className="p-3">
-          <button
-            onClick={signOut}
-            className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-muted-foreground hover:bg-muted hover:text-foreground"
-          >
-            <LogOut className="size-4" />
-            Sign out
-          </button>
-        </div>
-      </aside>
+      )}
 
-      {/* Mobile bottom nav */}
-      <nav className="fixed bottom-3 left-1/2 z-30 flex -translate-x-1/2 items-center gap-1 rounded-2xl border border-border bg-panel/95 backdrop-blur px-2 py-2 shadow-lg md:hidden">
-        {nav.map((item) => {
-          const active = pathname === item.to || (item.to !== "/dashboard" && pathname.startsWith(item.to));
-          return (
-            <Link
-              key={item.to}
-              to={item.to}
-              className={`grid size-11 place-items-center rounded-xl transition-colors ${
-                active ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
-              }`}
-              aria-label={item.label}
-            >
-              <item.icon className="size-4" />
-            </Link>
-          );
-        })}
-      </nav>
-
-      <main className="md:ml-64 pb-24 md:pb-0">{children}</main>
+      <main className={`${!isKiosk ? 'md:ml-64' : ''} min-h-screen transition-all`}>
+        {children}
+      </main>
     </div>
   );
 }
 
-/* Utility: pick css var color for a kid palette name */
-export const KID_COLORS = ["amber", "pink", "emerald", "sky", "rose", "violet"] as const;
-export type KidColor = (typeof KID_COLORS)[number];
-export function kidStyle(color: string): { background: string; color: string } {
-  const c = (KID_COLORS as readonly string[]).includes(color) ? color : "amber";
-  return { background: `var(--kid-${c}-soft)`, color: `var(--kid-${c})` };
-}
-export function kidSolid(color: string): { background: string; color: string } {
-  const c = (KID_COLORS as readonly string[]).includes(color) ? color : "amber";
-  return { background: `var(--kid-${c})`, color: "white" };
+/* Utility Styles for Family Heroes */
+export const KID_COLORS = ["amber", "pink", "emerald", "sky", "rose", "violet", "indigo", "cyan"] as const;
+
+export function kidStyle(color: string) {
+  return { 
+    backgroundColor: color || '#f1f5f9',
+    boxShadow: `0 10px 25px -5px ${color}44`
+  };
 }

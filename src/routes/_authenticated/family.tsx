@@ -1,129 +1,81 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { AppShell } from "@/components/AppShell";
+import { listMembers, updateMember } from "@/lib/hub-api";
+import { Ghost, Cat, Dog, Rabbit, Baby, User, Check, Palette } from "lucide-react";
 import { toast } from "sonner";
-import { AppShell, KID_COLORS, kidStyle } from "@/components/AppShell";
-import { addMember, deleteMember, listMembers, updateMemberRole } from "@/lib/hub-api";
-import { ShieldCheck, Trash2, UserPlus } from "lucide-react";
 
-export const Route = createFileRoute("/_authenticated/family")({
-  ssr: false,
-  component: FamilyPage,
-});
+export const Route = createFileRoute("/_authenticated/family")({ component: FamilyPage });
+
+const HERO_ICONS = [
+  { name: 'Ghost', icon: Ghost }, { name: 'Cat', icon: Cat },
+  { name: 'Dog', icon: Dog }, { name: 'Rabbit', icon: Rabbit },
+  { name: 'Kid', icon: Baby }, { name: 'Parent', icon: User }
+];
+
+const HERO_COLORS = ["#6366f1", "#ec4899", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6"];
 
 function FamilyPage() {
   const qc = useQueryClient();
-  const members = useQuery({ queryKey: ["members"], queryFn: () => listMembers() });
-  const [name, setName] = useState("");
-  const [color, setColor] = useState<string>("amber");
-  const [isKid, setIsKid] = useState(true);
+  const { data: members } = useQuery({ queryKey: ["members"], queryFn: () => listMembers() });
+  const [editingMember, setEditingMember] = useState<any>(null);
 
-  const invalidate = () => {
-    qc.invalidateQueries({ queryKey: ["members"] });
-    qc.invalidateQueries({ queryKey: ["points"] });
-  };
-
-  const add = useMutation({
-    mutationFn: (v: { name: string; avatar_color: string; is_kid: boolean }) => addMember({ data: v }),
-    onSuccess: () => { setName(""); invalidate(); toast.success("Added"); },
-    onError: (e) => toast.error(e.message),
-  });
-  const del = useMutation({
-    mutationFn: (id: string) => deleteMember({ data: { id } }),
-    onSuccess: invalidate,
-    onError: (e) => toast.error(e.message),
-  });
-  const setRole = useMutation({
-    mutationFn: (v: { id: string; is_parent: boolean }) => updateMemberRole({ data: v }),
-    onSuccess: () => { invalidate(); toast.success("Role updated"); },
-    onError: (e) => toast.error(e.message),
+  const updateMut = useMutation({
+    mutationFn: (data: any) => updateMember({ data }),
+    onSuccess: () => { toast.success("Hero Updated!"); qc.invalidateQueries(); setEditingMember(null); }
   });
 
   return (
     <AppShell>
-      <div className="mx-auto max-w-3xl px-4 py-6 md:px-8 md:py-10">
-        <header className="mb-8">
-          <p className="font-mono text-xs uppercase tracking-[0.2em] text-muted-foreground">Setup</p>
-          <h1 className="font-display text-3xl font-bold tracking-tight md:text-4xl">Family</h1>
-        </header>
-
-        <section className="mb-8 rounded-3xl border border-border bg-panel p-6">
-          <h2 className="mb-4 font-display text-lg font-bold">Add a family member</h2>
-          <form
-            className="space-y-4"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!name.trim()) return;
-              add.mutate({ name: name.trim(), avatar_color: color, is_kid: isKid });
-            }}
-          >
-            <input value={name} onChange={(e) => setName(e.target.value)}
-              className="w-full rounded-xl border border-border bg-canvas px-3 py-2.5 text-sm outline-none focus:border-foreground/40"
-              placeholder="e.g. Ada" />
-            <div>
-              <label className="mb-2 block text-xs font-semibold uppercase tracking-widest text-muted-foreground">Colour</label>
-              <div className="flex flex-wrap gap-2">
-                {KID_COLORS.map((c) => (
-                  <button type="button" key={c} onClick={() => setColor(c)}
-                    className={`size-10 rounded-2xl border-2 transition-transform ${color === c ? "border-foreground scale-105" : "border-transparent"}`}
-                    style={kidStyle(c)} aria-label={c}>
-                    <span className="font-display text-sm font-bold">{c[0]?.toUpperCase()}</span>
-                  </button>
-                ))}
+      <div className="p-8 max-w-5xl mx-auto">
+        <h1 className="text-4xl font-black uppercase italic mb-10 tracking-tighter">Family Heroes</h1>
+        
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+          {Array.isArray(members) && members.map((m: any) => (
+            <div key={m.id} onClick={() => setEditingMember(m)} className="bg-white p-8 rounded-[3rem] border-4 border-slate-50 shadow-xl flex items-center gap-6 cursor-pointer hover:scale-105 transition-all">
+              <div className="size-20 rounded-3xl flex items-center justify-center text-white shadow-lg" style={{ backgroundColor: m.avatar_color || '#ccc' }}>
+                <Cat size={40} />
+              </div>
+              <div>
+                <p className="text-2xl font-black uppercase italic text-slate-900">{m.name}</p>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Level {m.level || 1} {m.is_kid ? 'Adventurer' : 'Master'}</p>
               </div>
             </div>
-            <div className="flex gap-2">
-              <button type="button" onClick={() => setIsKid(true)}
-                className={`flex-1 rounded-xl px-3 py-2.5 text-sm font-semibold ${isKid ? "bg-primary text-primary-foreground" : "bg-canvas text-foreground"}`}>Kid</button>
-              <button type="button" onClick={() => setIsKid(false)}
-                className={`flex-1 rounded-xl px-3 py-2.5 text-sm font-semibold ${!isKid ? "bg-primary text-primary-foreground" : "bg-canvas text-foreground"}`}>Grown-up</button>
-            </div>
-            <button type="submit" disabled={add.isPending || !name.trim()}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-foreground px-4 py-2.5 text-sm font-semibold text-background disabled:opacity-50">
-              <UserPlus className="size-4" /> Add member
-            </button>
-          </form>
-        </section>
+          ))}
+        </div>
 
-        <section className="rounded-3xl border border-border bg-panel p-6">
-          <h2 className="mb-1 font-display text-lg font-bold">Members</h2>
-          <p className="mb-4 text-xs text-muted-foreground">Toggle the shield to let a member approve chore completions.</p>
-          {(members.data ?? []).length === 0 ? (
-            <p className="text-sm text-muted-foreground">No one here yet.</p>
-          ) : (
-            <ul className="space-y-2">
-              {(members.data ?? []).map((m: { id: string; name: string; avatar_color: string; is_kid: boolean; is_parent?: boolean }) => (
-                <li key={m.id} className="flex items-center gap-3 rounded-2xl bg-canvas p-3">
-                  <span className="grid size-10 place-items-center rounded-2xl font-display text-base font-bold"
-                    style={kidStyle(m.avatar_color ?? "amber")}>
-                    {(m.name ?? "?").charAt(0).toUpperCase()}
-                  </span>
-                  <div className="flex-1">
-                    <p className="font-semibold">{m.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {m.is_kid ? "Kid" : "Grown-up"}{m.is_parent ? " · Approver" : ""}
-                    </p>
+        {/* HERO CUSTOMIZER MODAL */}
+        {editingMember && (
+          <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4">
+            <div className="bg-white p-10 rounded-[4rem] border-[12px] border-slate-50 w-full max-w-xl shadow-2xl">
+              <h2 className="text-3xl font-black uppercase italic mb-8">Customize Hero</h2>
+              
+              <div className="space-y-8">
+                {/* NAME LOCK */}
+                <div>
+                  <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-4">Hero Name (Admin Only Change)</label>
+                  <input value={editingMember.name} disabled className="w-full p-5 bg-slate-50 rounded-2xl border-none font-black text-slate-300 cursor-not-allowed" />
+                </div>
+
+                {/* COLOR PICKER */}
+                <div>
+                  <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-4 flex items-center gap-2"><Palette size={14}/> Aura Color</label>
+                  <div className="flex gap-3 mt-2">
+                    {HERO_COLORS.map(c => (
+                      <button key={c} onClick={() => setEditingMember({...editingMember, avatar_color: c})} className={`size-10 rounded-full transition-all ${editingMember.avatar_color === c ? 'ring-4 ring-slate-900 scale-110' : ''}`} style={{ backgroundColor: c }} />
+                    ))}
                   </div>
-                  <button
-                    onClick={() => setRole.mutate({ id: m.id, is_parent: !m.is_parent })}
-                    className={`inline-flex items-center gap-1 rounded-xl px-2.5 py-1.5 text-xs font-semibold ${
-                      m.is_parent ? "bg-primary text-primary-foreground" : "bg-panel text-muted-foreground hover:text-foreground"
-                    }`}
-                    aria-label="Toggle approver"
-                    title="Can approve chore completions"
-                  >
-                    <ShieldCheck className="size-3.5" />
-                    {m.is_parent ? "Approver" : "Make approver"}
-                  </button>
-                  <button onClick={() => del.mutate(m.id)}
-                    className="rounded-xl p-2 text-muted-foreground hover:bg-panel hover:text-foreground" aria-label="Delete">
-                    <Trash2 className="size-4" />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
+                </div>
+
+                <button onClick={() => updateMut.mutate(editingMember)} className="w-full py-6 bg-slate-900 text-white rounded-[2rem] font-black text-xl shadow-xl hover:bg-indigo-600 transition-all">
+                  SAVE CHANGES
+                </button>
+                <button onClick={() => setEditingMember(null)} className="w-full text-xs font-black text-slate-300 uppercase">Cancel</button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </AppShell>
   );
