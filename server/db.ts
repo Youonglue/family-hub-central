@@ -13,6 +13,25 @@ db.pragma("journal_mode = WAL");
 
 export function initSchema() {
   db.exec(`
+    ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user';
+    ALTER TABLE users ADD COLUMN pin TEXT;
+    ALTER TABLE users ADD COLUMN needs_pin_setup INTEGER DEFAULT 0;
+
+    CREATE TABLE IF NOT EXISTS meals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    instructions TEXT,
+    ingredients TEXT,
+    image_url TEXT,
+    category TEXT
+     -- Ensure calendar uses 'starts_at' to match your frontend
+  CREATE TABLE IF NOT EXISTS calendar_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    location TEXT,
+    starts_at TEXT NOT NULL, 
+    member_id TEXT,
+    color TEXT
     CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, username TEXT UNIQUE, password_hash TEXT, pin_hash TEXT, is_admin INTEGER DEFAULT 0, created_at TEXT);
     CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id TEXT, expires_at TEXT);
     CREATE TABLE IF NOT EXISTS family_members (id TEXT PRIMARY KEY, name TEXT, avatar_color TEXT, avatar_url TEXT, is_kid INTEGER DEFAULT 1, is_parent INTEGER DEFAULT 0, created_at TEXT);

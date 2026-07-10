@@ -84,4 +84,29 @@ export default async function authRoutes(app: any) {
     db.prepare("UPDATE users SET pin_hash = NULL WHERE id = ?").run(user.id);
     return { success: true };
   });
+  // Add these endpoints to your auth.ts
+fastify.get('/users', async (request, reply) => {
+  const user = (request as any).user;
+  if (user.role !== 'admin') return reply.code(403).send({ error: "Admin only" });
+  return db.prepare('SELECT id, name, role, needs_pin_setup FROM users').all();
+});
+
+fastify.post('/promote', async (request, reply) => {
+  const admin = (request as any).user;
+  if (admin.role !== 'admin') return reply.code(403).send({ error: "Unauthorized" });
+
+  const { userId } = request.body as { userId: string };
+  db.prepare("UPDATE users SET role = 'admin', needs_pin_setup = 1 WHERE id = ?").run(userId);
+  return { success: true };
+});
+
+fastify.post('/set-pin', async (request, reply) => {
+  const { pin } = request.body as { pin: string };
+  const user = (request as any).user;
+  
+  if (pin.length !== 6) return reply.code(400).send({ error: "PIN must be 6 digits" });
+
+  db.prepare("UPDATE users SET pin = ?, needs_pin_setup = 0 WHERE id = ?").run(pin, user.id);
+  return { success: true };
+});
 }

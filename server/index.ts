@@ -12,6 +12,7 @@ import rewardRoutes from "./routes/rewards.js";
 import mealRoutes from "./routes/meals.js";
 import shoppingRoutes from "./routes/shopping.js";
 import kioskRoutes from "./routes/kiosk.js";
+import calendarRoutes from "./routes/calendar.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 initSchema();
@@ -57,6 +58,7 @@ app.register(shoppingRoutes, { prefix: "/api/shopping", broadcast });
 app.register(choreRoutes, { prefix: "/api", broadcast }); 
 app.register(mealRoutes, { prefix: "/api", broadcast });
 app.register(kioskRoutes, { prefix: "/api", broadcast });
+app.register(calendarRoutes, { prefix: "/api/calendar", broadcast });
 
 app.register(fastifyStatic, { root: path.join(__dirname, "../dist"), prefix: "/" });
 app.setNotFoundHandler((req, reply) => reply.sendFile("index.html"));
