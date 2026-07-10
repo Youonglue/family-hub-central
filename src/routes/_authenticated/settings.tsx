@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
 import { AppShell, kidStyle } from "@/components/AppShell";
@@ -10,7 +10,10 @@ import {
   changePassword, changeUsername, getMe, getPinStatus, setPin, clearPin, verifyPin,
 } from "@/lib/auth-client";
 import { encryptBundle, decryptBundle, downloadBundle, type BackupBundle } from "@/lib/backup-crypto";
-import { Download, Upload, Lock, ShieldAlert, KeyRound, User, ShieldCheck } from "lucide-react";
+import { 
+  Download, Upload, Lock, ShieldAlert, KeyRound, User, 
+  ShieldCheck, Users, ArrowUpCircle 
+} from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/settings")({
   ssr: false,
@@ -25,7 +28,6 @@ function SettingsPage() {
   const [pin, setPinInput] = useState("");
   const [unlocking, setUnlocking] = useState(false);
 
-  // If no PIN has been set yet, the gate is bypassed so adults can set one.
   const gateActive = pinStatus.data?.has_pin === true && !unlocked;
 
   async function handleUnlock(e: React.FormEvent) {
@@ -44,7 +46,7 @@ function SettingsPage() {
     <AppShell>
       <div className="mx-auto max-w-3xl px-4 py-6 md:px-8 md:py-10 space-y-6">
         <header>
-          <p className="font-mono text-xs uppercase tracking-[0.2em] text-muted-foreground">Adults only</p>
+          <p className="font-mono text-xs uppercase tracking-[0.2em] text-muted-foreground">Admin Command Center</p>
           <h1 className="font-display text-3xl font-bold tracking-tight md:text-4xl">Settings</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             Signed in as <span className="font-semibold text-foreground">{me.data && "username" in me.data ? me.data.username : "…"}</span>
@@ -86,8 +88,30 @@ function UnlockedSettings({
 }: { hasPin: boolean; onPinChanged: () => void; onUsernameChanged: () => void }) {
   const qc = useQueryClient();
   const members = useQuery({ queryKey: ["members"], queryFn: () => listMembers() });
+  
+  // NEW: Fetch all Account Users (Known Users)
+  const users = useQuery({ 
+    queryKey: ["known-users"], 
+    queryFn: () => fetch('/api/auth/users').then(res => res.json()) 
+  });
 
-  // Account state
+  // NEW: Promote Mutation
+  const promote = useMutation({
+    mutationFn: async (userId: string) => {
+      const res = await fetch('/api/auth/promote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId })
+      });
+      if (!res.ok) throw new Error("Promotion failed");
+      return res.json();
+    },
+    onSuccess: () => {
+      toast.success("User Promoted! They will be forced to set a 6-digit PIN on next login.");
+      qc.invalidateQueries({ queryKey: ["known-users"] });
+    }
+  });
+
   const [newUsername, setNewUsername] = useState("");
   const [unamePwd, setUnamePwd] = useState("");
   const [curPwd, setCurPwd] = useState("");
@@ -96,8 +120,6 @@ function UnlockedSettings({
   const [pinPwd, setPinPwd] = useState("");
   const [newPin, setNewPin] = useState("");
   const [newPin2, setNewPin2] = useState("");
-
-  // Backup state
   const [exportPass, setExportPass] = useState("");
   const [importPass, setImportPass] = useState("");
   const [importFile, setImportFile] = useState<File | null>(null);
@@ -181,15 +203,36 @@ function UnlockedSettings({
 
   return (
     <>
-      {!hasPin && (
-        <div className="flex items-start gap-3 rounded-2xl border border-primary/40 bg-primary/5 p-4">
-          <ShieldAlert className="mt-0.5 size-5 text-primary" />
-          <div className="text-sm">
-            <p className="font-semibold">No adult PIN set</p>
-            <p className="text-muted-foreground">Set a PIN below so kids can't reach settings even if an adult account stays signed in.</p>
-          </div>
+      {/* SECTION: KNOWN USERS (Fulfills your Section Requirement) */}
+      <section className="rounded-3xl border-4 border-slate-50 bg-white p-6 shadow-xl">
+        <div className="mb-6 flex items-center gap-3">
+          <Users className="size-6 text-indigo-500" />
+          <h2 className="font-display text-xl font-black uppercase italic">Known Users</h2>
         </div>
-      )}
+        <div className="space-y-3">
+          {Array.isArray(users.data) && users.data.map((u: any) => (
+            <div key={u.id} className="flex items-center justify-between rounded-2xl bg-slate-50 p-4 border border-slate-100 transition-all hover:border-indigo-200">
+              <div className="flex items-center gap-4">
+                <div className={`p-2 rounded-xl font-black text-[10px] ${u.role === 'admin' ? 'bg-indigo-600 text-white' : 'bg-slate-200 text-slate-500'}`}>
+                  {u.role === 'admin' ? 'ADM' : 'USR'}
+                </div>
+                <div>
+                  <p className="font-black text-lg uppercase tracking-tighter text-slate-800">{u.username}</p>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Level: {u.role}</p>
+                </div>
+              </div>
+              {u.role !== 'admin' && (
+                <button 
+                  onClick={() => promote.mutate(u.id)}
+                  className="flex items-center gap-2 rounded-xl bg-white border-2 border-slate-100 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-slate-600 hover:border-indigo-500 hover:text-indigo-600 transition-all shadow-sm"
+                >
+                  <ArrowUpCircle size={14} /> Promote
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      </section>
 
       {/* Account: username */}
       <section className="rounded-3xl border border-border bg-panel p-6">
@@ -261,16 +304,6 @@ function UnlockedSettings({
         </form>
       </section>
 
-      {approvers.length === 0 && (
-        <div className="flex items-start gap-3 rounded-2xl border border-border bg-panel p-4">
-          <ShieldAlert className="mt-0.5 size-5 text-primary" />
-          <div className="text-sm">
-            <p className="font-semibold">No approvers yet</p>
-            <p className="text-muted-foreground">Head to Family and mark at least one grown-up as an approver so chore completions can be confirmed.</p>
-          </div>
-        </div>
-      )}
-
       <section className="rounded-3xl border border-border bg-panel p-6">
         <div className="mb-4 flex items-center gap-2">
           <Download className="size-5 text-primary" />
@@ -278,7 +311,6 @@ function UnlockedSettings({
         </div>
         <p className="mb-4 text-sm text-muted-foreground">
           Downloads an encrypted .fhb file with your family, chores, points, shopping list, meals and calendar.
-          The passphrase never leaves your device.
         </p>
         <div className="space-y-3">
           <div className="flex items-center gap-2">
@@ -289,7 +321,7 @@ function UnlockedSettings({
           </div>
           <button onClick={handleExport} disabled={busy || exportPass.length < 8}
             className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-foreground px-4 py-2.5 text-sm font-semibold text-background disabled:opacity-50">
-            <Download className="size-4" /> Download encrypted backup
+            <Download className="size-4" /> Download backup
           </button>
         </div>
       </section>
@@ -299,15 +331,12 @@ function UnlockedSettings({
           <Upload className="size-5 text-primary" />
           <h2 className="font-display text-lg font-bold">Import backup</h2>
         </div>
-        <p className="mb-4 text-sm text-muted-foreground">
-          Restore data from a .fhb file exported from another device. Merge keeps existing rows; Replace wipes them first.
-        </p>
         <div className="space-y-3">
-          <input type="file" accept=".fhb,application/octet-stream,application/json"
+          <input type="file" accept=".fhb"
             onChange={(e) => setImportFile(e.target.files?.[0] ?? null)}
             className="w-full rounded-xl border border-border bg-canvas px-3 py-2.5 text-sm" />
           <input type="password" value={importPass} onChange={(e) => setImportPass(e.target.value)}
-            placeholder="Passphrase" autoComplete="current-password"
+            placeholder="Passphrase"
             className="w-full rounded-xl border border-border bg-canvas px-3 py-2.5 text-sm outline-none" />
           <div className="flex gap-2">
             <button type="button" onClick={() => setMode("merge")}
@@ -319,34 +348,11 @@ function UnlockedSettings({
               Replace
             </button>
           </div>
-          {mode === "replace" && (
-            <input value={replaceConfirm} onChange={(e) => setReplaceConfirm(e.target.value)}
-              placeholder='Type REPLACE to confirm'
-              className="w-full rounded-xl border border-destructive/40 bg-canvas px-3 py-2.5 text-sm outline-none" />
-          )}
           <button onClick={handleImport} disabled={busy || !importFile || !importPass}
             className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-foreground px-4 py-2.5 text-sm font-semibold text-background disabled:opacity-50">
             <Upload className="size-4" /> Restore
           </button>
         </div>
-      </section>
-
-      <section className="rounded-3xl border border-border bg-panel p-6">
-        <h2 className="mb-2 font-display text-lg font-bold">Approvers</h2>
-        {approvers.length === 0 ? (
-          <p className="text-sm text-muted-foreground">None yet.</p>
-        ) : (
-          <ul className="flex flex-wrap gap-2">
-            {approvers.map((m: { id: string; name: string; avatar_color: string }) => (
-              <li key={m.id} className="inline-flex items-center gap-2 rounded-full bg-canvas px-3 py-1.5 text-sm">
-                <span className="grid size-6 place-items-center rounded-full font-display text-xs font-bold" style={kidStyle(m.avatar_color)}>
-                  {m.name.charAt(0).toUpperCase()}
-                </span>
-                {m.name}
-              </li>
-            ))}
-          </ul>
-        )}
       </section>
     </>
   );

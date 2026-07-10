@@ -1,9 +1,10 @@
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
-import { LayoutDashboard, Trophy, ShoppingCart, ChefHat, Calendar, Users, Settings, LogOut } from "lucide-react";
-import type { ReactNode } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { LayoutDashboard, Trophy, ShoppingCart, ChefHat, Calendar, Users, Settings, LogOut, ShieldCheck, Lock } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLanLive } from "@/hooks/useLanLive";
-import { logout } from "@/lib/auth-client";
+import { logout, getMe } from "@/lib/auth-client";
+import { toast } from "sonner";
 
 const nav = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -19,7 +20,12 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const qc = useQueryClient();
-  useLanLive(); // WebSocket live sync from the local Node server
+  useLanLive(); 
+
+  // Fetch current user to check for PIN setup requirement
+  const me = useQuery({ queryKey: ["me"], queryFn: () => getMe() });
+  const [pinInput, setPinInput] = useState("");
+  const [isSubmittingPin, setIsSubmittingPin] = useState(false);
 
   async function signOut() {
     await qc.cancelQueries();
@@ -28,6 +34,78 @@ export function AppShell({ children }: { children: ReactNode }) {
     navigate({ to: "/auth", replace: true });
   }
 
+  // --- 6-DIGIT PIN GATEKEEPER ---
+  // If the user has been promoted to Admin, they MUST set a PIN before accessing the app.
+  if (me.data && "needs_pin_setup" in me.data && me.data.needs_pin_setup === 1) {
+    return (
+      <div className="fixed inset-0 z-[9999] bg-slate-900 flex items-center justify-center p-4 overflow-hidden">
+        <div className="absolute inset-0 opacity-20">
+          <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-indigo-500 rounded-full blur-[120px]" />
+          <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-rose-500 rounded-full blur-[120px]" />
+        </div>
+
+        <div className="relative w-full max-w-md bg-white rounded-[4rem] p-10 shadow-2xl border-[16px] border-slate-50 text-center animate-in zoom-in-95 duration-300">
+          <div className="size-20 bg-indigo-100 rounded-3xl flex items-center justify-center mx-auto mb-6 text-indigo-600">
+            <ShieldCheck size={40} />
+          </div>
+          
+          <h2 className="text-3xl font-black uppercase italic tracking-tighter text-slate-900 mb-2">Secure Your Status</h2>
+          <p className="text-slate-400 font-bold text-[10px] uppercase tracking-widest mb-8 leading-relaxed">
+            You've been promoted to Admin!<br/>Set a 6-digit PIN to protect the Family Hub.
+          </p>
+
+          <div className="relative mb-6">
+            <Lock className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-300 size-6" />
+            <input 
+              type="password" 
+              inputMode="numeric"
+              maxLength={6}
+              value={pinInput}
+              onChange={(e) => setPinInput(e.target.value.replace(/\D/g, ""))}
+              placeholder="000000"
+              className="w-full text-center text-5xl tracking-[0.4em] font-black p-8 bg-slate-50 rounded-[2.5rem] border-4 border-transparent focus:border-indigo-500 outline-none transition-all placeholder:text-slate-200"
+            />
+          </div>
+
+          <button 
+            disabled={pinInput.length !== 6 || isSubmittingPin}
+            onClick={async () => {
+              setIsSubmittingPin(true);
+              try {
+                const res = await fetch('/api/auth/set-pin', {
+                  method: 'POST',
+                  headers: {'Content-Type': 'application/json'},
+                  body: JSON.stringify({ pin: pinInput })
+                });
+                
+                if (res.ok) {
+                  toast.success("Security Active! Welcome, Admin.");
+                  await qc.invalidateQueries({ queryKey: ["me"] });
+                  // Force a reload to ensure all admin privileges are active
+                  window.location.reload();
+                } else {
+                  toast.error("Failed to set PIN. Try again.");
+                }
+              } catch (err) {
+                toast.error("Connection error");
+              } finally {
+                setIsSubmittingPin(false);
+              }
+            }}
+            className="w-full py-6 bg-slate-900 text-white rounded-[2rem] font-black text-xl shadow-xl hover:bg-indigo-600 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-20 disabled:scale-100"
+          >
+            {isSubmittingPin ? "SECURING..." : "ACTIVATE ADMIN"}
+          </button>
+          
+          <button onClick={signOut} className="mt-6 text-[10px] font-black text-slate-300 uppercase tracking-widest hover:text-rose-500 transition-colors">
+            Cancel & Sign Out
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // --- STANDARD APP LAYOUT ---
   return (
     <div className="min-h-screen bg-canvas">
       {/* Sidebar (desktop) */}

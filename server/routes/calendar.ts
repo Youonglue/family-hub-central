@@ -35,10 +35,15 @@ export default async function calendarRoutes(app: any, opts: any) {
     return { success: true };
   });
 
-  // 4. Bulk Delete View (Day/Week/Month/Year)
+  // 4. Bulk Delete View (Day/Week/Month/Year) - FIXED WITH DATE() WRAPPER
   app.delete("/range", async (req: any) => {
     const { start, end } = req.query;
-    db.prepare("DELETE FROM events WHERE starts_at BETWEEN ? AND ?").run(start, end);
+    
+    // Using DATE() ensures SQLite treats the strings as strict dates for the comparison
+    // This fixes the issue where Day/Week/Month wipes would occasionally fail
+    db.prepare("DELETE FROM events WHERE DATE(starts_at) BETWEEN DATE(?) AND DATE(?)")
+      .run(start, end);
+      
     broadcast("CALENDAR_UPDATED");
     return { success: true };
   });
