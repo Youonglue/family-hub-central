@@ -1,29 +1,4 @@
-import Database from "better-sqlite3";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DB_PATH = path.join(__dirname, "../data/familyhub.db");
-mkdirSync(path.join(__dirname, "../data"), { recursive: true });
-const db = new Database(DB_PATH);
-
-console.log("🥘 Wiping old data and seeding exactly 100 real meals...");
-
-db.exec(`
-  DROP TABLE IF EXISTS recipes;
-  CREATE TABLE recipes (
-    id TEXT PRIMARY KEY, 
-    name TEXT, 
-    category TEXT, 
-    prep_time INTEGER, 
-    instructions TEXT, 
-    ingredients TEXT, 
-    image_url TEXT, 
-    created_at TEXT
-  );
-`);
 
 const raw = [
   // --- BREAKFAST (34) ---
@@ -133,17 +108,23 @@ const raw = [
   { name: "Fish & Chips with Mushy Peas", cat: "Dinner", prep: 30, ing: "Cod, Batter, Potatoes, Peas", ins: "1. Fry chips. 2. Batter and fry fish. 3. Puree peas with butter.", img: "https://images.unsplash.com/photo-1512838243191-e81e8f66f1fd?w=600" }
 ];
 
-console.log(`🚀 Starting seed of exactly ${raw.length} recipes...`);
+export async function autoSeedRecipes(db: any) {
+  const count = (db.prepare("SELECT COUNT(*) as n FROM recipes").get() as any).n;
+  if (count > 0) return;
 
-const insert = db.prepare(`
-  INSERT INTO recipes (id, name, category, prep_time, instructions, ingredients, image_url, created_at) 
-  VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
-`);
+  console.log(`🚀 Starting auto-seed of exactly ${raw.length} high-quality meals...`);
 
-db.transaction(() => {
-  for (const r of raw) {
-    insert.run(randomUUID(), r.name, r.cat, r.prep, r.ins, r.ing, r.img);
-  }
-})();
+  const insert = db.prepare(`
+    INSERT INTO recipes (id, name, category, prep_time, instructions, ingredients, image_url, created_at) 
+    VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+  `);
 
-console.log("✅ Success! Your Cookbook has 100 high-quality meals.");
+  db.transaction(() => {
+    for (const r of raw) {
+      insert.run(randomUUID(), r.name, r.cat, r.prep, r.ins, r.ing, r.img);
+    }
+  })();
+
+  console.log("✅ Success! Modular Seeder has populated the Cookbook.");
+}
+this contains all 100 recipes. this is what i want to merge step 1 with
