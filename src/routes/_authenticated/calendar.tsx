@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/AppShell";
-import { listEvents, listMembers, deleteEvent } from "@/lib/hub-api";
+import { deleteEvent, listEvents, listMembers } from "@/lib/hub-api";
 import { holidayMapForYears } from "@/lib/uk-holidays";
 import { 
   format, 
@@ -52,14 +52,11 @@ function CalendarPage() {
   const inv = () => { qc.invalidateQueries({ queryKey: ["events"] }); };
 
   // --- DELETE LOGIC ---
-
-  // 1. Individual Delete
   const del = useMutation({ 
     mutationFn: (id: string) => deleteEvent({ data: { id } }), 
     onSuccess: () => { toast.success("Quest Removed"); inv(); } 
   });
   
-  // 2. View-Based Bulk Delete (Wiper)
   const wipeViewMutation = useMutation({
     mutationFn: async (range: { start: string, end: string }) => {
       const res = await fetch(`/api/calendar/range?start=${range.start}&end=${range.end}`, { method: 'DELETE' });
@@ -68,36 +65,31 @@ function CalendarPage() {
     onSuccess: () => {
       toast.success(`Cleared all quests for this ${view}`);
       inv();
+      setDayViewDate(null);
     }
   });
 
   const handleWipeCurrentView = () => {
     let start, end;
-    if (view === "day") {
-      start = end = ymd(anchor);
-    } else if (view === "week") {
-      start = ymd(fnsStartOfWeek(anchor, { weekStartsOn: 1 }));
-      end = ymd(fnsEndOfWeek(anchor, { weekStartsOn: 1 }));
-    } else if (view === "month") {
-      start = ymd(fnsStartOfMonth(anchor));
-      end = ymd(fnsEndOfMonth(anchor));
-    } else {
-      start = ymd(fnsStartOfYear(anchor));
-      end = ymd(fnsEndOfYear(anchor));
-    }
+    if (view === "day") { start = end = ymd(anchor); }
+    else if (view === "week") { start = ymd(fnsStartOfWeek(anchor, { weekStartsOn: 1 })); end = ymd(fnsEndOfWeek(anchor, { weekStartsOn: 1 })); }
+    else if (view === "month") { start = ymd(fnsStartOfMonth(anchor)); end = ymd(fnsEndOfMonth(anchor)); }
+    else { start = ymd(fnsStartOfYear(anchor)); end = ymd(fnsEndOfYear(anchor)); }
 
     if (window.confirm(`Wipe ALL quests for this ${view} (${start} to ${end})?`)) {
       wipeViewMutation.mutate({ start, end });
     }
   };
 
-  // --- VIEW CALCULATIONS ---
-
-  const memberColorMap = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const mem of memberList) m.set(mem.id, mem.avatar_color);
+  const byDay = useMemo(() => {
+    const m = new Map<string, any[]>();
+    for (const e of eventList) {
+      const key = e.starts_at; // Matches the DB field
+      const arr = m.get(key) ?? [];
+      arr.push(e); m.set(key, arr);
+    }
     return m;
-  }, [memberList]);
+  }, [eventList, memberFilter]);
 
   const filteredEvents = useMemo(() => {
     return eventList.filter((e: any) => !memberFilter || e.member_id === memberFilter);
@@ -109,16 +101,6 @@ function CalendarPage() {
       return d.getMonth() === anchor.getMonth() && d.getFullYear() === anchor.getFullYear();
     }).sort((a: any, b: any) => a.starts_at.localeCompare(b.starts_at));
   }, [filteredEvents, anchor]);
-
-  const byDay = useMemo(() => {
-    const m = new Map<string, any[]>();
-    for (const e of filteredEvents) {
-      const key = ymd(new Date(e.starts_at));
-      const arr = m.get(key) ?? [];
-      arr.push(e); m.set(key, arr);
-    }
-    return m;
-  }, [filteredEvents]);
 
   const holidays = useMemo(() => holidayMapForYears([anchor.getFullYear()]), [anchor]);
 
@@ -142,8 +124,6 @@ function CalendarPage() {
     return anchor.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" });
   }, [anchor, view]);
 
-  const toggleDate = (dateKey: string) => setSelectedDates(prev => prev.includes(dateKey) ? prev.filter(d => d !== dateKey) : [...prev, dateKey]);
-
   return (
     <AppShell>
       <div className="mx-auto max-w-[1500px] px-4 py-6 md:px-8">
@@ -156,23 +136,15 @@ function CalendarPage() {
              </div>
              <div>
                <h1 className="font-display text-4xl font-black tracking-tight text-slate-900 uppercase italic">Family Quests</h1>
-               <p className="text-slate-500 font-bold uppercase text-[10px] tracking-widest">The Great Family Adventure Log</p>
+               <p className="text-slate-500 font-bold uppercase text-[10px] tracking-widest">Adventure Log</p>
              </div>
           </div>
           
           <div className="flex items-center gap-3">
-            {/* WIPE BUTTON */}
-            <button 
-              onClick={handleWipeCurrentView}
-              className="flex items-center gap-2 rounded-2xl bg-rose-50 px-6 py-4 text-xs font-black text-rose-600 hover:bg-rose-100 transition-all border-2 border-rose-100"
-            >
+            <button onClick={handleWipeCurrentView} className="flex items-center gap-2 rounded-2xl bg-rose-50 px-6 py-4 text-xs font-black text-rose-600 border-2 border-rose-100 hover:bg-rose-100 transition-all">
               <Trash2 className="size-4" /> CLEAR {view.toUpperCase()}
             </button>
-
-            <button
-              onClick={() => setShowAddModal(true)}
-              className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-8 py-4 text-sm font-black text-white shadow-xl hover:bg-indigo-600 hover:scale-105 transition-all"
-            >
+            <button onClick={() => setShowAddModal(true)} className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-8 py-4 text-sm font-black text-white shadow-xl hover:bg-primary transition-all">
               <CalendarPlus className="size-5" /> NEW QUEST
             </button>
           </div>
@@ -182,52 +154,31 @@ function CalendarPage() {
         <div className="mb-8 flex flex-wrap items-center gap-4">
           <div className="flex items-center gap-1 bg-white p-1.5 rounded-2xl border-4 border-slate-50 shadow-sm">
             {(["year", "month", "week", "day"] as ViewMode[]).map((v) => (
-              <button key={v} onClick={() => setView(v)} className={`rounded-xl px-5 py-2 text-xs font-black uppercase tracking-tighter transition-all ${view === v ? "bg-slate-900 text-white shadow-lg" : "text-slate-400 hover:text-slate-600"}`}>
+              <button key={v} onClick={() => setView(v)} className={`rounded-xl px-5 py-2 text-xs font-black uppercase transition-all ${view === v ? "bg-slate-900 text-white shadow-lg" : "text-slate-400 hover:text-slate-600"}`}>
                 {v}
               </button>
             ))}
           </div>
-
           <div className="flex items-center gap-2">
-            <button onClick={() => navigate(-1)} className="p-3 bg-white border-4 border-slate-50 rounded-2xl shadow-sm hover:bg-slate-50"><ChevronLeft className="size-5"/></button>
-            <button onClick={() => setAnchor(startOfDay(new Date()))} className="px-6 py-3 bg-white border-4 border-slate-50 rounded-2xl shadow-sm font-black text-xs uppercase tracking-widest">Today</button>
-            <button onClick={() => navigate(1)} className="p-3 bg-white border-4 border-slate-50 rounded-2xl shadow-sm hover:bg-slate-50"><ChevronRight className="size-5"/></button>
+            <button onClick={() => navigate(-1)} className="p-3 bg-white border-4 border-slate-50 rounded-2xl shadow-sm"><ChevronLeft /></button>
+            <button onClick={() => setAnchor(new Date())} className="px-6 py-3 bg-white border-4 border-slate-50 rounded-2xl shadow-sm font-black text-xs uppercase tracking-widest">Today</button>
+            <button onClick={() => navigate(1)} className="p-3 bg-white border-4 border-slate-50 rounded-2xl shadow-sm"><ChevronRight /></button>
           </div>
-
           <h2 className="text-2xl font-black text-slate-800 uppercase italic ml-2">{headerLabel}</h2>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-          
-          {/* VIEWS */}
           <div className="lg:col-span-3">
             {view === "year" && <YearView year={anchor.getFullYear()} byDay={byDay} onPickMonth={(m: any) => { setAnchor(new Date(anchor.getFullYear(), m, 1)); setView("month"); }} />}
-            {view === "month" && <MonthView anchor={anchor} byDay={byDay} onPickDay={(d: any) => setDayViewDate(d)} selectedDates={selectedDates} onToggleDate={toggleDate} />}
+            {view === "month" && <MonthView anchor={anchor} byDay={byDay} onPickDay={(d: any) => setDayViewDate(d)} selectedDates={selectedDates} onToggleDate={(k: any) => setSelectedDates(prev => prev.includes(k) ? prev.filter(x => x !== k) : [...prev, k])} />}
             {view === "week" && <WeekView anchor={anchor} byDay={byDay} onPickDay={(d: any) => setDayViewDate(d)} />}
             {view === "day" && <DayView day={anchor} byDay={byDay} onDelete={(id: any) => del.mutate(id)} />}
           </div>
 
-          {/* SIDEBAR */}
           <aside className="space-y-8">
-             <section className="bg-slate-900 text-white p-8 rounded-[3rem] shadow-2xl relative overflow-hidden">
-               <Users className="absolute -right-6 -top-6 size-32 text-white/5 rotate-12" />
-               <h3 className="text-xl font-black uppercase italic tracking-tighter mb-6 relative">Family Filter</h3>
-               <div className="flex flex-col gap-3 relative">
-                  <button onClick={() => setMemberFilter(null)} className={`flex items-center gap-3 p-4 rounded-2xl font-black transition-all text-sm uppercase tracking-tighter ${!memberFilter ? 'bg-white text-slate-900 shadow-lg' : 'bg-white/5 text-slate-300'}`}>
-                    Everyone
-                  </button>
-                  {memberList.map(m => (
-                    <button key={m.id} onClick={() => setMemberFilter(m.id)} className={`flex items-center gap-3 p-4 rounded-2xl font-black transition-all text-sm uppercase tracking-tighter ${memberFilter === m.id ? 'bg-white text-slate-900 shadow-lg' : 'bg-white/5 text-slate-300'}`}>
-                      <div className="size-4 rounded-full" style={{ backgroundColor: m.avatar_color }} />
-                      {m.name}
-                    </button>
-                  ))}
-               </div>
-             </section>
-
              <section className="bg-white p-8 rounded-[3rem] border-4 border-slate-50 shadow-xl min-h-[500px]">
                <h3 className="text-xl font-black uppercase italic tracking-tighter mb-6 flex items-center gap-2 text-slate-900">
-                 <CalendarIcon className="text-primary" /> Month Agenda
+                 <CalendarIcon className="text-primary" /> Agenda
                </h3>
                <div className="space-y-4">
                  {monthAgenda.map((e: any) => (
@@ -236,13 +187,10 @@ function CalendarPage() {
                          <p className="text-[10px] font-black text-slate-400 uppercase">{new Date(e.starts_at).toLocaleDateString(undefined, { weekday: 'short' })}</p>
                          <p className="text-2xl font-black text-slate-900">{new Date(e.starts_at).getDate()}</p>
                       </div>
-                      <div className="flex-1 bg-slate-50 p-4 rounded-2xl group-hover:bg-slate-100 transition-all border-l-4" style={{ borderColor: e.color || 'gray' }}>
+                      <div className="flex-1 bg-slate-50 p-4 rounded-2xl group-hover:bg-slate-100 transition-all border-l-4 relative" style={{ borderColor: e.color || 'gray' }}>
                          <p className="font-black text-sm text-slate-800 leading-tight">{e.title}</p>
-                         <button 
-                           onClick={() => del.mutate(e.id)}
-                           className="absolute right-2 top-2 p-1 text-slate-300 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all"
-                         >
-                           <X size={14} />
+                         <button onClick={() => del.mutate(e.id)} className="absolute right-2 top-2 p-2 text-slate-300 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all">
+                           <X size={16} />
                          </button>
                       </div>
                    </div>
@@ -252,23 +200,70 @@ function CalendarPage() {
           </aside>
         </div>
 
-        {/* DAY MODAL */}
+        {/* DAY VIEW / MOBILE DELETE MODAL */}
         {dayViewDate && (
-          <div className="fixed inset-0 z-40 grid place-items-center bg-slate-900/60 backdrop-blur-sm p-4" onClick={() => setDayViewDate(null)}>
+          <div className="fixed inset-0 z-50 grid place-items-center bg-slate-900/60 backdrop-blur-sm p-4" onClick={() => setDayViewDate(null)}>
             <div className="w-full max-w-2xl bg-white rounded-[3rem] p-8 shadow-2xl border-[12px] border-slate-50" onClick={e => e.stopPropagation()}>
                <div className="flex justify-between items-center mb-6">
-                 <h2 className="text-3xl font-black uppercase italic text-slate-900">{dayViewDate.toLocaleDateString()}</h2>
-                 <button onClick={() => setDayViewDate(null)} className="p-3 bg-slate-100 rounded-full hover:text-rose-500"><X /></button>
+                 <h2 className="text-3xl font-black uppercase italic tracking-tighter text-slate-900">{dayViewDate.toLocaleDateString()}</h2>
+                 <button onClick={() => setDayViewDate(null)} className="p-3 bg-slate-100 rounded-full"><X /></button>
                </div>
-               <div className="space-y-4">
+               <div className="space-y-4 max-h-[60vh] overflow-y-auto">
                  {(byDay.get(ymd(dayViewDate)) ?? []).map((e: any) => (
                    <div key={e.id} className="bg-slate-50 p-6 rounded-[2rem] flex items-center justify-between border-2 border-slate-100">
-                      <p className="font-black text-2xl uppercase text-slate-800">{e.title}</p>
-                      <button onClick={() => { del.mutate(e.id); setDayViewDate(null); }} className="bg-white border px-4 py-2 rounded-xl font-black hover:text-rose-500 shadow-sm">DELETE</button>
+                      <div className="flex items-center gap-4">
+                        <div className="h-16 w-16 rounded-2xl flex items-center justify-center text-white" style={{backgroundColor: e.color || 'gray'}}><Sword /></div>
+                        <p className="font-black text-2xl uppercase tracking-tighter text-slate-800">{e.title}</p>
+                      </div>
+                      <button onClick={() => { del.mutate(e.id); setDayViewDate(null); }} className="h-20 w-20 bg-white text-rose-500 rounded-2xl flex items-center justify-center shadow-lg active:scale-90 transition-all">
+                        <Trash2 size={32} />
+                      </button>
                    </div>
                  ))}
                </div>
             </div>
+          </div>
+        )}
+
+        {/* NEW QUEST MODAL */}
+        {showAddModal && (
+          <div className="fixed inset-0 z-[100] grid place-items-center bg-slate-900/60 backdrop-blur-md p-4" onClick={() => setShowAddModal(false)}>
+             <div className="w-full max-w-xl bg-white rounded-[4rem] p-10 shadow-2xl border-[12px] border-slate-50" onClick={e => e.stopPropagation()}>
+               <h2 className="text-4xl font-black italic uppercase tracking-tighter text-slate-900 mb-8">New Quest</h2>
+               <form className="space-y-6" onSubmit={async (e) => {
+                  e.preventDefault();
+                  const target = e.target as any;
+                  const dates = selectedDates.length > 0 ? selectedDates : [ymd(anchor)];
+                  await fetch('/api/calendar', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                      title: target.title.value,
+                      location: target.location.value,
+                      member_id: target.member.value || null,
+                      color: target.color.value,
+                      dates: dates
+                    })
+                  });
+                  toast.success("Quests Logged!");
+                  setSelectedDates([]); setShowAddModal(false); inv();
+               }}>
+                  <input name="title" required placeholder="Quest Name" className="w-full p-6 bg-slate-50 rounded-3xl border-4 border-transparent focus:border-primary outline-none font-black text-xl" />
+                  <input name="location" placeholder="Location" className="w-full p-6 bg-slate-50 rounded-3xl border-4 border-transparent focus:border-primary outline-none font-bold" />
+                  <div className="grid grid-cols-2 gap-4">
+                    <select name="member" className="p-5 bg-slate-50 rounded-3xl font-black uppercase text-xs">
+                      <option value="">Whole Family</option>
+                      {memberList.map((m: any) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                    </select>
+                    <select name="color" className="p-5 bg-slate-50 rounded-3xl font-black uppercase text-xs">
+                      {EVENT_COLORS.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  </div>
+                  <button type="submit" className="w-full bg-slate-900 text-white py-6 rounded-[2.5rem] font-black text-2xl shadow-2xl hover:bg-primary transition-all flex items-center justify-center gap-3">
+                    <Check size={32} /> LOG QUESTS
+                  </button>
+               </form>
+             </div>
           </div>
         )}
       </div>
@@ -276,7 +271,10 @@ function CalendarPage() {
   );
 }
 
-// Sub-components YearView, MonthView, WeekView, DayView stay largely the same as your original
+// ────────────────────────────────────────────────────────────────────────────
+// SUB-VIEWS (Styled for Quests)
+// ────────────────────────────────────────────────────────────────────────────
+
 function YearView({ year, byDay, onPickMonth }: any) {
   return (
     <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -288,7 +286,7 @@ function YearView({ year, byDay, onPickMonth }: any) {
             <p className="mb-4 font-black text-xl uppercase italic tracking-tighter">{name}</p>
             <div className="grid grid-cols-7 gap-1 text-[9px] font-black text-slate-300">
               {days.map(d => {
-                const hasEv = byDay.get(ymd(d))?.length > 0;
+                const hasEv = (byDay.get(ymd(d)) ?? []).length > 0;
                 return (
                   <div key={ymd(d)} className={`aspect-square grid place-items-center relative ${d.getMonth() === mi ? "text-slate-900" : "text-slate-100"}`}>
                     {d.getDate()}
@@ -304,38 +302,33 @@ function YearView({ year, byDay, onPickMonth }: any) {
   );
 }
 
-      // Replace your MonthView function with this mobile-optimized version
-     function MonthView({ anchor, byDay, onPickDay, onToggleDate, selectedDates }: any) {
+function MonthView({ anchor, byDay, onPickDay, onToggleDate, selectedDates }: any) {
   const gridStart = startOfMonthGrid(anchor);
   const days = Array.from({ length: 42 }, (_, i) => addDaysL(gridStart, i));
-
   return (
-    <div className="bg-white rounded-[2rem] border-4 border-slate-50 shadow-xl p-2 md:p-6">
+    <div className="bg-white rounded-[3rem] border-4 border-slate-50 shadow-xl p-2 md:p-6">
       <div className="grid grid-cols-7 gap-1 md:gap-3">
         {days.map((d) => {
           const key = ymd(d);
           const evs = byDay.get(key) ?? [];
           const isSelected = selectedDates.includes(key);
-          
+          const isToday = key === ymd(new Date());
           return (
             <div
               key={key}
               onClick={() => onToggleDate(key)}
-              className={`min-h-[80px] md:min-h-[140px] p-1 md:p-3 rounded-xl md:rounded-[2rem] border-2 md:border-4 transition-all ${
-                isSelected ? "border-primary bg-primary/5" : "border-slate-50 bg-white"
+              className={`min-h-[90px] md:min-h-[140px] p-2 md:p-3 rounded-2xl md:rounded-[2rem] border-2 md:border-4 transition-all cursor-pointer flex flex-col ${
+                isSelected ? "border-primary bg-primary/5 scale-95" : 
+                isToday ? "border-slate-900 bg-slate-50" : "border-slate-50 bg-white hover:border-slate-200"
               } ${d.getMonth() !== anchor.getMonth() ? "opacity-20" : ""}`}
             >
-              <div className="flex justify-between items-center mb-1">
-                <span 
-                  onClick={(e) => { e.stopPropagation(); onPickDay(d); }} 
-                  className="text-xs md:text-sm font-black p-1 bg-slate-100 rounded-lg"
-                >
-                  {d.getDate()}
-                </span>
+              <div className="flex justify-between items-center mb-1 md:mb-2">
+                <span onClick={(e) => { e.stopPropagation(); onPickDay(d); }} className="text-[10px] md:text-sm font-black p-1 bg-slate-100 rounded-lg hover:underline">{d.getDate()}</span>
+                {isSelected && <Check className="size-3 text-primary" />}
               </div>
-              <div className="space-y-1">
-                {evs.map((e: any) => (
-                  <div key={e.id} className="text-[7px] md:text-[9px] font-bold px-1 py-0.5 rounded bg-indigo-500 text-white truncate">
+              <div className="space-y-0.5 md:space-y-1">
+                {evs.slice(0, 3).map((e: any) => (
+                  <div key={e.id} className="text-[7px] md:text-[9px] font-bold px-1 py-0.5 rounded shadow-sm text-white truncate" style={{ backgroundColor: e.color || 'gray' }}>
                     {e.title}
                   </div>
                 ))}
@@ -353,18 +346,22 @@ function WeekView({ anchor, byDay, onPickDay }: any) {
   const days = Array.from({ length: 7 }, (_, i) => addDaysL(start, i));
   return (
     <div className="grid grid-cols-1 md:grid-cols-7 gap-4">
-      {days.map(d => (
-        <div key={ymd(d)} className="bg-white rounded-[2.5rem] border-4 border-slate-50 p-6 min-h-[400px] shadow-lg cursor-pointer hover:border-slate-200" onClick={() => onPickDay(d)}>
-           <p className="text-3xl font-black mb-6 text-slate-900">{d.getDate()}</p>
-           <div className="space-y-3">
-             {(byDay.get(ymd(d)) ?? []).map((e: any) => (
-               <div key={e.id} className="p-4 rounded-2xl bg-slate-50 border-l-4" style={{ borderLeftColor: e.color || 'gray' }}>
-                  <p className="font-black text-sm leading-tight">{e.title}</p>
-               </div>
-             ))}
-           </div>
-        </div>
-      ))}
+      {days.map(d => {
+        const key = ymd(d);
+        const evs = byDay.get(key) ?? [];
+        return (
+          <div key={key} className="bg-white rounded-[2.5rem] border-4 border-slate-50 p-6 min-h-[400px] shadow-lg cursor-pointer hover:border-slate-200 transition-all" onClick={() => onPickDay(d)}>
+             <p className="text-3xl font-black mb-6 text-slate-900">{d.getDate()}</p>
+             <div className="space-y-3">
+               {evs.map((e: any) => (
+                 <div key={e.id} className="p-4 rounded-2xl bg-slate-50 border-l-4" style={{ borderLeftColor: e.color || 'gray' }}>
+                    <p className="font-black text-sm leading-tight text-slate-800">{e.title}</p>
+                 </div>
+               ))}
+             </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -373,25 +370,20 @@ function DayView({ day, byDay, onDelete }: any) {
   const evs = byDay.get(ymd(day)) ?? [];
   return (
     <div className="bg-white rounded-[4rem] border-8 border-slate-50 p-10 shadow-2xl min-h-[600px]">
-       <h2 className="text-5xl font-black uppercase italic text-slate-900 mb-10">Daily Log</h2>
+       <h2 className="text-5xl font-black uppercase italic tracking-tighter text-slate-900 mb-10">Daily Log</h2>
        <div className="grid gap-6">
          {evs.map((e: any) => (
-           <div key={e.id} className="flex items-center gap-6 p-6 bg-slate-50 rounded-[2.5rem] group border-2 border-transparent hover:border-slate-200">
-              <div className="size-20 rounded-3xl flex items-center justify-center text-white" style={{ backgroundColor: e.color || 'gray' }}>
-                <Sword className="size-10" />
+           <div key={e.id} className="flex items-center gap-6 p-6 bg-slate-50 rounded-[2.5rem] border-2 border-transparent hover:border-slate-200">
+              <div className="size-20 rounded-3xl flex items-center justify-center shadow-lg text-white" style={{ backgroundColor: e.color || 'gray' }}>
+                <Sword size={40} />
               </div>
               <div className="flex-1">
-                 <h4 className="text-2xl font-black text-slate-900 uppercase">{e.title}</h4>
+                 <h4 className="text-2xl font-black text-slate-900 uppercase tracking-tighter">{e.title}</h4>
+                 <p className="text-xs font-black text-slate-400 uppercase mt-1">{e.location || "Base"}</p>
               </div>
-              <button onClick={() => onDelete(e.id)} className="size-14 rounded-2xl bg-white text-slate-300 hover:text-rose-500 shadow-sm flex items-center justify-center">
-                 <Trash2 />
+              <button onClick={() => onDelete(e.id)} className="h-16 w-16 rounded-2xl bg-white text-rose-500 shadow-sm flex items-center justify-center hover:scale-110 active:scale-90 transition-all">
+                 <Trash2 size={24} />
               </button>
-              <button 
-  onClick={() => onDelete(e.id)} 
-  className="h-16 w-16 bg-rose-500 text-white rounded-2xl flex items-center justify-center shadow-lg active:scale-90 transition-all"
->
-  <Trash2 size={24} />
-</button>
            </div>
          ))}
        </div>

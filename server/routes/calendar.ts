@@ -1,41 +1,45 @@
-import { FastifyInstance } from 'fastify';
-import { db } from '../db.js';
+import { randomUUID } from "node:crypto";
+import { db } from "../db.js";
 
-export default async function calendarRoutes(fastify: FastifyInstance, options: any) {
-  const { broadcast } = options;
+export default async function calendarRoutes(app: any, opts: any) {
+  const { broadcast } = opts;
 
-  // FIX: Fetch events using starts_at
-  fastify.get('/', async () => {
-    return db.prepare('SELECT * FROM calendar_events ORDER BY starts_at ASC').all();
+  // 1. Fetch all Quests
+  app.get("/", async () => {
+    return db.prepare("SELECT * FROM events ORDER BY starts_at ASC").all();
   });
 
-  // FIX: Create Quest (Now supports the array of dates from your frontend)
-  fastify.post('/', async (request) => {
-    const { title, location, member_id, color, dates } = request.body as any;
-    const stmt = db.prepare('INSERT INTO calendar_events (title, location, member_id, color, starts_at) VALUES (?, ?, ?, ?, ?)');
+  // 2. Create Quest (Supports multiple dates)
+  app.post("/", async (req: any) => {
+    const { title, location, member_id, color, dates } = req.body;
     
-    for (const date of dates) {
-      stmt.run(title, location, member_id, color, date);
-    }
-    
-    broadcast('CALENDAR_UPDATED');
+    const stmt = db.prepare(`
+      INSERT INTO events (id, title, location, member_id, color, starts_at, created_at) 
+      VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+    `);
+
+    db.transaction(() => {
+      for (const date of dates) {
+        stmt.run(randomUUID(), title, location, member_id, color, date);
+      }
+    })();
+
+    broadcast("CALENDAR_UPDATED");
     return { success: true };
   });
 
-  // FIX: Individual Delete
-  fastify.delete('/:id', async (request) => {
-    const { id } = request.params as { id: string };
-    db.prepare('DELETE FROM calendar_events WHERE id = ?').run(id);
-    broadcast('CALENDAR_UPDATED');
+  // 3. Delete Individual Quest
+  app.delete("/:id", async (req: any) => {
+    db.prepare("DELETE FROM events WHERE id = ?").run(req.params.id);
+    broadcast("CALENDAR_UPDATED");
     return { success: true };
   });
 
-  // Range Delete
-  fastify.delete('/range', async (request) => {
-    const { start, end } = request.query as { start: string, end: string };
-    db.prepare('DELETE FROM calendar_events WHERE starts_at BETWEEN ? AND ?').run(start, end);
-    broadcast('CALENDAR_UPDATED');
+  // 4. Bulk Delete View (Day/Week/Month/Year)
+  app.delete("/range", async (req: any) => {
+    const { start, end } = req.query;
+    db.prepare("DELETE FROM events WHERE starts_at BETWEEN ? AND ?").run(start, end);
+    broadcast("CALENDAR_UPDATED");
     return { success: true };
   });
 }
-
