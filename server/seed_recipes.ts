@@ -2,46 +2,148 @@ import Database from "better-sqlite3";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
+import { mkdirSync } from "node:fs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const db = new Database(path.join(__dirname, "../data/familyhub.db"));
+const DB_PATH = path.join(__dirname, "../data/familyhub.db");
+mkdirSync(path.join(__dirname, "../data"), { recursive: true });
+const db = new Database(DB_PATH);
+
+console.log("🥘 Wiping old data and seeding exactly 100 real meals...");
 
 db.exec(`
   DROP TABLE IF EXISTS recipes;
-  CREATE TABLE recipes (id TEXT PRIMARY KEY, name TEXT, category TEXT, prep_time INTEGER, instructions TEXT, ingredients TEXT, image_url TEXT, created_at TEXT);
+  CREATE TABLE recipes (
+    id TEXT PRIMARY KEY, 
+    name TEXT, 
+    category TEXT, 
+    prep_time INTEGER, 
+    instructions TEXT, 
+    ingredients TEXT, 
+    image_url TEXT, 
+    created_at TEXT
+  );
 `);
 
-const realRecipes = [
-  // BREAKFAST
-  { name: "Fluffy Pancakes", cat: "Breakfast", ing: "Flour, Milk, Eggs", ins: "Mix and fry on griddle.", img: "https://images.unsplash.com/photo-1528207776546-365bb710ee93?w=500" },
-  { name: "Breakfast Tacos", cat: "Breakfast", ing: "Tortilla, Eggs, Chorizo", ins: "Scramble eggs and fill warm tortillas.", img: "https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?w=500" },
-  { name: "French Toast", cat: "Breakfast", ing: "Bread, Eggs, Cinnamon", ins: "Dip bread and fry until golden.", img: "https://images.unsplash.com/photo-1484723091739-30a097e8f929?w=500" },
-  { name: "Egg & Bacon Roll", cat: "Breakfast", ing: "Roll, Egg, Bacon", ins: "Fry bacon and egg, assemble in roll.", img: "https://images.unsplash.com/photo-1533089860892-a7c6f0a88666?w=500" },
-  
-  // LUNCH
-  { name: "Chicken Wrap", cat: "Lunch", ing: "Tortilla, Chicken, Salad", ins: "Fill tortilla and wrap tightly.", img: "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500" },
-  { name: "Classic BLT", cat: "Lunch", ing: "Bacon, Lettuce, Tomato, Bread", ins: "Toast bread and layer ingredients.", img: "https://images.unsplash.com/photo-1619096279114-4430f3bc670b?w=500" },
-  
-  // DINNER
-  { name: "Spaghetti Bolognese", cat: "Dinner", ing: "Pasta, Beef, Sauce", ins: "Cook pasta, simmer beef in sauce.", img: "https://images.unsplash.com/photo-1551183053-bf91a1d81141?w=500" },
-  { name: "Roast Beef", cat: "Dinner", ing: "Beef, Potatoes, Carrots", ins: "Slow roast in oven for 3 hours.", img: "https://images.unsplash.com/photo-1544025162-d76694265947?w=500" }
+const raw = [
+  // --- BREAKFAST (34) ---
+  { name: "Blueberry Buttermilk Pancakes", cat: "Breakfast", prep: 20, ing: "Flour, Buttermilk, Eggs, Blueberries, Maple Syrup", ins: "1. Whisk dry ingredients. 2. Stir in buttermilk and eggs. 3. Fold in berries. 4. Griddle until golden.", img: "https://images.unsplash.com/photo-1528207776546-365bb710ee93?w=600" },
+  { name: "Smashed Avocado & Chili Toast", cat: "Breakfast", prep: 10, ing: "Sourdough, Avocado, Lime, Red Pepper Flakes, Sea Salt", ins: "1. Toast sourdough. 2. Mash avocado with lime and salt. 3. Spread thick and top with chili flakes.", img: "https://images.unsplash.com/photo-1525351484163-7529414344d8?w=600" },
+  { name: "Shakshuka with Feta", cat: "Breakfast", prep: 30, ing: "Eggs, Tomatoes, Peppers, Onions, Feta Cheese", ins: "1. Sauté veg. 2. Add tomatoes and simmer. 3. Crack eggs into wells. 4. Cover until set and top with feta.", img: "https://images.unsplash.com/photo-1590412200988-a436970781fa?w=600" },
+  { name: "Full English Fry-Up", cat: "Breakfast", prep: 25, ing: "Bacon, Sausage, Eggs, Baked Beans, Mushrooms, Toast", ins: "1. Fry meat. 2. Heat beans. 3. Sauté mushrooms. 4. Fry eggs last and plate everything hot.", img: "https://images.unsplash.com/photo-1533089860892-a7c6f0a88666?w=600" },
+  { name: "Mixed Berry Smoothie Bowl", cat: "Breakfast", prep: 5, ing: "Frozen Berries, Banana, Almond Milk, Granola, Honey", ins: "1. Blend fruit and milk until thick. 2. Pour into bowl. 3. Top with granola and seeds.", img: "https://images.unsplash.com/photo-1494597564530-57222f93ac55?w=600" },
+  { name: "Classic Eggs Benedict", cat: "Breakfast", prep: 35, ing: "English Muffins, Ham, Eggs, Butter, Lemon (for Hollandaise)", ins: "1. Poach eggs. 2. Toast muffins. 3. Whisk Hollandaise. 4. Layer ham, egg, and sauce.", img: "https://images.unsplash.com/photo-1600335814560-60b64177d0b1?w=600" },
+  { name: "Smoked Salmon & Caper Bagel", cat: "Breakfast", prep: 10, ing: "Bagel, Cream Cheese, Smoked Salmon, Capers, Red Onion", ins: "1. Toast bagel. 2. Spread thick cream cheese. 3. Layer salmon and garnish with capers.", img: "https://images.unsplash.com/photo-1533089860892-a7c6f0a88666?w=600" },
+  { name: "Spanish Potato Frittata", cat: "Breakfast", prep: 40, ing: "Potatoes, Eggs, Onions, Olive Oil", ins: "1. Fry potato slices. 2. Whisk eggs. 3. Combine in pan and bake until firm.", img: "https://images.unsplash.com/photo-1510629954389-c1e0da47d4ec?w=600" },
+  { name: "Belgian Chocolate Waffles", cat: "Breakfast", prep: 20, ing: "Waffles, Chocolate Sauce, Strawberries, Whipped Cream", ins: "1. Make waffle batter. 2. Cook in iron. 3. Drizzle with chocolate and top with berries.", img: "https://images.unsplash.com/photo-1459789034005-ba29c5783491?w=600" },
+  { name: "Steel Cut Apple Cinnamon Oats", cat: "Breakfast", prep: 15, ing: "Steel Cut Oats, Milk, Apple, Cinnamon, Walnuts", ins: "1. Boil oats in milk. 2. Stir in cinnamon and diced apples. 3. Cook until creamy.", img: "https://images.unsplash.com/photo-1517673132405-a56a62b18caf?w=600" },
+  { name: "Breakfast Burrito Grande", cat: "Breakfast", prep: 20, ing: "Tortilla, Scrambled Eggs, Chorizo, Cheese, Salsa", ins: "1. Fry chorizo. 2. Scramble eggs. 3. Roll in warm tortilla with cheese and salsa.", img: "https://images.unsplash.com/photo-1626700051175-6568d484462e?w=600" },
+  { name: "Tofu Scramble with Kale", cat: "Breakfast", prep: 15, ing: "Firm Tofu, Turmeric, Kale, Garlic, Nutritional Yeast", ins: "1. Crumble tofu. 2. Sauté with turmeric and garlic. 3. Wilt in kale and serve.", img: "https://images.unsplash.com/photo-1512621776951-a57141f2eefd?w=600" },
+  { name: "Banana Nut Bread Slices", cat: "Breakfast", prep: 60, ing: "Bananas, Flour, Walnuts, Butter, Sugar", ins: "1. Mash bananas. 2. Mix batter. 3. Bake for 50 mins. 4. Serve warm with butter.", img: "https://images.unsplash.com/photo-1541533848490-bc8115cd6522?w=600" },
+  { name: "Brioche French Toast", cat: "Breakfast", prep: 20, ing: "Brioche, Eggs, Cinnamon, Milk, Vanilla", ins: "1. Make custard. 2. Soak thick bread slices. 3. Pan-fry in butter until crisp.", img: "https://images.unsplash.com/photo-1484723091739-30a097e8f929?w=600" },
+  { name: "Chia Seed Pudding", cat: "Breakfast", prep: 5, ing: "Chia Seeds, Coconut Milk, Vanilla, Raspberries", ins: "1. Stir seeds and milk. 2. Refrigerate overnight. 3. Top with fresh berries.", img: "https://images.unsplash.com/photo-1512621776951-a57141f2eefd?w=600" },
+  { name: "Homemade Biscuits & Gravy", cat: "Breakfast", prep: 30, ing: "Flour, Butter, Sausage, Milk, Pepper", ins: "1. Bake biscuits. 2. Fry sausage. 3. Make white gravy with flour and milk. 4. Combine.", img: "https://images.unsplash.com/photo-1550617931-e17a7b70dce2?w=600" },
+  { name: "Breakfast Quesadilla", cat: "Breakfast", prep: 15, ing: "Tortilla, Bacon, Eggs, Pepper Jack Cheese", ins: "1. Scramble eggs. 2. Place on tortilla with cheese/bacon. 3. Fold and toast until melted.", img: "https://images.unsplash.com/photo-1599974579688-8dbdd335c77f?w=600" },
+  { name: "Green Machine Smoothie", cat: "Breakfast", prep: 5, ing: "Spinach, Green Apple, Ginger, Coconut Water", ins: "1. Blend all ingredients until smooth. 2. Pour and drink immediately.", img: "https://images.unsplash.com/photo-1540189549336-e6e99c3679fe?w=600" },
+  { name: "Huevos Rancheros", cat: "Breakfast", prep: 25, ing: "Corn Tortillas, Eggs, Black Beans, Salsa, Avocado", ins: "1. Warm beans. 2. Fry tortillas. 3. Top with fried eggs and hot salsa.", img: "https://images.unsplash.com/photo-1506084868730-197be593a43b?w=600" },
+  { name: "Baked Grapefruit with Honey", cat: "Breakfast", prep: 10, ing: "Grapefruit, Honey, Mint", ins: "1. Halve grapefruit. 2. Drizzle with honey. 3. Broil for 5 mins until bubbly.", img: "https://images.unsplash.com/photo-1528823331199-655044374331?w=600" },
+  { name: "Cottage Cheese & Peach Bowl", cat: "Breakfast", prep: 5, ing: "Cottage Cheese, Peaches, Walnuts, Honey", ins: "1. Scoop cheese. 2. Top with sliced peaches and nuts. 3. Drizzle with honey.", img: "https://images.unsplash.com/photo-1563227812-0ea4c22e6cc8?w=600" },
+  { name: "Dutch Baby Pancake", cat: "Breakfast", prep: 30, ing: "Eggs, Flour, Milk, Lemon, Powdered Sugar", ins: "1. Whisk batter. 2. Pour into hot skillet. 3. Bake until puffed. 4. Add lemon juice.", img: "https://images.unsplash.com/photo-1543339308-43e59d6b73a6?w=600" },
+  { name: "Sweet Potato Breakfast Hash", cat: "Breakfast", prep: 25, ing: "Sweet Potatoes, Kale, Sausage, Eggs", ins: "1. Sauté potatoes. 2. Add sausage and kale. 3. Top with poached eggs.", img: "https://images.unsplash.com/photo-1490645935967-10de6ba17061?w=600" },
+  { name: "Lemon Poppyseed Muffins", cat: "Breakfast", prep: 35, ing: "Flour, Poppyseeds, Lemon, Yogurt, Sugar", ins: "1. Mix batter. 2. Fold in poppyseeds and zest. 3. Bake at 375F for 20 mins.", img: "https://images.unsplash.com/photo-1558961363-fa8fdf82db35?w=600" },
+  { name: "Breakfast Fried Rice", cat: "Breakfast", prep: 15, ing: "Leftover Rice, Eggs, Bacon, Peas, Soy Sauce", ins: "1. Fry bacon. 2. Add rice and peas. 3. Scramble in eggs and soy sauce.", img: "https://images.unsplash.com/photo-1512058560366-cd2427ba5e73?w=600" },
+  { name: "Poached Eggs on Asparagus", cat: "Breakfast", prep: 15, ing: "Asparagus, Eggs, Parmesan, Lemon", ins: "1. Blanch asparagus. 2. Poach eggs. 3. Serve on top with cheese shavings.", img: "https://images.unsplash.com/photo-1504754668041-f1681a44bd03?w=600" },
+  { name: "Peanut Butter & Banana Toast", cat: "Breakfast", prep: 5, ing: "Bread, Peanut Butter, Banana, Hemp Seeds", ins: "1. Toast bread. 2. Spread peanut butter. 3. Add sliced bananas and seeds.", img: "https://images.unsplash.com/photo-1525351484163-7529414344d8?w=600" },
+  { name: "English Muffin Sliders", cat: "Breakfast", prep: 12, ing: "English Muffins, Eggs, Sausage, Cheddar", ins: "1. Fry egg and sausage. 2. Toast muffin. 3. Assemble with cheese.", img: "https://images.unsplash.com/photo-1550617931-e17a7b70dce2?w=600" },
+  { name: "Cinnamon Swirl Porridge", cat: "Breakfast", prep: 10, ing: "Oats, Cinnamon, Brown Sugar, Milk", ins: "1. Cook oats in milk. 2. Swirl in cinnamon sugar at the end.", img: "https://images.unsplash.com/photo-1517673132405-a56a62b18caf?w=600" },
+  { name: "Zucchini Bread Slices", cat: "Breakfast", prep: 65, ing: "Zucchini, Flour, Cinnamon, Eggs, Oil", ins: "1. Grate zucchini. 2. Mix batter. 3. Bake until toothpick comes out clean.", img: "https://images.unsplash.com/photo-1541533848490-bc8115cd6522?w=600" },
+  { name: "Acai Parfait Bowl", cat: "Breakfast", prep: 10, ing: "Acai, Yogurt, Granola, Kiwi", ins: "1. Blend acai. 2. Layer with yogurt. 3. Top with granola and kiwi.", img: "https://images.unsplash.com/photo-1494597564530-57222f93ac55?w=600" },
+  { name: "Breakfast Sausage Skillet", cat: "Breakfast", prep: 20, ing: "Sausage, Peppers, Potatoes, Cheese", ins: "1. Brown everything in one skillet. 2. Top with cheese and serve.", img: "https://images.unsplash.com/photo-1506084868730-197be593a43b?w=600" },
+  { name: "Buckwheat Pancakes", cat: "Breakfast", prep: 20, ing: "Buckwheat Flour, Eggs, Milk, Honey", ins: "1. Whisk batter. 2. Cook on medium heat. 3. Serve with honey and fruit.", img: "https://images.unsplash.com/photo-1528207776546-365bb710ee93?w=600" },
+  { name: "Soft Scrambled Eggs", cat: "Breakfast", prep: 10, ing: "Eggs, Butter, Chives, Sourdough", ins: "1. Cook eggs low and slow with butter. 2. Stir constantly. 3. Serve on sourdough.", img: "https://images.unsplash.com/photo-1525351484163-7529414344d8?w=600" },
+
+  // --- LUNCH (33) ---
+  { name: "Classic Chicken Caesar Wrap", cat: "Lunch", prep: 15, ing: "Tortilla, Chicken, Romaine, Caesar Dressing", ins: "1. Toss chicken and salad in dressing. 2. Wrap tightly in tortilla. 3. Slice and serve.", img: "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=600" },
+  { name: "Gourmet Beef Sliders", cat: "Lunch", prep: 20, ing: "Buns, Ground Beef, Pickles, Cheese", ins: "1. Form mini patties. 2. Grill. 3. Assemble with pickles and cheese on mini buns.", img: "https://images.unsplash.com/photo-1550317144-b38c5fda0064?w=600" },
+  { name: "Vietnamese Pork Banh Mi", cat: "Lunch", prep: 20, ing: "Baguette, Pork, Pickled Carrots, Cilantro, Mayo", ins: "1. Toast baguette. 2. Spread mayo. 3. Fill with pork and pickled veg.", img: "https://images.unsplash.com/photo-1619096279114-4430f3bc670b?w=600" },
+  { name: "Sticky Honey Garlic Skewers", cat: "Lunch", prep: 20, ing: "Chicken, Honey, Garlic, Soy Sauce, Sesame", ins: "1. Cube chicken. 2. Skewer. 3. Grill while brushing with glaze.", img: "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?w=600" },
+  { name: "Mediterranean Falafel Pita", cat: "Lunch", prep: 15, ing: "Pita, Falafel, Hummus, Cucumber, Tomato", ins: "1. Warm pita. 2. Stuff with falafel and hummus. 3. Add fresh chopped veg.", img: "https://images.unsplash.com/photo-1541518763669-27f71462a48a?w=600" },
+  { name: "Creamy Tomato Basil Soup", cat: "Lunch", prep: 25, ing: "Tomatoes, Basil, Cream, Garlic, Onion", ins: "1. Sauté onion/garlic. 2. Simmer tomatoes. 3. Blend with cream and fresh basil.", img: "https://images.unsplash.com/photo-1547592166-23ac45744acd?w=600" },
+  { name: "Tuna Melt Sourdough", cat: "Lunch", prep: 10, ing: "Tuna, Mayo, Sourdough, Cheddar, Butter", ins: "1. Mix tuna salad. 2. Place on bread with cheese. 3. Grill in butter until melted.", img: "https://images.unsplash.com/photo-1528735602780-2552fd46c7af?w=600" },
+  { name: "Caprese Salad Panini", cat: "Lunch", prep: 12, ing: "Ciabatta, Mozzarella, Tomato, Pesto, Balsamic", ins: "1. Layer ingredients. 2. Press in panini grill until mozzarella is gooey.", img: "https://images.unsplash.com/photo-1539755530864-dd4d7c1b3f1f?w=600" },
+  { name: "Quinoa Veggie Bowl", cat: "Lunch", prep: 15, ing: "Quinoa, Chickpeas, Spinach, Feta, Lemon", ins: "1. Boil quinoa. 2. Toss with chickpeas and spinach. 3. Add lemon and feta.", img: "https://images.unsplash.com/photo-1512621776951-a57141f2eefd?w=600" },
+  { name: "Classic BLT Sandwich", cat: "Lunch", prep: 10, ing: "Bacon, Lettuce, Tomato, Bread, Mayo", ins: "1. Fry bacon. 2. Toast bread. 3. Layer mayo, bacon, and veg.", img: "https://images.unsplash.com/photo-1619096279114-4430f3bc670b?w=600" },
+  { name: "Turkey & Swiss Wrap", cat: "Lunch", prep: 8, ing: "Tortilla, Turkey, Swiss, Mustard, Spinach", ins: "1. Spread mustard. 2. Layer turkey and cheese. 3. Roll tightly.", img: "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=600" },
+  { name: "Miso Ramen Noodles", cat: "Lunch", prep: 20, ing: "Ramen, Miso, Egg, Scallion, Nori", ins: "1. Boil noodles. 2. Dissolve miso in broth. 3. Top with soft-boiled egg.", img: "https://images.unsplash.com/photo-1569718212165-3a8278d5f624?w=600" },
+  { name: "Chickpea 'Tuna' Salad", cat: "Lunch", prep: 10, ing: "Chickpeas, Vegan Mayo, Celery, Dill", ins: "1. Mash chickpeas. 2. Stir in mayo and dill. 3. Serve on crackers or bread.", img: "https://images.unsplash.com/photo-1512621776951-a57141f2eefd?w=600" },
+  { name: "Roasted Red Pepper Soup", cat: "Lunch", prep: 30, ing: "Red Peppers, Broth, Garlic, Cream", ins: "1. Roast peppers. 2. Simmer with broth. 3. Blend until smooth with cream.", img: "https://images.unsplash.com/photo-1547592166-23ac45744acd?w=600" },
+  { name: "Cobb Salad Bowl", cat: "Lunch", prep: 20, ing: "Chicken, Avocado, Egg, Blue Cheese, Bacon", ins: "1. Chop ingredients. 2. Arrange in rows. 3. Serve with vinaigrette.", img: "https://images.unsplash.com/photo-1512621776951-a57141f2eefd?w=600" },
+  { name: "Pesto Pasta Salad", cat: "Lunch", prep: 15, ing: "Fusilli, Pesto, Cherry Tomatoes, Mozzarella", ins: "1. Boil pasta. 2. Cool. 3. Toss with pesto and tomatoes.", img: "https://images.unsplash.com/photo-1473093226795-af9932fe5856?w=600" },
+  { name: "Baja Fish Tacos", cat: "Lunch", prep: 25, ing: "Cod, Tortillas, Cabbage Slaw, Lime Crema", ins: "1. Fry fish. 2. Warm tortillas. 3. Assemble with slaw and crema.", img: "https://images.unsplash.com/photo-1512838243191-e81e8f66f1fd?w=600" },
+  { name: "Lentil & Spinach Stew", cat: "Lunch", prep: 35, ing: "Lentils, Spinach, Onion, Cumin, Broth", ins: "1. Sauté onion. 2. Cook lentils in broth. 3. Wilt spinach at the end.", img: "https://images.unsplash.com/photo-1547592166-23ac45744acd?w=600" },
+  { name: "Triple Decker Club", cat: "Lunch", prep: 15, ing: "Bread, Turkey, Ham, Bacon, Lettuce", ins: "1. Toast 3 slices. 2. Layer meat and veg. 3. Cut into triangles.", img: "https://images.unsplash.com/photo-1619096279114-4430f3bc670b?w=600" },
+  { name: "Margherita Flatbread", cat: "Lunch", prep: 15, ing: "Flatbread, Tomatoes, Basil, Mozzarella", ins: "1. Layer toppings. 2. Bake until cheese bubbles and crust is crisp.", img: "https://images.unsplash.com/photo-1513104890138-7c749659a591?w=600" },
+  { name: "Burrito Bowl Bowl", cat: "Lunch", prep: 20, ing: "Rice, Beans, Corn, Salsa, Sour Cream", ins: "1. Base of rice. 2. Add beans and corn. 3. Top with fresh salsa.", img: "https://images.unsplash.com/photo-1512621776951-a57141f2eefd?w=600" },
+  { name: "Egg Salad on Rye", cat: "Lunch", prep: 12, ing: "Eggs, Mustard, Mayo, Rye Bread, Chives", ins: "1. Boil eggs. 2. Mash with mayo. 3. Spread thick on rye.", img: "https://images.unsplash.com/photo-1525351484163-7529414344d8?w=600" },
+  { name: "Shrimp Po Boy", cat: "Lunch", prep: 25, ing: "Shrimp, Hoagie Roll, Lettuce, Remoulade", ins: "1. Batter and fry shrimp. 2. Load into roll. 3. Drizzle with sauce.", img: "https://images.unsplash.com/photo-1512838243191-e81e8f66f1fd?w=600" },
+  { name: "Greek Salad Pita", cat: "Lunch", prep: 10, ing: "Pita, Cucumber, Feta, Olives, Red Onion", ins: "1. Chop veg. 2. Toss with feta. 3. Stuff into pita bread.", img: "https://images.unsplash.com/photo-1541518763669-27f71462a48a?w=600" },
+  { name: "Potato Leek Soup", cat: "Lunch", prep: 35, ing: "Potatoes, Leeks, Butter, Stock", ins: "1. Sauté leeks. 2. Simmer potatoes. 3. Blend until silky smooth.", img: "https://images.unsplash.com/photo-1547592166-23ac45744acd?w=600" },
+  { name: "California Sushi Bowl", cat: "Lunch", prep: 20, ing: "Rice, Crab, Avocado, Cucumber, Nori", ins: "1. Season rice. 2. Top with crab and veg. 3. Sprinkle with nori.", img: "https://images.unsplash.com/photo-1569718212165-3a8278d5f624?w=600" },
+  { name: "Grilled Cheese & Tomato", cat: "Lunch", prep: 10, ing: "Bread, Cheddar, Butter, Tomato Soup", ins: "1. Grill sandwich. 2. Heat soup. 3. Dip and enjoy.", img: "https://images.unsplash.com/photo-1528735602780-2552fd46c7af?w=600" },
+  { name: "Buffalo Chicken Salad", cat: "Lunch", prep: 15, ing: "Chicken, Buffalo Sauce, Celery, Ranch", ins: "1. Toss chicken in sauce. 2. Serve over greens with celery.", img: "https://images.unsplash.com/photo-1512621776951-a57141f2eefd?w=600" },
+  { name: "Beef & Pickle Sliders", cat: "Lunch", prep: 20, ing: "Buns, Beef, Pickles, Mustard", ins: "1. Pan-sear patties. 2. Layer with pickles and mustard.", img: "https://images.unsplash.com/photo-1550317144-b38c5fda0064?w=600" },
+  { name: "Poke Tuna Bowl", cat: "Lunch", prep: 20, ing: "Tuna, Rice, Edamame, Soy Sauce, Sesame", ins: "1. Marinate tuna. 2. Assemble bowl. 3. Top with sesame seeds.", img: "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=600" },
+  { name: "Minestrone Vegetable Soup", cat: "Lunch", prep: 40, ing: "Pasta, Beans, Broth, Zucchini, Carrots", ins: "1. Sauté veg. 2. Simmer in broth. 3. Add pasta and beans.", img: "https://images.unsplash.com/photo-1547592166-23ac45744acd?w=600" },
+  { name: "Plowmans Lunch Plate", cat: "Lunch", prep: 10, ing: "Ham, Cheddar, Pickles, Crusty Bread", ins: "1. Arrange ingredients on a board. 2. Serve cold.", img: "https://images.unsplash.com/photo-1539755530864-dd4d7c1b3f1f?w=600" },
+  { name: "Thai Beef Salad", cat: "Lunch", prep: 25, ing: "Steak, Lime, Chili, Mint, Greens", ins: "1. Grill steak thin. 2. Toss with lime/chili dressing and mint.", img: "https://images.unsplash.com/photo-1512621776951-a57141f2eefd?w=600" },
+
+  // --- DINNER (33) ---
+  { name: "Texas BBQ Pork Ribs", cat: "Dinner", prep: 240, ing: "Ribs, BBQ Sauce, Brown Sugar, Paprika", ins: "1. Rub ribs. 2. Slow roast for 3 hours. 3. Glaze with sauce and broil.", img: "https://images.unsplash.com/photo-1544025162-d76694265947?w=600" },
+  { name: "Beef Stroganoff", cat: "Dinner", prep: 40, ing: "Beef, Mushrooms, Sour Cream, Noodles", ins: "1. Sear beef. 2. Sauté mushrooms. 3. Make cream sauce. 4. Serve over noodles.", img: "https://images.unsplash.com/photo-1534939561126-855b8675edd7?w=600" },
+  { name: "Thai Green Chicken Curry", cat: "Dinner", prep: 30, ing: "Chicken, Curry Paste, Coconut Milk, Rice", ins: "1. Sauté paste. 2. Add chicken and milk. 3. Simmer until tender.", img: "https://images.unsplash.com/photo-1455619452474-d2be8b1e70cd?w=600" },
+  { name: "Spaghetti Bolognese", cat: "Dinner", prep: 45, ing: "Beef, Pasta, Tomato Sauce, Garlic", ins: "1. Brown beef. 2. Simmer sauce for 30 mins. 3. Toss with pasta.", img: "https://images.unsplash.com/photo-1551183053-bf91a1d81141?w=600" },
+  { name: "Garlic Butter Salmon", cat: "Dinner", prep: 20, ing: "Salmon, Asparagus, Lemon, Butter", ins: "1. Season salmon. 2. Roast with asparagus and butter.", img: "https://images.unsplash.com/photo-1467003909585-2f8a72700288?w=600" },
+  { name: "Homemade Pepperoni Pizza", cat: "Dinner", prep: 30, ing: "Dough, Cheese, Pepperoni, Tomato Sauce", ins: "1. Stretch dough. 2. Top with sauce and meat. 3. Bake at 450F.", img: "https://images.unsplash.com/photo-1513104890138-7c749659a591?w=600" },
+  { name: "Roast Chicken & Root Veg", cat: "Dinner", prep: 90, ing: "Chicken, Carrots, Potatoes, Rosemary", ins: "1. Season bird. 2. Place in roasting pan with veg. 3. Roast until juice runs clear.", img: "https://images.unsplash.com/photo-1598103442097-8b74394b95c6?w=600" },
+  { name: "Beef & Broccoli Stir-Fry", cat: "Dinner", prep: 20, ing: "Beef, Broccoli, Soy Sauce, Ginger, Rice", ins: "1. Sear beef. 2. Toss in broccoli and sauce. 3. Serve over rice.", img: "https://images.unsplash.com/photo-1512058560366-cd2427ba5e73?w=600" },
+  { name: "Classic Shepherd’s Pie", cat: "Dinner", prep: 50, ing: "Lamb, Peas, Potatoes, Butter, Onion", ins: "1. Cook meat and peas. 2. Top with mashed potato. 3. Bake until top is brown.", img: "https://images.unsplash.com/photo-1583019117296-93058a51aa31?w=600" },
+  { name: "Shrimp Scampi Pasta", cat: "Dinner", prep: 25, ing: "Shrimp, Linguine, Garlic, Lemon, Wine", ins: "1. Boil pasta. 2. Sauté shrimp in garlic butter. 3. Toss everything together.", img: "https://images.unsplash.com/photo-1551183053-bf91a1d81141?w=600" },
+  { name: "Vegetable Lasagna", cat: "Dinner", prep: 60, ing: "Pasta Sheets, Ricotta, Spinach, Marinara", ins: "1. Layer pasta, cheese, and veg. 2. Top with sauce. 3. Bake for 45 mins.", img: "https://images.unsplash.com/photo-1551183053-bf91a1d81141?w=600" },
+  { name: "Chicken Tikka Masala", cat: "Dinner", prep: 45, ing: "Chicken, Yogurt, Spices, Tomato Puree", ins: "1. Marinate chicken. 2. Grill. 3. Simmer in creamy spiced sauce.", img: "https://images.unsplash.com/photo-1455619452474-d2be8b1e70cd?w=600" },
+  { name: "Pork Carnitas Tacos", cat: "Dinner", prep: 180, ing: "Pork, Orange, Tortillas, Salsa", ins: "1. Slow cook pork. 2. Shred and crisp in pan. 3. Serve in tortillas.", img: "https://images.unsplash.com/photo-1512838243191-e81e8f66f1fd?w=600" },
+  { name: "Eggplant Parmesan", cat: "Dinner", prep: 55, ing: "Eggplant, Breadcrumbs, Marinara, Mozzarella", ins: "1. Bread and fry eggplant. 2. Layer with sauce and cheese. 3. Bake.", img: "https://images.unsplash.com/photo-1551183053-bf91a1d81141?w=600" },
+  { name: "Mushroom Risotto", cat: "Dinner", prep: 45, ing: "Rice, Mushrooms, Stock, Parmesan", ins: "1. Sauté mushrooms. 2. Add rice and stir in stock slowly until creamy.", img: "https://images.unsplash.com/photo-1473093226795-af9932fe5856?w=600" },
+  { name: "Honey Garlic Glazed Chicken", cat: "Dinner", prep: 25, ing: "Chicken, Honey, Garlic, Soy Sauce", ins: "1. Sear chicken. 2. Pour in glaze and simmer until sticky.", img: "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?w=600" },
+  { name: "Seafood Paella", cat: "Dinner", prep: 50, ing: "Rice, Saffron, Shrimp, Mussels, Chorizo", ins: "1. Sauté chorizo. 2. Add rice and saffron broth. 3. Layer seafood on top.", img: "https://images.unsplash.com/photo-1473093226795-af9932fe5856?w=600" },
+  { name: "Pot Roast with Carrots", cat: "Dinner", prep: 180, ing: "Beef, Carrots, Potatoes, Beef Broth", ins: "1. Sear beef. 2. Slow cook with broth and veg for 3 hours.", img: "https://images.unsplash.com/photo-1544025162-d76694265947?w=600" },
+  { name: "Beef Wellington", cat: "Dinner", prep: 90, ing: "Beef Fillet, Pastry, Mushrooms, Pate", ins: "1. Sear beef. 2. Wrap in mushroom mix and pastry. 3. Bake until golden.", img: "https://images.unsplash.com/photo-1544025162-d76694265947?w=600" },
+  { name: "Peking Duck Pancakes", cat: "Dinner", prep: 120, ing: "Duck, Pancakes, Hoisin, Cucumber", ins: "1. Roast duck until skin is crisp. 2. Shred meat. 3. Serve in pancakes.", img: "https://images.unsplash.com/photo-1512058560366-cd2427ba5e73?w=600" },
+  { name: "Lamb Chops with Mint", cat: "Dinner", prep: 30, ing: "Lamb, Mint, Garlic, Peas, Potatoes", ins: "1. Sear lamb. 2. Make mint sauce. 3. Serve with mash and peas.", img: "https://images.unsplash.com/photo-1544025162-d76694265947?w=600" },
+  { name: "Chicken Marsala", cat: "Dinner", prep: 35, ing: "Chicken, Mushrooms, Marsala Wine, Cream", ins: "1. Sauté chicken. 2. Add mushrooms and wine. 3. Simmer until thick.", img: "https://images.unsplash.com/photo-1455619452474-d2be8b1e70cd?w=600" },
+  { name: "Swedish Meatballs", cat: "Dinner", prep: 40, ing: "Beef, Pork, Cream, Jam, Mash", ins: "1. Roll balls. 2. Fry. 3. Make cream gravy. 4. Serve with lingonberry jam.", img: "https://images.unsplash.com/photo-1583019117296-93058a51aa31?w=600" },
+  { name: "Seared Scallops & Pea Puree", cat: "Dinner", prep: 20, ing: "Scallops, Peas, Mint, Butter", ins: "1. Puree peas. 2. Sear scallops high heat 2 mins. 3. Plate on puree.", img: "https://images.unsplash.com/photo-1551183053-bf91a1d81141?w=600" },
+  { name: "Duck L’Orange", cat: "Dinner", prep: 60, ing: "Duck Breast, Orange, Cointreau, Honey", ins: "1. Score duck skin. 2. Pan-sear. 3. Make orange glaze and pour over.", img: "https://images.unsplash.com/photo-1512058560366-cd2427ba5e73?w=600" },
+  { name: "Lobster Roll with Mayo", cat: "Dinner", prep: 20, ing: "Lobster, Brioche Roll, Mayo, Butter", ins: "1. Steam lobster. 2. Mix with mayo. 3. Load into buttery toasted roll.", img: "https://images.unsplash.com/photo-1551183053-bf91a1d81141?w=600" },
+  { name: "Vegetable Pad Thai", cat: "Dinner", prep: 30, ing: "Rice Noodles, Tofu, Peanuts, Sprouts", ins: "1. Soak noodles. 2. Stir fry with tofu and tamarind sauce.", img: "https://images.unsplash.com/photo-1512058560366-cd2427ba5e73?w=600" },
+  { name: "Beef Pho Noodle Soup", cat: "Dinner", prep: 180, ing: "Beef Broth, Rice Noodles, Steak, Basil", ins: "1. Simmer broth 3 hours. 2. Pour over raw steak and noodles.", img: "https://images.unsplash.com/photo-1569718212165-3a8278d5f624?w=600" },
+  { name: "Potato Gnocchi with Sage", cat: "Dinner", prep: 20, ing: "Gnocchi, Sage, Brown Butter, Parmesan", ins: "1. Boil gnocchi. 2. Toss in sage butter until crispy.", img: "https://images.unsplash.com/photo-1473093226795-af9932fe5856?w=600" },
+  { name: "Cajun Sausage Pasta", cat: "Dinner", prep: 30, ing: "Pasta, Sausage, Cream, Bell Peppers", ins: "1. Fry sausage. 2. Add peppers and cream. 3. Toss with pasta.", img: "https://images.unsplash.com/photo-1551183053-bf91a1d81141?w=600" },
+  { name: "Chicken Pot Pie", cat: "Dinner", prep: 70, ing: "Chicken, Peas, Carrots, Puff Pastry", ins: "1. Make chicken stew. 2. Top with pastry. 3. Bake until golden.", img: "https://images.unsplash.com/photo-1583019117296-93058a51aa31?w=600" },
+  { name: "Classic Beef Tacos", cat: "Dinner", prep: 20, ing: "Beef, Shells, Lettuce, Cheese, Salsa", ins: "1. Brown beef. 2. Season. 3. Fill shells and top with veg.", img: "https://images.unsplash.com/photo-1512838243191-e81e8f66f1fd?w=600" },
+  { name: "Fish & Chips with Mushy Peas", cat: "Dinner", prep: 30, ing: "Cod, Batter, Potatoes, Peas", ins: "1. Fry chips. 2. Batter and fry fish. 3. Puree peas with butter.", img: "https://images.unsplash.com/photo-1512838243191-e81e8f66f1fd?w=600" }
 ];
 
-// Fill rest to 100 with variety
-const mealTypes = ["Breakfast", "Lunch", "Dinner"];
-while (realRecipes.length < 100) {
-  const i = realRecipes.length;
-  const cat = mealTypes[i % 3];
-  realRecipes.push({
-    name: `${cat} Delight #${i}`,
-    cat: cat,
-    prep: 20,
-    ing: "Assorted ingredients",
-    ins: "Follow standard cooking instructions. Garnish and serve.",
-    img: "https://images.unsplash.com/photo-1473093226795-af9932fe5856?w=500"
-  });
-}
+console.log(`🚀 Starting seed of exactly ${raw.length} recipes...`);
 
-const insert = db.prepare("INSERT INTO recipes (id, name, category, prep_time, instructions, ingredients, image_url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))");
-db.transaction(() => { for (const r of realRecipes) insert.run(randomUUID(), r.name, r.cat, r.prep, r.ins, r.ing, r.img); })();
-console.log("✅ 100 Real Recipes Seeded!");
+const insert = db.prepare(`
+  INSERT INTO recipes (id, name, category, prep_time, instructions, ingredients, image_url, created_at) 
+  VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+`);
+
+db.transaction(() => {
+  for (const r of raw) {
+    insert.run(randomUUID(), r.name, r.cat, r.prep, r.ins, r.ing, r.img);
+  }
+})();
+
+console.log("✅ Success! Your Cookbook has 100 high-quality meals.");
