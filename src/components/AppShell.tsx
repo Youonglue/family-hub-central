@@ -34,7 +34,27 @@ export function AppShell({ children }: { children: ReactNode }) {
   async function signOut() {
     await qc.cancelQueries();
     qc.clear();
-    try { await logout(); } catch { /* ignore */ }
+    
+    try {
+      // 1. Explicitly clear cookie and session from backend
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } catch (err) {
+      console.warn("Direct logout call failed, falling back to auth client", err);
+    }
+
+    try { 
+      // 2. Trigger additional client library cleanup if defined
+      await logout(); 
+    } catch { 
+      /* ignore */ 
+    }
+
+    // 3. Clear storage variables to ensure clean slate
+    localStorage.removeItem('family_hub_user');
+    localStorage.removeItem('auth_token');
+    sessionStorage.removeItem('family_hub_user');
+
+    // 4. Navigate away
     navigate({ to: "/auth", replace: true });
   }
 

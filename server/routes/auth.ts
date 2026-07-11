@@ -47,6 +47,18 @@ export default async function authRoutes(app: any) {
     return reply.code(401).send({ error: "Invalid credentials" });
   });
 
+  // Secure sign-out endpoint to delete session and clear browser cookie (Problem 1)
+  app.post("/logout", async (req: any, reply: any) => {
+    const token = req.headers.cookie?.match(/fh_sid=([^;]+)/)?.[1];
+    if (token) {
+      // Invalidate the session on the database side
+      db.prepare("DELETE FROM sessions WHERE token = ?").run(token);
+    }
+    // Instruct client to clear the cookie
+    reply.header("Set-Cookie", "fh_sid=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax");
+    return { success: true };
+  });
+
   app.post("/verify-pin", async (req: any, reply: any) => {
     const user = req.user; // Attached via index.ts gatekeeper
     if (!user?.pin_hash) return reply.code(400).send({ error: "No PIN set" });
@@ -67,8 +79,74 @@ export default async function authRoutes(app: any) {
     return db.prepare("SELECT id, username, role FROM users").all();
   });
 
+  // Updated promote route with member ID mapping (Problem 2)
   app.post("/promote", async (req: any) => {
-    db.prepare("UPDATE users SET role = 'admin', is_admin = 1, needs_pin_setup = 1 WHERE id = ?").run(req.body.userId);
+    const { userId } = req.body;
+    let targetUserId = userId;
+    
+    // Resolve member ID to user ID if necessary
+    try {
+      const member = db.prepare("SELECT * FROM members WHERE id = ?").get(userId) as any;
+      if (member && member.user_id) {
+        targetUserId = member.user_id;
+      }
+    } catch (e) {
+      // Ignore if members table schema varies
+    }
+
+    // Sync both tables
+    db.prepare("UPDATE users SET role = 'admin', is_admin = 1, needs_pin_setup = 1 WHERE id = ?").run(targetUserId);
+    try {
+      db.prepare("UPDATE members SET role = 'admin' WHERE id = ? OR user_id = ?").run(targetUserId, targetUserId);
+    } catch (e) {
+      // Ignore if members table schema varies
+    }
+
+    return { success: true };
+  });
+
+  // Added demote route with member ID mapping and single-admin fail-safe (Problem 2)
+  app.post("/demote", async (req: any, reply: any) => {
+    // Authorization check
+    if (!req.user || req.user.role !== 'admin') {
+      return reply.code(403).send({ error: "Only administrators can demote users" });
+    }
+
+    const { userId } = req.body;
+    let targetUserId = userId;
+
+    // Resolve member ID to user ID if necessary
+    try {
+      const member = db.prepare("SELECT * FROM members WHERE id = ?").get(userId) as any;
+      if (member && member.user_id) {
+        targetUserId = member.user_id;
+      }
+    } catch (e) {
+      // Ignore if members table schema varies
+    }
+
+    // Prevent self-demotion
+    if (req.user.id === targetUserId) {
+      return reply.code(400).send({ error: "You cannot demote yourself" });
+    }
+
+    // Fail-safe: Check if this user is the last remaining administrator
+    const adminCountResult = db.prepare(
+      "SELECT COUNT(*) as count FROM users WHERE role = 'admin' OR is_admin = 1"
+    ).get() as { count: number };
+
+    if (adminCountResult.count <= 1) {
+      return reply.code(400).send({ error: "Cannot demote the last remaining administrator." });
+    }
+
+    // Sync both tables on demotion
+    db.prepare("UPDATE users SET role = 'user', is_admin = 0, pin_hash = NULL WHERE id = ?").run(targetUserId);
+    try {
+      db.prepare("UPDATE members SET role = 'user' WHERE id = ? OR user_id = ?").run(targetUserId, targetUserId);
+    } catch (e) {
+      // Ignore if members table schema varies
+    }
+    
     return { success: true };
   });
 }

@@ -16,6 +16,13 @@ function FamilyPage() {
   const qc = useQueryClient();
   const me = useQuery({ queryKey: ["me"], queryFn: () => getMe() });
   const members = useQuery({ queryKey: ["members"], queryFn: () => listMembers() });
+  
+  // New query: Fetch the list of system users from `/api/auth/users` to get true admin status
+  const usersQuery = useQuery({ 
+    queryKey: ["users"], 
+    queryFn: () => fetch('/api/auth/users').then(res => res.json()) 
+  });
+
   const [showAdd, setShowAdd] = useState(false);
   const [edit, setEdit] = useState<any>(null);
 
@@ -31,6 +38,7 @@ function FamilyPage() {
     onSuccess: () => { 
         toast.success("Hero Recruited!"); 
         qc.invalidateQueries({ queryKey: ["members"] }); 
+        qc.invalidateQueries({ queryKey: ["users"] });
         setShowAdd(false); 
     }
   });
@@ -45,7 +53,62 @@ function FamilyPage() {
     }
   });
 
+  // MUSCLE: Demote Mutation with Fail-safe handling
+  const demoteHero = useMutation({
+    mutationFn: async (userId: string) => {
+      const res = await fetch('/api/auth/demote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId })
+      });
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || "Demotion failed");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast.success("Hero Demoted to standard user");
+      qc.invalidateQueries({ queryKey: ["members"] });
+      qc.invalidateQueries({ queryKey: ["users"] });
+      setEdit(null);
+    },
+    onError: (err: any) => {
+      toast.error(err.message || "Failed to demote");
+    }
+  });
+
+  // MUSCLE: Promote Mutation
+  const promoteHero = useMutation({
+    mutationFn: async (userId: string) => {
+      const res = await fetch('/api/auth/promote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId })
+      });
+      if (!res.ok) {
+        throw new Error("Promotion failed");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast.success("Hero Promoted to Admin!");
+      qc.invalidateQueries({ queryKey: ["members"] });
+      qc.invalidateQueries({ queryKey: ["users"] });
+      setEdit(null);
+    },
+    onError: () => {
+      toast.error("Failed to promote user");
+    }
+  });
+
   const memberList = Array.isArray(members.data) ? members.data : [];
+  const userList = Array.isArray(usersQuery.data) ? usersQuery.data : [];
+
+  // Count registered administrators based on the true users database table
+  const totalAdminsCount = userList.filter(
+    (u: any) => u.role?.toLowerCase() === "admin"
+  ).length;
 
   return (
     <AppShell>
@@ -71,89 +134,143 @@ function FamilyPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
                 {memberList.map((m: any) => {
                     const HeroIcon = ICONS[m.avatar_icon] || User;
+                    
+                    // Correlate member with their user account to fetch admin status
+                    const associatedUser = userList.find(
+                      (u: any) => u.id === m.user_id || u.username?.toLowerCase() === m.name?.toLowerCase()
+                    );
+                    const mIsAdmin = associatedUser?.role?.toLowerCase() === "admin";
+
                     return (
                         <div key={m.id} onClick={() => setEdit(m)} className="bg-white p-8 rounded-[3rem] border-4 border-slate-50 shadow-xl flex flex-col items-center gap-4 cursor-pointer hover:scale-105 transition-all">
                             <div className="size-24 rounded-[2rem] flex items-center justify-center text-white" style={{ backgroundColor: m.avatar_color || '#ccc' }}>
                                 <HeroIcon size={48} />
                             </div>
                             <p className="text-2xl font-black uppercase italic text-slate-800">{m.name}</p>
-                            <p className="text-[10px] font-black text-slate-400 uppercase">Level {m.level || 1} Adventurer</p>
+                            <p className="text-[10px] font-black text-slate-400 uppercase">
+                              Level {m.level || 1} Adventurer {mIsAdmin && '🛡️'}
+                            </p>
                         </div>
                     );
                 })}
             </div>
         )}
 
-        {/* --- HERO PROFILE MODAL (Merged Part B Logic) --- */}
-        {edit && (
-          <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4" onClick={() => setEdit(null)}>
-            <div className="bg-white w-full max-w-xl rounded-[4rem] border-[12px] border-slate-50 p-10 shadow-2xl animate-in zoom-in-95" onClick={e => e.stopPropagation()}>
-              <div className="flex justify-between items-center mb-8">
-                <h2 className="text-3xl font-black uppercase italic">Hero Profile</h2>
-                <button onClick={() => setEdit(null)} className="p-3 bg-slate-100 rounded-full hover:bg-rose-50"><X /></button>
-              </div>
+        {/* --- HERO PROFILE MODAL --- */}
+        {edit && (() => {
+          // Identify if the currently edited member matches a user account
+          const associatedUser = userList.find(
+            (u: any) => u.id === edit.user_id || u.username?.toLowerCase() === edit.name?.toLowerCase()
+          );
+          const isTargetAdmin = associatedUser?.role?.toLowerCase() === "admin";
+          const isSelf = associatedUser?.id === me.data?.id;
 
-              <div className="space-y-8">
-                {/* NAME FIELD: Now unlocked for Admins */}
-                <div>
-                  <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-4">
-                    Hero Name {isAdmin ? "(Admin Editing Enabled)" : "(Locked)"}
-                  </label>
-                  <input 
-                    value={edit.name} 
-                    disabled={!isAdmin} 
-                    onChange={(e) => setEdit({...edit, name: e.target.value})}
-                    className={`w-full p-5 mt-1 rounded-2xl font-black text-xl border-4 transition-all ${
-                      isAdmin 
-                        ? 'bg-white border-indigo-500 text-slate-900 shadow-inner' 
-                        : 'bg-slate-100 border-transparent text-slate-400 cursor-not-allowed'
-                    }`} 
-                  />
-                  {!isAdmin && <p className="text-[9px] font-bold text-slate-300 uppercase mt-2 ml-4">Ask a Parent to change your name</p>}
+          return (
+            <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4" onClick={() => setEdit(null)}>
+              <div className="bg-white w-full max-w-xl rounded-[4rem] border-[12px] border-slate-50 p-10 shadow-2xl animate-in zoom-in-95" onClick={e => e.stopPropagation()}>
+                <div className="flex justify-between items-center mb-8">
+                  <h2 className="text-3xl font-black uppercase italic">Hero Profile</h2>
+                  <button onClick={() => setEdit(null)} className="p-3 bg-slate-100 rounded-full hover:bg-rose-50"><X /></button>
                 </div>
 
-                <div>
-                  <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-4">Select Class Icon</label>
-                  <div className="flex flex-wrap gap-3 mt-2">
-                    {Object.keys(ICONS).map(iconName => {
-                      const Icon = ICONS[iconName];
-                      return (
+                <div className="space-y-8">
+                  {/* NAME FIELD */}
+                  <div>
+                    <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-4">
+                      Hero Name {isAdmin ? "(Admin Editing Enabled)" : "(Locked)"}
+                    </label>
+                    <input 
+                      value={edit.name} 
+                      disabled={!isAdmin} 
+                      onChange={(e) => setEdit({...edit, name: e.target.value})}
+                      className={`w-full p-5 mt-1 rounded-2xl font-black text-xl border-4 transition-all ${
+                        isAdmin 
+                          ? 'bg-white border-indigo-500 text-slate-900 shadow-inner' 
+                          : 'bg-slate-100 border-transparent text-slate-400 cursor-not-allowed'
+                      }`} 
+                    />
+                    {!isAdmin && <p className="text-[9px] font-bold text-slate-300 uppercase mt-2 ml-4">Ask a Parent to change your name</p>}
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-4">Select Class Icon</label>
+                    <div className="flex flex-wrap gap-3 mt-2">
+                      {Object.keys(ICONS).map(iconName => {
+                        const Icon = ICONS[iconName];
+                        return (
+                          <button 
+                            key={iconName}
+                            onClick={() => setEdit({...edit, avatar_icon: iconName})}
+                            className={`size-14 rounded-2xl flex items-center justify-center transition-all ${edit.avatar_icon === iconName ? 'bg-slate-900 text-white scale-110 shadow-lg' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'}`}
+                          >
+                            <Icon size={24} />
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-4 flex items-center gap-2"><Palette size={14}/> Aura Color</label>
+                    <div className="flex flex-wrap gap-3 mt-2">
+                      {COLORS.map(c => (
                         <button 
-                          key={iconName}
-                          onClick={() => setEdit({...edit, avatar_icon: iconName})}
-                          className={`size-14 rounded-2xl flex items-center justify-center transition-all ${edit.avatar_icon === iconName ? 'bg-slate-900 text-white scale-110 shadow-lg' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'}`}
+                          key={c} 
+                          onClick={() => setEdit({...edit, avatar_color: c})}
+                          className={`size-10 rounded-full transition-all ${edit.avatar_color === c ? 'ring-4 ring-slate-900 scale-110 shadow-lg' : 'hover:scale-105'}`} 
+                          style={{ backgroundColor: c }} 
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* --- PROMOTIONAL / DEMOTIONAL PANEL (True database integration) --- */}
+                  {isAdmin && associatedUser && !isSelf && (
+                    <div className="border-t border-slate-100 pt-6 mt-6">
+                      <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-4 block mb-2">
+                        Admin Security Controls
+                      </label>
+                      {isTargetAdmin ? (
+                        totalAdminsCount > 1 ? (
+                          <button
+                            type="button"
+                            onClick={() => demoteHero.mutate(edit.id)}
+                            disabled={demoteHero.isPending}
+                            className="w-full py-4 bg-rose-50 text-rose-600 rounded-2xl font-black text-sm uppercase shadow-sm hover:bg-rose-100 transition-all flex items-center justify-center gap-2 border-2 border-rose-200"
+                          >
+                            <Shield size={16} /> {demoteHero.isPending ? "Demoting..." : "DEMOTE FROM ADMIN"}
+                          </button>
+                        ) : (
+                          <div className="p-4 bg-slate-50 rounded-2xl border-2 border-slate-100 text-center">
+                            <p className="text-[10px] font-black text-slate-400 uppercase italic">
+                              Demotion locked (Only Admin Active)
+                            </p>
+                          </div>
+                        )
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => promoteHero.mutate(edit.id)}
+                          disabled={promoteHero.isPending}
+                          className="w-full py-4 bg-indigo-50 text-indigo-600 rounded-2xl font-black text-sm uppercase shadow-sm hover:bg-indigo-100 transition-all flex items-center justify-center gap-2 border-2 border-indigo-200"
                         >
-                          <Icon size={24} />
+                          <Shield size={16} /> {promoteHero.isPending ? "Promoting..." : "PROMOTE TO ADMIN"}
                         </button>
-                      );
-                    })}
-                  </div>
-                </div>
+                      )}
+                    </div>
+                  )}
 
-                <div>
-                  <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-4 flex items-center gap-2"><Palette size={14}/> Aura Color</label>
-                  <div className="flex flex-wrap gap-3 mt-2">
-                    {COLORS.map(c => (
-                      <button 
-                        key={c} 
-                        onClick={() => setEdit({...edit, avatar_color: c})}
-                        className={`size-10 rounded-full transition-all ${edit.avatar_color === c ? 'ring-4 ring-slate-900 scale-110 shadow-lg' : 'hover:scale-105'}`} 
-                        style={{ backgroundColor: c }} 
-                      />
-                    ))}
-                  </div>
+                  <button 
+                      onClick={() => saveHero.mutate(edit)}
+                      className="w-full py-6 bg-slate-900 text-white rounded-[2rem] font-black text-xl shadow-2xl hover:bg-indigo-600 transition-all flex items-center justify-center gap-3"
+                  >
+                      <Check size={28} /> SAVE CHANGES
+                  </button>
                 </div>
-
-                <button 
-                    onClick={() => saveHero.mutate(edit)}
-                    className="w-full py-6 bg-slate-900 text-white rounded-[2rem] font-black text-xl shadow-2xl hover:bg-indigo-600 transition-all flex items-center justify-center gap-3"
-                >
-                    <Check size={28} /> SAVE CHANGES
-                </button>
               </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* RECRUIT MODAL */}
         {showAdd && (
