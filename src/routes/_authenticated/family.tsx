@@ -10,12 +10,17 @@ import { getMe } from "@/lib/auth-client";
 export const Route = createFileRoute("/_authenticated/family")({ component: FamilyPage });
 
 const ICONS: Record<string, any> = { Ghost, Cat, Dog, Rabbit, Shield };
+const COLORS = ["#6366f1", "#ec4899", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6", "#06b6d4"];
 
 function FamilyPage() {
   const qc = useQueryClient();
+  const me = useQuery({ queryKey: ["me"], queryFn: () => getMe() });
   const members = useQuery({ queryKey: ["members"], queryFn: () => listMembers() });
   const [showAdd, setShowAdd] = useState(false);
   const [edit, setEdit] = useState<any>(null);
+
+  // MUSCLE: Admin Detection for UI Unlocking
+  const isAdmin = me.data?.role?.toLowerCase() === "admin";
 
   const addHero = useMutation({
     mutationFn: (data: any) => fetch('/api/members', { 
@@ -30,6 +35,16 @@ function FamilyPage() {
     }
   });
 
+  // MUSCLE: Update Mutation
+  const saveHero = useMutation({
+    mutationFn: (data: any) => updateMember({ data }),
+    onSuccess: () => {
+      toast.success("Hero Profile Updated!");
+      qc.invalidateQueries({ queryKey: ["members"] });
+      setEdit(null);
+    }
+  });
+
   const memberList = Array.isArray(members.data) ? members.data : [];
 
   return (
@@ -37,7 +52,6 @@ function FamilyPage() {
       <div className="p-8 max-w-5xl mx-auto">
         <header className="flex justify-between items-center mb-10">
           <h1 className="text-4xl font-black uppercase italic tracking-tighter text-slate-900">Family Heroes</h1>
-          {/* MUSCLE: Button is now always visible so you can always add */}
           <button onClick={() => setShowAdd(true)} className="bg-slate-900 text-white px-6 py-4 rounded-2xl font-black text-xs uppercase flex items-center gap-2 shadow-xl hover:bg-indigo-600 transition-all">
             <UserPlus size={18} /> Recruit Hero
           </button>
@@ -68,6 +82,77 @@ function FamilyPage() {
                     );
                 })}
             </div>
+        )}
+
+        {/* --- HERO PROFILE MODAL (Merged Part B Logic) --- */}
+        {edit && (
+          <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4" onClick={() => setEdit(null)}>
+            <div className="bg-white w-full max-w-xl rounded-[4rem] border-[12px] border-slate-50 p-10 shadow-2xl animate-in zoom-in-95" onClick={e => e.stopPropagation()}>
+              <div className="flex justify-between items-center mb-8">
+                <h2 className="text-3xl font-black uppercase italic">Hero Profile</h2>
+                <button onClick={() => setEdit(null)} className="p-3 bg-slate-100 rounded-full hover:bg-rose-50"><X /></button>
+              </div>
+
+              <div className="space-y-8">
+                {/* NAME FIELD: Now unlocked for Admins */}
+                <div>
+                  <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-4">
+                    Hero Name {isAdmin ? "(Admin Editing Enabled)" : "(Locked)"}
+                  </label>
+                  <input 
+                    value={edit.name} 
+                    disabled={!isAdmin} 
+                    onChange={(e) => setEdit({...edit, name: e.target.value})}
+                    className={`w-full p-5 mt-1 rounded-2xl font-black text-xl border-4 transition-all ${
+                      isAdmin 
+                        ? 'bg-white border-indigo-500 text-slate-900 shadow-inner' 
+                        : 'bg-slate-100 border-transparent text-slate-400 cursor-not-allowed'
+                    }`} 
+                  />
+                  {!isAdmin && <p className="text-[9px] font-bold text-slate-300 uppercase mt-2 ml-4">Ask a Parent to change your name</p>}
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-4">Select Class Icon</label>
+                  <div className="flex flex-wrap gap-3 mt-2">
+                    {Object.keys(ICONS).map(iconName => {
+                      const Icon = ICONS[iconName];
+                      return (
+                        <button 
+                          key={iconName}
+                          onClick={() => setEdit({...edit, avatar_icon: iconName})}
+                          className={`size-14 rounded-2xl flex items-center justify-center transition-all ${edit.avatar_icon === iconName ? 'bg-slate-900 text-white scale-110 shadow-lg' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'}`}
+                        >
+                          <Icon size={24} />
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-4 flex items-center gap-2"><Palette size={14}/> Aura Color</label>
+                  <div className="flex flex-wrap gap-3 mt-2">
+                    {COLORS.map(c => (
+                      <button 
+                        key={c} 
+                        onClick={() => setEdit({...edit, avatar_color: c})}
+                        className={`size-10 rounded-full transition-all ${edit.avatar_color === c ? 'ring-4 ring-slate-900 scale-110 shadow-lg' : 'hover:scale-105'}`} 
+                        style={{ backgroundColor: c }} 
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                <button 
+                    onClick={() => saveHero.mutate(edit)}
+                    className="w-full py-6 bg-slate-900 text-white rounded-[2rem] font-black text-xl shadow-2xl hover:bg-indigo-600 transition-all flex items-center justify-center gap-3"
+                >
+                    <Check size={28} /> SAVE CHANGES
+                </button>
+              </div>
+            </div>
+          </div>
         )}
 
         {/* RECRUIT MODAL */}
