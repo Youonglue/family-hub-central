@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useState } from "react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/AppShell";
-import { ChefHat, ShoppingBasket, X, Utensils, Info, Eye } from "lucide-react";
+import { ChefHat, ShoppingBasket, X, Utensils, Info, Eye, Loader2 } from "lucide-react";
 import { getMe } from "@/lib/auth-client";
 
 export const Route = createFileRoute("/_authenticated/meals")({
@@ -34,31 +34,37 @@ function MealsPage() {
   const from = toISO(weekStart);
   const toEnd = toISO(new Date(weekStart.getTime() + 6 * 86400000));
 
-  // 1. Fetch Data & User Role
+  // --- 1. DATA FETCHING (Part A: Modular Path Fixes) ---
   const me = useQuery({ queryKey: ["me"], queryFn: () => getMe() });
-  const recipes = useQuery({ queryKey: ["recipes"], queryFn: () => fetch('/api/meals/recipes').then(r => r.json()) });
+  
+  const recipes = useQuery({ 
+    queryKey: ["recipes"], 
+    queryFn: () => fetch('/api/meals/recipes').then(r => r.json()) 
+  });
+
   const plan = useQuery({
     queryKey: ["meal-plan", from, toEnd],
     queryFn: () => fetch('/api/meals/plan').then(r => r.json()),
   });
 
-  const isAdmin = me.data && "role" in me.data && me.data.role === "admin";
+  // --- MUSCLE: Case-Insensitive Safety Guard ---
+  const isAdmin = me.data?.role?.toLowerCase() === "admin";
 
   const inv = () => {
     qc.invalidateQueries({ queryKey: ["meal-plan"] });
   };
 
-  // 2. Mutations
+  // --- 2. MUTATIONS ---
   const setSlot = useMutation({
     mutationFn: (v: any) => fetch('/api/meals/plan', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(v) }),
-    onSuccess: () => { toast.success("Meal Added"); inv(); },
-    onError: () => toast.error("Admin Privileges Required")
+    onSuccess: () => { toast.success("Meal Added to Plan"); inv(); },
+    onError: () => toast.error("Only Admins can alter the feast!")
   });
 
   const clearSlot = useMutation({
     mutationFn: (id: string) => fetch(`/api/meals/plan/${id}`, { method: 'DELETE' }),
-    onSuccess: () => { toast.success("Meal Removed"); inv(); },
-    onError: () => toast.error("Admin Privileges Required")
+    onSuccess: () => { toast.success("Slot Cleared"); inv(); },
+    onError: () => toast.error("Only Admins can remove meals!")
   });
 
   const genShop = useMutation({
@@ -68,9 +74,15 @@ function MealsPage() {
 
   const days = Array.from({ length: 7 }, (_, i) => new Date(weekStart.getTime() + i * 86400000));
   const planMap = new Map<string, any>();
-  for (const p of (Array.isArray(plan.data) ? plan.data : [])) {
+  
+  // Safe array processing for the Weekly Grid
+  const planData = Array.isArray(plan.data) ? plan.data : [];
+  for (const p of planData) {
     planMap.set(`${p.plan_date}:${p.meal}`, p);
   }
+
+  // Loading state to prevent "toLowerCase" errors
+  if (me.isLoading) return <div className="p-20 text-center"><Loader2 className="animate-spin mx-auto" /></div>;
 
   return (
     <AppShell>
@@ -80,17 +92,17 @@ function MealsPage() {
         <header className="mb-8 flex flex-wrap items-center justify-between gap-4">
           <div>
             <h1 className="font-display text-4xl font-black tracking-tight text-slate-900 uppercase italic">Meal Planner</h1>
-            <p className="text-slate-400 font-bold uppercase text-[10px] tracking-widest">The Great Family Feast Schedule</p>
+            <p className="text-slate-400 font-bold uppercase text-[10px] tracking-widest italic">The Weekly Feast Protocol</p>
           </div>
           <div className="flex items-center gap-3">
-            <div className="flex bg-white rounded-2xl shadow-sm border border-slate-100 p-1">
-              <button onClick={() => setWeekStart(new Date(weekStart.getTime() - 7 * 86400000))} className="p-3 hover:bg-slate-50 rounded-xl transition-all">‹</button>
+            <div className="flex bg-white rounded-2xl shadow-sm border-4 border-slate-50 p-1">
+              <button onClick={() => setWeekStart(new Date(weekStart.getTime() - 7 * 86400000))} className="p-3 hover:bg-slate-100 rounded-xl transition-all">‹</button>
               <span className="font-black uppercase tracking-widest text-[10px] flex items-center px-4">{new Date(from).toLocaleDateString()}</span>
-              <button onClick={() => setWeekStart(new Date(weekStart.getTime() + 7 * 86400000))} className="p-3 hover:bg-slate-50 rounded-xl transition-all">›</button>
+              <button onClick={() => setWeekStart(new Date(weekStart.getTime() + 7 * 86400000))} className="p-3 hover:bg-slate-100 rounded-xl transition-all">›</button>
             </div>
             
             {isAdmin && (
-              <button onClick={() => genShop.mutate()} className="bg-slate-900 text-white px-6 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center gap-2 shadow-xl hover:bg-indigo-600 transition-all">
+              <button onClick={() => genShop.mutate()} className="bg-slate-900 text-white px-6 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center gap-2 shadow-xl hover:bg-indigo-600 transition-all active:scale-95">
                 <ShoppingBasket size={18} /> BUILD SHOPPING LIST
               </button>
             )}
@@ -98,11 +110,11 @@ function MealsPage() {
         </header>
 
         {/* --- WEEKLY PLANNER GRID --- */}
-        <section className="mb-12 overflow-x-auto bg-white rounded-[3rem] p-8 shadow-2xl border-4 border-slate-50">
+        <section className="mb-12 overflow-x-auto bg-white rounded-[3rem] p-8 shadow-2xl border-8 border-slate-50">
           <div className="grid min-w-[800px] grid-cols-8 gap-4">
-            <div className="flex items-end pb-4 font-black text-slate-300 uppercase tracking-widest text-[10px]">Quest Type</div>
+            <div className="flex items-end pb-4 font-black text-slate-200 uppercase tracking-widest text-[10px]">Quest Type</div>
             {days.map((d) => (
-              <div key={toISO(d)} className="text-center pb-4 border-b-4 border-slate-100">
+              <div key={toISO(d)} className="text-center pb-4 border-b-4 border-slate-50">
                 <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">{d.toLocaleDateString(undefined, { weekday: "short" })}</p>
                 <p className="text-3xl font-black text-slate-800">{d.getDate()}</p>
               </div>
@@ -115,15 +127,15 @@ function MealsPage() {
                   const key = `${toISO(d)}:${m}`;
                   const entry = planMap.get(key);
                   return (
-                    <div key={key} className="relative bg-slate-50 rounded-3xl p-3 min-h-[120px] border-2 border-transparent hover:border-indigo-200 transition-all flex flex-col items-center justify-center text-center group shadow-sm overflow-hidden">
+                    <div key={key} className="relative bg-slate-50 rounded-3xl p-3 min-h-[120px] border-2 border-transparent hover:border-indigo-100 transition-all flex flex-col items-center justify-center text-center group shadow-inner overflow-hidden">
                       {entry ? (
                         <>
-                          {entry.image_url && <img src={entry.image_url} className="absolute inset-0 w-full h-full object-cover opacity-20 group-hover:opacity-40 transition-opacity" />}
+                          {entry.image_url && <img src={entry.image_url} className="absolute inset-0 w-full h-full object-cover opacity-20 group-hover:opacity-30 transition-opacity" />}
                           <p className="relative z-10 text-[10px] font-black leading-tight text-slate-900 uppercase px-2">{entry.recipe_name}</p>
                           
                           {isAdmin && (
                             <button onClick={() => clearSlot.mutate(entry.id)} className="absolute z-20 top-2 right-2 bg-rose-500 text-white rounded-xl p-2 opacity-0 group-hover:opacity-100 transition-all shadow-lg hover:scale-110">
-                              <X className="size-4" />
+                              <X size={14} />
                             </button>
                           )}
                         </>
@@ -135,12 +147,13 @@ function MealsPage() {
                             value=""
                           >
                             <option value="">+ {m}</option>
+                            {/* --- Part B: Correct Dropdown Mapping --- */}
                             {(Array.isArray(recipes.data) ? recipes.data : [])
                               .filter((r: any) => r.category === m)
                               .map((r: any) => <option key={r.id} value={r.id}>{r.name}</option>)}
                           </select>
                         ) : (
-                          <p className="text-[10px] font-black text-slate-200 uppercase tracking-widest italic">No Feasts Logged</p>
+                          <p className="text-[9px] font-black text-slate-200 uppercase tracking-widest italic">Not Set</p>
                         )
                       )}
                     </div>
@@ -181,7 +194,7 @@ function MealsPage() {
           </div>
         </section>
 
-        {/* --- RECIPE MODAL (The detailed view for ingredients & steps) --- */}
+        {/* --- RECIPE MODAL --- */}
         {selectedRecipe && (
           <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4" onClick={() => setSelectedRecipe(null)}>
             <div className="bg-white w-full max-w-2xl rounded-[4rem] p-10 shadow-2xl border-[12px] border-slate-50 animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>

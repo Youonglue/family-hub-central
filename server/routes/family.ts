@@ -30,11 +30,33 @@ export default async function familyRoutes(app: any, opts: any) {
     return { success: true, id };
   });
 
-  // 3. UPDATE HERO
-  app.patch("/:id", async (req: any) => {
+  // 3. Update Hero (Avatar, Color, and NAME)
+  app.patch("/:id", async (req: any, reply: any) => {
+    const { id } = req.params;
     const { avatar_icon, avatar_color, name } = req.body;
-    db.prepare(`UPDATE family_members SET avatar_icon = ?, avatar_color = ?, name = ? WHERE id = ?`)
-      .run(avatar_icon, avatar_color, name, req.params.id);
+    const user = req.user; // User object from the Gatekeeper muscle
+
+    const currentMember = db.prepare("SELECT * FROM family_members WHERE id = ?").get(id) as any;
+    if (!currentMember) return reply.code(404).send({ error: "Hero not found" });
+
+    // FIX: Allow name change ONLY if the requester is an admin
+    if (name && name !== currentMember.name) {
+      if (user.role?.toLowerCase() !== 'admin') {
+        return reply.code(403).send({ error: "Only an Admin can rename heroes!" });
+      }
+    }
+
+    db.prepare(`
+      UPDATE family_members 
+      SET avatar_icon = ?, avatar_color = ?, name = ? 
+      WHERE id = ?
+    `).run(
+      avatar_icon || currentMember.avatar_icon, 
+      avatar_color || currentMember.avatar_color, 
+      name || currentMember.name, 
+      id
+    );
+
     broadcast("members");
     return { success: true };
   });

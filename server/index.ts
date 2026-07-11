@@ -18,7 +18,12 @@ import calendarRoutes from "./routes/calendar.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 initSchema();
 
-const app = Fastify({ logger: false });
+// MUSCLE: ignoreTrailingSlash ensures routes like /api/chores/ don't return 404
+const app = Fastify({ 
+  logger: false,
+  ignoreTrailingSlash: true 
+});
+
 await app.register(fastifyWebsocket);
 
 // --- BROADCASTER MUSCLE ---
@@ -50,21 +55,26 @@ app.addHook("preHandler", async (req, reply) => {
   (req as any).user = user;
 });
 
-// --- REGISTER MODULAR ROUTES (Aligned with Frontend Calls) ---
+// --- REGISTER MODULAR ROUTES ---
 app.register(authRoutes, { prefix: "/api/auth" });
 app.register(familyRoutes, { prefix: "/api/members", broadcast });
 app.register(rewardRoutes, { prefix: "/api/rewards", broadcast });
 app.register(shoppingRoutes, { prefix: "/api/shopping", broadcast });
-app.register(choreRoutes, { prefix: "/api/chores", broadcast }); // Aligned to /api/chores
-app.register(mealRoutes, { prefix: "/api/meals", broadcast });   // Aligned to /api/meals
+app.register(choreRoutes, { prefix: "/api/chores", broadcast }); 
+app.register(mealRoutes, { prefix: "/api/meals", broadcast });
 app.register(kioskRoutes, { prefix: "/api/kiosk", broadcast });
-
-// Calendar Alignment: Frontend calls /api/events, but we named it /api/calendar
 app.register(calendarRoutes, { prefix: "/api/events", broadcast }); 
 
-// Points Alignment: Often requested separately by the frontend
+// Points Alignment
 app.get("/api/points", async (req: any) => {
-    return db.prepare("SELECT member_id, SUM(points_awarded) as total FROM chore_completions WHERE status = 'approved' GROUP BY member_id").all();
+    return db.prepare(`
+        SELECT 
+          m.id as member_id, m.name, m.avatar_color, m.avatar_icon, m.xp, m.level, m.is_kid, m.is_parent,
+          (COALESCE((SELECT SUM(points_awarded) FROM chore_completions WHERE member_id = m.id AND status = 'approved'), 0) - 
+           COALESCE((SELECT SUM(points_spent) FROM redemptions WHERE member_id = m.id), 0)) as balance
+        FROM family_members m 
+        ORDER BY m.xp DESC
+    `).all();
 });
 
 // --- SERVE FRONTEND ---
