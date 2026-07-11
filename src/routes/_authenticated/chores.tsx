@@ -199,7 +199,7 @@ function ChoresKiosk() {
                     </div>
                   </div>
                </div>
-               <Sparkles className="absolute -right-10 -top-10 size-48 text-slate-50 rotate-12" />
+               
             </div>
 
             <div className="grid gap-6 sm:grid-cols-2">
