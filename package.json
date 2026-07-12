@@ -7,7 +7,7 @@
     "dev": "tsx watch server/index.ts",
     "build": "vite build",
     "preview": "vite preview",
-    "start": "node dist/server/index.js"
+    "start": "tsx server/index.js"
   },
   "dependencies": {
     "@fastify/cookie": "^9.2.0",

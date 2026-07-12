@@ -224,6 +224,45 @@ function FamilyPage() {
                     </div>
                   </div>
 
+                  {/* --- LINK LOGIN ACCOUNT SETTING (Always visible, editable for Admins) --- */}
+                  <div className="border-t border-slate-100 pt-6 mt-6">
+                    <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-4 block mb-2">
+                      Linked Login Account {!isAdmin && "(Admin Privilege Required)"}
+                    </label>
+                    <select
+                      value={edit.user_id || ""}
+                      disabled={!isAdmin}
+                      onChange={async (e) => {
+                        const val = e.target.value || null;
+                        setEdit({ ...edit, user_id: val });
+                        try {
+                          const res = await fetch('/api/auth/link-member', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ memberId: edit.id, userId: val })
+                          });
+                          if (res.ok) {
+                            toast.success("Account link synchronized!");
+                            qc.invalidateQueries({ queryKey: ["members"] });
+                            qc.invalidateQueries({ queryKey: ["users"] });
+                          } else {
+                            toast.error("Failed to link account");
+                          }
+                        } catch {
+                          toast.error("Network error linking account");
+                        }
+                      }}
+                      className="w-full p-4 bg-slate-50 border-4 border-slate-100 rounded-2xl font-black text-sm uppercase outline-none focus:border-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <option value="">-- No Account Linked --</option>
+                      {userList.map((u: any) => (
+                        <option key={u.id} value={u.id}>
+                          {u.username} ({u.role})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
                   {/* --- PROMOTIONAL / DEMOTIONAL PANEL (True database integration) --- */}
                   {isAdmin && associatedUser && !isSelf && (
                     <div className="border-t border-slate-100 pt-6 mt-6">

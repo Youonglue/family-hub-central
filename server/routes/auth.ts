@@ -79,33 +79,87 @@ export default async function authRoutes(app: any) {
     return db.prepare("SELECT id, username, role FROM users").all();
   });
 
-  // Updated promote route with member ID mapping (Problem 2)
+  // Added: pin-status endpoint to support secure lock/unlock states
+  app.get("/pin-status", async (req: any) => {
+    try {
+      const user = getSessionUser(req);
+      if (!user) return { has_pin: false, needs_pin_setup: false };
+      return { 
+        has_pin: !!user.pin_hash, 
+        needs_pin_setup: user.needs_pin_setup === 1 
+      };
+    } catch (e) {
+      return { has_pin: false, needs_pin_setup: false };
+    }
+  });
+
+// Replace the "/link-member" route in your /server/routes/auth.ts with this version:
+
+  app.post("/link-member", async (req: any, reply: any) => {
+    try {
+      // 1. Authorization check
+      if (!req.user || req.user.role !== 'admin') {
+        return reply.code(403).send({ error: "Only administrators can link accounts" });
+      }
+
+      const { memberId, userId } = req.body;
+
+      // 2. Self-Heal: Ensure the 'user_id' column exists in the family_members table
+      try {
+        db.prepare("ALTER TABLE family_members ADD COLUMN user_id TEXT").run();
+        console.log("🛠️ Injected missing 'user_id' column into family_members table!");
+      } catch (e) {
+        // Ignore error if the column already exists
+      }
+
+      // 3. Ensure 1-to-1 association: unlink any previous link for this user first
+      db.prepare("UPDATE family_members SET user_id = NULL WHERE user_id = ?").run(userId);
+
+      if (memberId) {
+        // Link the target family member to reference the user account
+        db.prepare("UPDATE family_members SET user_id = ? WHERE id = ?").run(userId, memberId);
+
+        // Copy user role to family_members for front-end query stability
+        const user = db.prepare("SELECT role FROM users WHERE id = ?").get(userId) as any;
+        if (user) {
+          db.prepare("UPDATE family_members SET role = ? WHERE id = ?").run(user.role, memberId);
+        }
+      }
+
+      return { success: true };
+    } catch (error) {
+      // Print the exact error directly to your server console so we can see it
+      console.error("❌ LINK-MEMBER ERROR:", error);
+      return reply.code(500).send({ error: (error as Error).message });
+    }
+  });
+  // Updated promote route with correct table mapping
   app.post("/promote", async (req: any) => {
     const { userId } = req.body;
     let targetUserId = userId;
     
     // Resolve member ID to user ID if necessary
     try {
-      const member = db.prepare("SELECT * FROM members WHERE id = ?").get(userId) as any;
+      const member = db.prepare("SELECT * FROM family_members WHERE id = ?").get(userId) as any;
       if (member && member.user_id) {
         targetUserId = member.user_id;
       }
     } catch (e) {
-      // Ignore if members table schema varies
+      // Ignore if database schema varies
     }
 
     // Sync both tables
     db.prepare("UPDATE users SET role = 'admin', is_admin = 1, needs_pin_setup = 1 WHERE id = ?").run(targetUserId);
     try {
-      db.prepare("UPDATE members SET role = 'admin' WHERE id = ? OR user_id = ?").run(targetUserId, targetUserId);
+      db.prepare("UPDATE family_members SET role = 'admin' WHERE id = ? OR user_id = ?").run(targetUserId, targetUserId);
     } catch (e) {
-      // Ignore if members table schema varies
+      // Ignore if database schema varies
     }
 
     return { success: true };
   });
 
-  // Added demote route with member ID mapping and single-admin fail-safe (Problem 2)
+  // Updated demote route with correct table mapping and single-admin fail-safe
   app.post("/demote", async (req: any, reply: any) => {
     // Authorization check
     if (!req.user || req.user.role !== 'admin') {
@@ -117,12 +171,12 @@ export default async function authRoutes(app: any) {
 
     // Resolve member ID to user ID if necessary
     try {
-      const member = db.prepare("SELECT * FROM members WHERE id = ?").get(userId) as any;
+      const member = db.prepare("SELECT * FROM family_members WHERE id = ?").get(userId) as any;
       if (member && member.user_id) {
         targetUserId = member.user_id;
       }
     } catch (e) {
-      // Ignore if members table schema varies
+      // Ignore if database schema varies
     }
 
     // Prevent self-demotion
@@ -142,9 +196,9 @@ export default async function authRoutes(app: any) {
     // Sync both tables on demotion
     db.prepare("UPDATE users SET role = 'user', is_admin = 0, pin_hash = NULL WHERE id = ?").run(targetUserId);
     try {
-      db.prepare("UPDATE members SET role = 'user' WHERE id = ? OR user_id = ?").run(targetUserId, targetUserId);
+      db.prepare("UPDATE family_members SET role = 'user' WHERE id = ? OR user_id = ?").run(targetUserId, targetUserId);
     } catch (e) {
-      // Ignore if members table schema varies
+      // Ignore if database schema varies
     }
     
     return { success: true };

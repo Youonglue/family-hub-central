@@ -6,7 +6,7 @@ import { AppShell, kidStyle } from "@/components/AppShell";
 import { exportBackup, importBackup, listMembers } from "@/lib/hub-api";
 import { changePassword, changeUsername, getMe, getPinStatus, setPin, clearPin, verifyPin } from "@/lib/auth-client";
 import { encryptBundle, decryptBundle, downloadBundle, type BackupBundle } from "@/lib/backup-crypto";
-import { Download, Upload, Lock, ShieldAlert, KeyRound, User, ShieldCheck, Users, ArrowUpCircle } from "lucide-react";
+import { Download, Upload, Lock, ShieldAlert, KeyRound, User, ShieldCheck, Users, ArrowUpCircle, Shield } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/settings")({
   ssr: false,
@@ -91,6 +91,7 @@ function UnlockedSettings({
   hasPin, onPinChanged, onUsernameChanged,
 }: { hasPin: boolean; onPinChanged: () => void; onUsernameChanged: () => void }) {
   const qc = useQueryClient();
+  const me = useQuery({ queryKey: ["me"], queryFn: () => getMe() });
   const members = useQuery({ queryKey: ["members"], queryFn: () => listMembers() });
   
   const users = useQuery({ 
@@ -105,11 +106,63 @@ function UnlockedSettings({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId })
       });
+      if (!res.ok) {
+        throw new Error("Promotion failed");
+      }
       return res.json();
     },
     onSuccess: () => {
-      toast.success("User Promoted!");
+      toast.success("User Promoted to Admin!");
       qc.invalidateQueries({ queryKey: ["known-users"] });
+      qc.invalidateQueries({ queryKey: ["members"] });
+    },
+    onError: () => {
+      toast.error("Failed to promote user");
+    }
+  });
+
+  const demote = useMutation({
+    mutationFn: async (userId: string) => {
+      const res = await fetch('/api/auth/demote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId })
+      });
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || "Demotion failed");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast.success("User Demoted to standard user");
+      qc.invalidateQueries({ queryKey: ["known-users"] });
+      qc.invalidateQueries({ queryKey: ["members"] });
+    },
+    onError: (err: any) => {
+      toast.error(err.message || "Failed to demote");
+    }
+  });
+
+  const linkAccount = useMutation({
+    mutationFn: async ({ memberId, userId }: { memberId: string | null, userId: string }) => {
+      const res = await fetch('/api/auth/link-member', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memberId, userId })
+      });
+      if (!res.ok) {
+        throw new Error("Failed to link account");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast.success("Account link updated!");
+      qc.invalidateQueries({ queryKey: ["known-users"] });
+      qc.invalidateQueries({ queryKey: ["members"] });
+    },
+    onError: () => {
+      toast.error("Failed to link account");
     }
   });
 
@@ -170,26 +223,81 @@ function UnlockedSettings({
 
   return (
     <div className="space-y-8">
-      {/* KNOWN USERS */}
+      {/* KNOWN USERS & ADMIN MANAGEMENT */}
       <section className="rounded-[3rem] border-4 border-slate-50 bg-white p-8 shadow-xl">
         <div className="mb-6 flex items-center gap-3">
           <Users className="size-6 text-indigo-500" />
           <h2 className="font-display text-xl font-black uppercase italic">Known Heroes</h2>
         </div>
-        <div className="space-y-3">
-          {Array.isArray(users.data) && users.data.map((u: any) => (
-            <div key={u.id} className="flex items-center justify-between rounded-2xl bg-slate-50 p-4">
-              <div className="flex items-center gap-4">
-                <div className={`p-2 rounded-xl font-black text-[10px] ${u.role === 'admin' ? 'bg-indigo-600 text-white' : 'bg-slate-200 text-slate-500'}`}>
-                  {u.role === 'admin' ? 'ADM' : 'USR'}
+        <div className="space-y-4">
+          {Array.isArray(users.data) && users.data.map((u: any) => {
+            const memberList = Array.isArray(members.data) ? members.data : [];
+            // Find which family hero is linked to this login user account
+            const linkedMember = memberList.find((m: any) => m.user_id === u.id);
+            const totalAdminsCount = users.data.filter((usr: any) => usr.role === 'admin').length;
+            const isSelf = u.username === me.data?.username;
+
+            return (
+              <div key={u.id} className="flex flex-col md:flex-row md:items-center justify-between gap-4 rounded-3xl bg-slate-50 p-6 border-2 border-slate-100">
+                <div className="flex flex-col gap-1">
+                  <div className="flex items-center gap-3">
+                    <div className={`px-2 py-1 rounded-lg font-black text-[9px] ${u.role === 'admin' ? 'bg-indigo-600 text-white' : 'bg-slate-200 text-slate-500'}`}>
+                      {u.role === 'admin' ? 'ADMIN' : 'USER'}
+                    </div>
+                    <p className="font-black text-lg uppercase tracking-tighter text-slate-800">{u.username}</p>
+                    {isSelf && <span className="text-[10px] font-bold text-slate-400 italic font-mono">(You)</span>}
+                  </div>
+                  
+                  {/* Account linking selector */}
+                  <div className="mt-2 flex items-center gap-2">
+                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider">Associated Hero:</span>
+                    <select
+                      value={linkedMember?.id || ""}
+                      onChange={(e) => {
+                        const selectedMemberId = e.target.value || null;
+                        linkAccount.mutate({ memberId: selectedMemberId, userId: u.id });
+                      }}
+                      className="bg-white border-2 border-slate-100 rounded-lg px-2 py-1 text-[10px] font-bold uppercase outline-none focus:border-indigo-500"
+                    >
+                      <option value="">-- No Hero Linked --</option>
+                      {memberList.map((m: any) => (
+                        <option key={m.id} value={m.id}>{m.name}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
-                <p className="font-black text-lg uppercase tracking-tighter text-slate-800">{u.username}</p>
+
+                {/* Promotion / Demotion Buttons */}
+                {!isSelf && (
+                  <div className="flex items-center gap-2">
+                    {u.role === 'admin' ? (
+                      totalAdminsCount > 1 ? (
+                        <button
+                          onClick={() => demote.mutate(u.id)}
+                          disabled={demote.isPending}
+                          className="px-4 py-2 bg-rose-50 border-2 border-rose-100 text-rose-600 rounded-xl font-black text-[10px] uppercase hover:bg-rose-100 transition-all"
+                        >
+                          {demote.isPending ? "Demoting..." : "Demote"}
+                        </button>
+                      ) : (
+                        <span className="text-[9px] font-bold text-slate-400 uppercase italic">
+                          (Only Admin)
+                        </span>
+                      )
+                    ) : (
+                      <button
+                        onClick={() => promote.mutate(u.id)}
+                        disabled={promote.isPending}
+                        className="px-4 py-2 bg-white border-2 border-slate-100 text-slate-700 rounded-xl font-black text-[10px] uppercase hover:border-indigo-500 transition-all"
+                      >
+                        {promote.isPending ? "Promoting..." : "Promote"}
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
-              {u.role !== 'admin' && (
-                <button onClick={() => promote.mutate(u.id)} className="px-4 py-2 bg-white border-2 border-slate-100 rounded-xl font-black text-[10px] uppercase hover:border-indigo-500 transition-all">Promote</button>
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
       </section>
 
