@@ -1,23 +1,56 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { AppShell } from "@/components/AppShell";
-import { Clock, Calendar, Zap, Utensils } from "lucide-react";
+import { Clock, Calendar, Zap, Utensils, Sword } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   component: Dashboard,
 });
+
+const pad = (n: number) => String(n).padStart(2, "0");
+const ymd = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
+const EVENT_COLORS = ["sky", "rose", "amber", "emerald", "violet", "indigo", "cyan", "pink", "orange", "fuchsia", "lime", "teal"];
+
+// Consistent auto-color hashing matching the calendar view
+const getQuestColor = (title: string): string => {
+  const colors = EVENT_COLORS.map(c => `var(--kid-${c})`);
+  let hash = 0;
+  for (let i = 0; i < title.length; i++) {
+    hash = title.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const index = Math.abs(hash) % colors.length;
+  return colors[index];
+};
 
 function Dashboard() {
   const [now, setNow] = useState(new Date());
   const [isIdle, setIsIdle] = useState(false);
   let idleTimer: any;
 
-  // 1. Fetch Data
-  const events = useQuery({ queryKey: ["events-upcoming"], queryFn: () => fetch('/api/events/upcoming').then(res => res.json()) });
+  // --- DATA FETCHING ---
+  // Fetch points/roster list
   const points = useQuery({ queryKey: ["points"], queryFn: () => fetch('/api/points').then(res => res.json()) });
+  
+  // Fetch complete calendar list to calculate today's active items
+  const events = useQuery({ queryKey: ["events"], queryFn: () => fetch('/api/events').then(res => res.json()) });
 
-  // 2. Kiosk / Inactivity Logic
+  // Resolve today's active quests
+  const todayQuests = useMemo(() => {
+    const todayKey = ymd(now);
+    const list = Array.isArray(events.data) ? events.data : [];
+    return list.filter((e: any) => e.starts_at === todayKey);
+  }, [events.data, now]);
+
+  // Resolve the next closest upcoming event for Kiosk Mode
+  const upcomingEvent = useMemo(() => {
+    const list = Array.isArray(events.data) ? events.data : [];
+    const todayKey = ymd(now);
+    return list.find((e: any) => e.starts_at >= todayKey);
+  }, [events.data, now]);
+
+  // --- KIOSK / INACTIVITY LOGIC ---
   const resetIdle = () => {
     setIsIdle(false);
     clearTimeout(idleTimer);
@@ -31,11 +64,11 @@ function Dashboard() {
     return () => { clearInterval(t); window.removeEventListener("mousemove", resetIdle); };
   }, []);
 
-  // 3. Kiosk Mode Render
+  // --- 1. KIOSK MODE RENDER (Idle clock view) ---
   if (isIdle) {
     return (
       <div className="h-screen w-full bg-slate-950 text-white flex flex-col items-center justify-center animate-in fade-in duration-1000" onClick={() => setIsIdle(false)}>
-        <p className="text-3xl font-light tracking-[0.5em] text-primary uppercase mb-4">Family Hub</p>
+        <p className="text-3xl font-light tracking-[0.5em] text-indigo-500 uppercase mb-4">Family Hub</p>
         <h1 className="text-[12rem] font-black leading-none tracking-tighter">
           {now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
         </h1>
@@ -43,50 +76,124 @@ function Dashboard() {
           {now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
         </p>
         <div className="mt-20 flex gap-4 items-center bg-white/5 p-6 rounded-3xl border border-white/10">
-          <Calendar className="size-8 text-primary" />
+          <Calendar className="size-8 text-indigo-500 animate-pulse" />
           <div className="text-left">
              <p className="text-sm text-slate-500 font-bold uppercase">Next Event</p>
-             <p className="text-xl font-bold">{(events.data as any[])?.[0]?.title ?? "No more events today"}</p>
+             <p className="text-xl font-bold">{upcomingEvent ? upcomingEvent.title : "No more events today"}</p>
           </div>
         </div>
       </div>
     );
   }
 
+  // --- 2. STANDARD DASHBOARD RENDER (When NOT Idle) ---
   return (
     <AppShell>
-      <div className="p-8 max-w-7xl mx-auto space-y-8">
-        <header>
-          <h1 className="text-4xl font-black">Dashboard</h1>
-          <p className="text-slate-500">Welcome back to the Hub.</p>
+      <div className="mx-auto max-w-[1500px] px-4 py-6 md:px-8 md:py-10 space-y-8 animate-in fade-in duration-300">
+        
+        {/* Welcome / Header */}
+        <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <p className="font-mono text-xs uppercase tracking-[0.2em] text-indigo-500 font-black">Fortress Central</p>
+            <h1 className="font-display text-4xl font-black italic uppercase tracking-tighter text-slate-900">Dashboard</h1>
+          </div>
+          <div className="flex items-center gap-3 bg-white px-6 py-4 rounded-3xl border-4 border-slate-50 shadow-sm">
+            <Clock className="size-5 text-indigo-500 animate-spin" style={{ animationDuration: '6s' }} />
+            <span className="font-black text-sm uppercase tracking-wider text-slate-800">
+              {now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          </div>
         </header>
 
-        <div className="grid md:grid-cols-3 gap-6">
-          {/* Quick Points */}
-          <section className="bg-panel p-6 rounded-3xl border border-border shadow-sm">
-            <h2 className="flex items-center gap-2 font-bold mb-4"><Zap className="text-amber-500" /> Leaderboard</h2>
-            <div className="space-y-4">
-              {(Array.isArray(points.data) ? points.data : []).slice(0, 4).map((m: any) => (
-                <div key={m.member_id} className="flex items-center justify-between">
-                  <span className="font-bold">{m.name}</span>
-                  <span className="bg-slate-100 px-3 py-1 rounded-full text-sm font-black">{m.balance} pts</span>
-                </div>
-              ))}
-            </div>
-          </section>
+        {/* Dashboard Grid Layout */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          
+          {/* Left Column: Hero Roster Leaderboard */}
+          <div className="lg:col-span-2 space-y-6">
+            <section className="bg-white p-8 rounded-[3rem] border-4 border-slate-50 shadow-xl">
+              <h2 className="text-2xl font-black uppercase italic tracking-tighter mb-6 flex items-center gap-2 text-slate-900">
+                <Zap className="text-yellow-500 size-6 animate-pulse" /> Hero Roster
+              </h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                {(Array.isArray(points.data) ? points.data : []).map((m: any) => {
+                  const xpProgress = (m.xp || 0) % 100;
+                  return (
+                    <div key={m.member_id} className="bg-slate-50 p-6 rounded-[2.5rem] border-2 border-slate-100 flex items-center gap-4 relative overflow-hidden">
+                      <div className="size-16 rounded-2xl flex items-center justify-center text-white text-3xl font-black shadow-lg shrink-0" style={{ backgroundColor: m.avatar_color || '#ccc' }}>
+                        {m.name[0].toUpperCase()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex justify-between items-baseline">
+                          <p className="font-black text-lg uppercase tracking-tight text-slate-800 truncate">{m.name}</p>
+                          <span className="text-xs font-black text-indigo-500">Lv.{m.level || 1}</span>
+                        </div>
+                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Level {m.level || 1} Adventurer</p>
+                        
+                        {/* XP Progress Bar */}
+                        <div className="mt-3 space-y-1">
+                          <div className="h-2 w-full bg-slate-200 rounded-full overflow-hidden">
+                            <div className="h-full rounded-full" style={{ width: `${xpProgress}%`, backgroundColor: m.avatar_color || '#ccc' }} />
+                          </div>
+                          <div className="flex justify-between text-[8px] font-bold text-slate-400 uppercase tracking-wider">
+                            <span>{m.balance} pts balance</span>
+                            <span>{100 - xpProgress} XP to Level Up</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          </div>
 
-          {/* Today's Events */}
-          <section className="bg-panel p-6 rounded-3xl border border-border shadow-sm md:col-span-2">
-            <h2 className="flex items-center gap-2 font-bold mb-4"><Calendar className="text-primary" /> Upcoming</h2>
-            <div className="space-y-3">
-              {(Array.isArray(events.data) ? events.data : []).map((e: any) => (
-                <div key={e.id} className="p-4 bg-canvas rounded-2xl border border-border/50">
-                  <p className="font-black">{e.title}</p>
-                  <p className="text-xs text-slate-500 font-bold">{new Date(e.starts_at).toLocaleTimeString()}</p>
-                </div>
-              ))}
-            </div>
-          </section>
+          {/* Right Column: Pinned Day Overview (Today's Quests) */}
+          <div className="space-y-6">
+            <section className="bg-white p-8 rounded-[3rem] border-4 border-slate-50 shadow-xl min-h-[400px]">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-2xl font-black uppercase italic tracking-tighter flex items-center gap-2 text-slate-900">
+                  <Calendar className="text-indigo-500 size-6" /> Today's Quests
+                </h2>
+                <span className="px-3 py-1 bg-indigo-50 text-[10px] font-black uppercase rounded-lg text-indigo-600 font-mono">
+                  {now.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                </span>
+              </div>
+              
+              <div className="space-y-4">
+                {todayQuests.length === 0 ? (
+                  <div className="text-center py-20">
+                    <p className="text-xs font-black text-slate-300 uppercase tracking-widest">No active quests today</p>
+                    <p className="text-[9px] font-bold text-slate-400 uppercase mt-1">Adventure cleared!</p>
+                  </div>
+                ) : (
+                  todayQuests.map((e: any) => {
+                    // Match assigned hero
+                    const assignedHero = (Array.isArray(points.data) ? points.data : []).find((m: any) => m.member_id === e.member_id);
+                    return (
+                      <div key={e.id} className="flex items-center gap-4 bg-slate-50 p-4 rounded-2xl border-l-4 shadow-sm" style={{ borderLeftColor: e.color || getQuestColor(e.title) }}>
+                        {assignedHero ? (
+                          <div 
+                            className="size-8 rounded-full flex items-center justify-center text-xs font-black text-white shrink-0 shadow-sm" 
+                            style={{ backgroundColor: assignedHero.avatar_color || '#ccc' }}
+                            title={assignedHero.name}
+                          >
+                            {assignedHero.name[0].toUpperCase()}
+                          </div>
+                        ) : (
+                          <div className="size-8 bg-slate-800 text-white rounded-full flex items-center justify-center text-[10px] font-black shrink-0 shadow-sm" title="Whole Family">ALL</div>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <p className="font-black text-sm text-slate-900 leading-tight truncate">{e.title}</p>
+                          <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider truncate mt-0.5">{e.location || "Base"}</p>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </section>
+          </div>
+
         </div>
       </div>
     </AppShell>

@@ -28,7 +28,6 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [isSubmittingPin, setIsSubmittingPin] = useState(false);
 
   // CRITICAL FIX: The "Safety Guard" you were looking for
-  // This prevents the 'toLowerCase' crash if data is still loading or null
   const userRole = me?.data?.role?.toLowerCase() ?? 'user';
 
   async function signOut() {
@@ -58,7 +57,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     navigate({ to: "/auth", replace: true });
   }
 
-  // --- 1. LOADING STATE (Prevents the crash) ---
+  // --- 1. LOADING STATE ---
   if (me.isLoading) {
     return (
       <div className="fixed inset-0 bg-slate-50 flex flex-col items-center justify-center">
@@ -69,7 +68,6 @@ export function AppShell({ children }: { children: ReactNode }) {
   }
 
   // --- 2. 6-DIGIT PIN GATEKEEPER ---
-  // Uses optional chaining (?.) so it never reads properties of null
   if (me.data?.needs_pin_setup === 1) {
     return (
       <div className="fixed inset-0 z-[9999] bg-slate-900 flex items-center justify-center p-4 overflow-hidden">
@@ -140,36 +138,38 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-screen bg-canvas">
       {/* Sidebar (desktop) */}
-      <aside className="fixed left-0 top-0 hidden h-screen w-64 flex-col border-r border-border bg-panel/70 backdrop-blur md:flex">
-        <Link to="/dashboard" className="flex items-center gap-2 px-6 py-6">
-          <div className="grid size-9 place-items-center rounded-2xl bg-primary text-primary-foreground font-display font-bold">
+      <aside className="fixed left-0 top-0 h-screen w-64 flex flex-col border-r border-border bg-panel/70 backdrop-blur md:flex">
+        <Link to="/dashboard" className="flex items-center gap-2 px-6 py-8">
+          <div className="grid size-11 place-items-center rounded-2xl bg-indigo-600 text-white font-display text-xl font-black italic">
             H
           </div>
-          <span className="font-display text-lg font-bold">Family Hub</span>
+          <span className="font-display text-2xl font-black uppercase italic tracking-tight">Family Hub</span>
         </Link>
-        <nav className="flex-1 space-y-1 px-3">
+        <nav className="flex-1 space-y-2 px-3">
           {nav.map((item) => {
             const active = pathname === item.to || (item.to !== "/dashboard" && pathname.startsWith(item.to));
             return (
               <Link
                 key={item.to}
                 to={item.to}
-                className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors ${
-                  active ? "bg-primary text-primary-foreground" : "text-foreground hover:bg-muted"
+                className={`flex items-center gap-4 rounded-2xl px-4 py-3.5 text-base font-black uppercase tracking-wider transition-all ${
+                  active 
+                    ? "bg-slate-900 text-white shadow-xl scale-[1.02]" 
+                    : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"
                 }`}
               >
-                <item.icon className="size-4" />
+                <item.icon className="size-5 shrink-0" />
                 {item.label}
               </Link>
             );
           })}
         </nav>
-        <div className="p-3">
+        <div className="p-3 mb-4">
           <button
             onClick={signOut}
-            className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-muted-foreground hover:bg-muted hover:text-foreground"
+            className="flex w-full items-center gap-4 rounded-2xl px-4 py-3.5 text-base font-black uppercase tracking-wider text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors"
           >
-            <LogOut className="size-4" />
+            <LogOut className="size-5 shrink-0" />
             Sign out
           </button>
         </div>

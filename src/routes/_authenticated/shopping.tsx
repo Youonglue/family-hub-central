@@ -133,7 +133,11 @@ function ShoppingPage() {
   const items = list.data ?? [];
   const open = items.filter((i) => !i.checked);
   const done = items.filter((i) => i.checked);
-  const stapleList = Array.isArray(staples.data) ? staples.data : [];
+
+  // Group and sort staples alphabetically on load to guarantee alphabetical order
+  const stapleList = Array.isArray(staples.data) 
+    ? [...staples.data].sort((a, b) => a.name.localeCompare(b.name)) 
+    : [];
 
   // Group items by category for rendering
   const byCategory = new Map<string, typeof open>();
@@ -236,38 +240,40 @@ function ShoppingPage() {
                 return (
                   <div
                     key={ess.id}
-                    className={`relative rounded-xl transition-all border-2 flex items-center justify-between group overflow-hidden ${
+                    className={`relative rounded-xl transition-all border-2 flex items-center group overflow-hidden ${
                       isActive 
                         ? 'bg-indigo-600 text-white border-indigo-500 shadow-md scale-[1.01]' 
                         : 'bg-white/5 text-slate-300 border-transparent hover:bg-white/10'
                     }`}
                   >
-                    {/* Toggle button */}
+                    {/* Toggle button: pr-8 leaves safe space for the absolute (X) button */}
                     <button
                       onClick={() => handleToggleEssential(ess.name, ess.category)}
-                      className="p-3 font-bold text-xs uppercase tracking-wider text-left flex-1 h-full flex items-center justify-between cursor-pointer"
+                      className="p-3 pr-8 font-bold text-[10px] sm:text-xs uppercase tracking-wider text-left flex-1 h-full flex items-center justify-between cursor-pointer"
                     >
-                      <span className="truncate max-w-[80%]">{ess.name}</span>
-                      {isActive && <Check className="size-4 text-white shrink-0 ml-1" />}
+                      <span className="truncate pr-1" title={ess.name}>{ess.name}</span>
+                      {isActive && <Check className="size-3.5 text-white shrink-0 ml-1" />}
                     </button>
 
-                    {/* Admin library deletion button (Always visible on hover, checks auth on click) */}
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (!isAdmin) {
-                          toast.error("Admin privilege required to delete staples");
-                          return;
-                        }
-                        if (confirm(`Remove "${ess.name}" from your master staples library?`)) {
-                          deleteMasterStaple.mutate(ess.id);
-                        }
-                      }}
-                      className="p-3 hover:text-rose-400 text-slate-500 border-l border-white/5 transition-all hidden group-hover:block cursor-pointer"
-                      title={isAdmin ? "Delete from Master Library" : "Admin Privilege Required"}
-                    >
-                      <X size={12} />
-                    </button>
+                    {/* Admin library deletion button: Absolutely positioned so long text never pushes it off-screen */}
+                    {isAdmin && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (!isAdmin) {
+                            toast.error("Admin privilege required to delete staples");
+                            return;
+                          }
+                          if (confirm(`Remove "${ess.name}" from your master staples library?`)) {
+                            deleteMasterStaple.mutate(ess.id);
+                          }
+                        }}
+                        className="absolute top-1/2 -translate-y-1/2 right-2 size-5 bg-slate-800 text-slate-400 rounded-md border border-white/5 flex items-center justify-center hover:bg-rose-600 hover:text-white transition-all hidden group-hover:flex cursor-pointer z-10"
+                        title={isAdmin ? "Delete from Master Library" : "Admin Privilege Required"}
+                      >
+                        <X size={10} />
+                      </button>
+                    )}
                   </div>
                 );
               })}
