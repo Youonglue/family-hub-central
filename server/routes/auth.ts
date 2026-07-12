@@ -66,7 +66,16 @@ export default async function authRoutes(app: any) {
     return reply.code(401).send({ error: "Wrong PIN" });
   });
 
+// Replace the `/set-pin` endpoint in `/server/routes/auth.ts` with this self-healing version:
+
   app.post("/set-pin", async (req: any) => {
+    // Self-Heal: Ensure 'needs_pin_setup' column exists in the users table
+    try {
+      db.prepare("ALTER TABLE users ADD COLUMN needs_pin_setup INTEGER DEFAULT 0").run();
+    } catch (e) {
+      // Ignore if the column already exists
+    }
+
     const salt = randomBytes(16).toString("hex");
     const hash = scryptSync(req.body.pin, salt, 64).toString("hex");
     db.prepare(`UPDATE users SET pin_hash = ?, needs_pin_setup = 0 WHERE id = ?`).run(`scrypt$${salt}$${hash}`, req.user.id);
@@ -157,8 +166,13 @@ export default async function authRoutes(app: any) {
     return { success: true };
   });
 
-  // Updated promote route with correct table mapping
-  app.post("/promote", async (req: any) => {
+  // Updated promote route with correct table mapping AND Admin authorization check
+    app.post("/promote", async (req: any, reply: any) => {
+    // 1. Authorization check: Only administrators can promote users
+    if (!req.user || req.user.role !== 'admin') {
+      return reply.code(403).send({ error: "Only administrators can promote users" });
+    }
+
     const { userId } = req.body;
     let targetUserId = userId;
     
@@ -181,8 +195,8 @@ export default async function authRoutes(app: any) {
     }
 
     return { success: true };
-  });
 
+  });
   // Updated demote route with correct table mapping and single-admin fail-safe
   app.post("/demote", async (req: any, reply: any) => {
     // Authorization check

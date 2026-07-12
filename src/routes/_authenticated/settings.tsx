@@ -349,7 +349,7 @@ function UnlockedSettings({
         </form>
       </section>
 
-      {/* Adult PIN */}
+      {/* Adult PIN (Confirm PIN field restored) */}
       <section className="rounded-[3rem] border-4 border-slate-50 bg-white p-8 shadow-sm">
         <div className="mb-4 flex items-center gap-2">
           <ShieldCheck className="size-5 text-indigo-500" />
@@ -357,7 +357,19 @@ function UnlockedSettings({
         </div>
         <form onSubmit={handleSetPin} className="space-y-4">
           <input type="password" value={pinPwd} onChange={(e) => setPinPwd(e.target.value)} placeholder="Verify Password" required className="w-full rounded-2xl bg-slate-50 p-4 text-sm font-bold outline-none" />
-          <input type="password" inputMode="numeric" value={newPin} onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ""))} placeholder="New 6-Digit PIN" required maxLength={6} className="w-full rounded-2xl bg-slate-50 p-4 text-center text-2xl tracking-[0.5em] font-black outline-none border-2 border-transparent focus:border-indigo-500" />
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-1">
+              <label className="text-[9px] font-black text-slate-400 uppercase tracking-wider ml-4">New PIN</label>
+              <input type="password" inputMode="numeric" value={newPin} onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ""))} placeholder="000000" required maxLength={6} className="w-full rounded-2xl bg-slate-50 p-4 text-center text-2xl tracking-[0.5em] font-black outline-none border-2 border-transparent focus:border-indigo-500" />
+            </div>
+            
+            <div className="space-y-1">
+              <label className="text-[9px] font-black text-slate-400 uppercase tracking-wider ml-4">Confirm PIN</label>
+              <input type="password" inputMode="numeric" value={newPin2} onChange={(e) => setNewPin2(e.target.value.replace(/\D/g, ""))} placeholder="000000" required maxLength={6} className="w-full rounded-2xl bg-slate-50 p-4 text-center text-2xl tracking-[0.5em] font-black outline-none border-2 border-transparent focus:border-indigo-500" />
+            </div>
+          </div>
+          
           <button className="w-full rounded-2xl bg-indigo-600 py-4 text-xs font-black uppercase text-white shadow-lg">Save Security Code</button>
         </form>
       </section>
