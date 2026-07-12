@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/AppShell";
 import { listMembers } from "@/lib/hub-api";
+import { getMe } from "@/lib/auth-client";
 import { 
   CheckCircle2, UserCircle, Timer, ArrowLeft, 
   Trophy, ShieldCheck, Zap, Flame, Sword, Plus, Trash2,
@@ -20,15 +21,20 @@ const ICONS: Record<string, any> = { Ghost, Cat, Dog, Rabbit, Shield, UserCircle
 
 function ChoresKiosk() {
   const qc = useQueryClient();
+  
+  // Fetch active user session safely
+  const me = useQuery({ queryKey: ["me"], queryFn: () => getMe() });
+  const members = useQuery({ queryKey: ["members"], queryFn: listMembers });
+  
   const [activeMember, setActiveMember] = useState<any>(null);
   const [lastActivity, setLastActivity] = useState(Date.now());
   const [isAdminView, setIsAdminView] = useState(false);
   const [newChore, setNewChore] = useState({ title: "", points: 10 });
 
+  // Determine if the current logged in account is an administrator
+  const isSystemAdmin = me.data?.role?.toLowerCase() === "admin";
+
   // --- DATA FETCHING (Aligned with Modular Paths) ---
-  const members = useQuery({ queryKey: ["members"], queryFn: listMembers });
-  
-  // Directly fetching from /api/chores to ensure visibility
   const chores = useQuery({ 
     queryKey: ["chores"], 
     queryFn: () => fetch('/api/chores').then(res => res.json()) 
@@ -42,7 +48,7 @@ function ChoresKiosk() {
   const pendingApprovals = useQuery({
     queryKey: ["pending-approvals"],
     queryFn: () => fetch('/api/chores/completions/pending').then(res => res.json()),
-    enabled: !!activeMember
+    enabled: !!activeMember || isAdminView
   });
 
   // --- MUSCLE STATS: Using XP and Level from DB ---
@@ -119,11 +125,33 @@ function ChoresKiosk() {
     }
   });
 
-  // --- SCREEN 1: KIOSK CHARACTER SELECT ---
-  if (!activeMember) {
+  // --- 1. SESSiON LOADING GUARD (Guarantees Admin status is loaded) ---
+  if (me.isLoading || members.isLoading) {
     return (
       <AppShell>
         <div className="flex flex-col items-center justify-center min-h-[85vh] p-6">
+          <p className="font-black text-slate-400 uppercase tracking-widest text-xs italic animate-pulse">Synchronizing Kiosk...</p>
+        </div>
+      </AppShell>
+    );
+  }
+
+  // --- SCREEN 1: KIOSK CHARACTER SELECT ---
+  if (!activeMember && !isAdminView) {
+    return (
+      <AppShell>
+        <div className="flex flex-col items-center justify-center min-h-[85vh] p-6 relative">
+          
+          {/* Admin-Only Access Button on Selection Screen */}
+          {isSystemAdmin && (
+            <button 
+              onClick={() => setIsAdminView(true)}
+              className="absolute top-4 right-4 bg-indigo-50 border-2 border-indigo-200 text-indigo-600 px-6 py-3 rounded-2xl font-black text-xs uppercase flex items-center gap-2 shadow-sm hover:bg-indigo-600 hover:text-white transition-all cursor-pointer"
+            >
+              <ShieldCheck size={18} /> Manage Quest Library
+            </button>
+          )}
+
           <Trophy className="size-16 text-yellow-500 mb-6 animate-bounce" />
           <h1 className="text-5xl font-black mb-12 uppercase italic tracking-tighter text-slate-900">Choose Your Hero</h1>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-8 max-w-5xl w-full">
@@ -145,6 +173,9 @@ function ChoresKiosk() {
     );
   }
 
+  // Determine if active character is a parent OR if logged in user is a system admin
+  const canAccessAdmin = isSystemAdmin || activeMember?.is_parent === 1 || activeMember?.is_parent === true;
+
   // --- SCREEN 2: ACTIVE KIOSK DASHBOARD ---
   return (
     <AppShell>
@@ -157,8 +188,10 @@ function ChoresKiosk() {
           </button>
           
           <div className="flex items-center gap-4">
-              <p className="font-black uppercase italic text-slate-800">{activeMember.name}</p>
-              {activeMember.is_parent === 1 && (
+              <p className="font-black uppercase italic text-slate-800">{activeMember ? activeMember.name : "System Admin"}</p>
+              
+              {/* Unlocked Admin Panel Button (Visible to system admins and parent heroes) */}
+              {canAccessAdmin && (
                 <button onClick={() => setIsAdminView(!isAdminView)} className={`px-6 py-3 rounded-2xl font-black flex items-center gap-2 shadow-xl transition-all ${isAdminView ? 'bg-slate-900 text-white' : 'bg-indigo-50 text-indigo-600'}`}>
                   <ShieldCheck size={18} /> {isAdminView ? "Exit Mastery" : "Admin Panel"}
                 </button>
@@ -167,7 +200,7 @@ function ChoresKiosk() {
         </div>
 
         {isAdminView ? (
-            // === ADMIN VIEW: APPROVALS & MANAGEMENT ===
+          // === ADMIN VIEW: APPROVALS & MANAGEMENT ===
           <div className="space-y-10 animate-in zoom-in-95 duration-200">
              <section className="bg-white p-8 rounded-[3rem] shadow-xl border-4 border-slate-50">
                <h2 className="text-3xl font-black uppercase italic tracking-tighter mb-6 flex items-center gap-3 text-slate-900">
@@ -193,12 +226,14 @@ function ChoresKiosk() {
 
              <section className="bg-slate-900 text-white p-8 rounded-[3rem] shadow-xl">
                <h2 className="text-3xl font-black uppercase italic tracking-tighter mb-6 flex items-center gap-3">
-                 <Zap className="text-yellow-400 size-8" /> Quest Library
+                 <Zap className="text-yellow-400 size-8" /> Quest Library & Creation
                </h2>
                <form onSubmit={(e) => { e.preventDefault(); addChore.mutate(newChore); }} className="flex gap-4 mb-8">
                  <input value={newChore.title} onChange={e => setNewChore({...newChore, title: e.target.value})} placeholder="New Quest Title..." className="flex-1 p-5 rounded-2xl bg-white/10 border-4 border-transparent focus:border-indigo-500 outline-none font-bold text-white placeholder:text-white/30" required />
                  <input type="number" value={newChore.points} onChange={e => setNewChore({...newChore, points: parseInt(e.target.value)})} className="w-28 p-5 rounded-2xl bg-white/10 border-4 border-transparent focus:border-indigo-500 outline-none font-black text-white text-center" required />
-                 <button type="submit" disabled={addChore.isPending} className="bg-indigo-500 px-8 rounded-2xl font-black shadow-lg hover:bg-indigo-600 transition-all"><Plus size={28} /></button>
+                 <button type="submit" disabled={addChore.isPending} className="bg-indigo-500 px-8 rounded-2xl font-black shadow-lg hover:bg-indigo-600 transition-all flex items-center gap-2">
+                   <Plus size={24} /> ADD QUEST
+                 </button>
                </form>
 
                <div className="grid sm:grid-cols-2 gap-4">

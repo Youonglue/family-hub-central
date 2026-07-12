@@ -6,7 +6,7 @@ import { AppShell, kidStyle } from "@/components/AppShell";
 import { exportBackup, importBackup, listMembers } from "@/lib/hub-api";
 import { changePassword, changeUsername, getMe, getPinStatus, setPin, clearPin, verifyPin } from "@/lib/auth-client";
 import { encryptBundle, decryptBundle, downloadBundle, type BackupBundle } from "@/lib/backup-crypto";
-import { Download, Upload, Lock, ShieldAlert, KeyRound, User, ShieldCheck, Users, ArrowUpCircle, Shield } from "lucide-react";
+import { Download, Upload, Lock, ShieldAlert, KeyRound, User, ShieldCheck, Users, ArrowUpCircle, Shield, Trash2 } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/settings")({
   ssr: false,
@@ -144,6 +144,27 @@ function UnlockedSettings({
     }
   });
 
+  const deleteAccount = useMutation({
+    mutationFn: async (userId: string) => {
+      const res = await fetch(`/api/auth/users/${userId}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to delete account");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast.success("Account deleted successfully");
+      qc.invalidateQueries({ queryKey: ["known-users"] });
+      qc.invalidateQueries({ queryKey: ["members"] });
+    },
+    onError: (err: any) => {
+      toast.error(err.message || "Failed to delete account");
+    }
+  });
+
   const linkAccount = useMutation({
     mutationFn: async ({ memberId, userId }: { memberId: string | null, userId: string }) => {
       const res = await fetch('/api/auth/link-member', {
@@ -267,7 +288,7 @@ function UnlockedSettings({
                   </div>
                 </div>
 
-                {/* Promotion / Demotion Buttons */}
+                {/* Promotion / Demotion & Deletion Buttons */}
                 {!isSelf && (
                   <div className="flex items-center gap-2">
                     {u.role === 'admin' ? (
@@ -293,6 +314,20 @@ function UnlockedSettings({
                         {promote.isPending ? "Promoting..." : "Promote"}
                       </button>
                     )}
+
+                    {/* Delete Account Button */}
+                    <button
+                      onClick={() => {
+                        if (confirm(`Are you sure you want to permanently delete the account "${u.username}"?`)) {
+                          deleteAccount.mutate(u.id);
+                        }
+                      }}
+                      disabled={deleteAccount.isPending}
+                      className="p-2 bg-slate-100 hover:bg-rose-50 hover:text-rose-600 rounded-xl text-slate-400 transition-all border-2 border-transparent hover:border-rose-100"
+                      title="Delete User Account"
+                    >
+                      <Trash2 size={14} />
+                    </button>
                   </div>
                 )}
               </div>

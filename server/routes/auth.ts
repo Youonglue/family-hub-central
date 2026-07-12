@@ -51,10 +51,8 @@ export default async function authRoutes(app: any) {
   app.post("/logout", async (req: any, reply: any) => {
     const token = req.headers.cookie?.match(/fh_sid=([^;]+)/)?.[1];
     if (token) {
-      // Invalidate the session on the database side
       db.prepare("DELETE FROM sessions WHERE token = ?").run(token);
     }
-    // Instruct client to clear the cookie
     reply.header("Set-Cookie", "fh_sid=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax");
     return { success: true };
   });
@@ -79,7 +77,7 @@ export default async function authRoutes(app: any) {
     return db.prepare("SELECT id, username, role FROM users").all();
   });
 
-  // Added: pin-status endpoint to support secure lock/unlock states
+  // pin-status endpoint to support secure lock/unlock states
   app.get("/pin-status", async (req: any) => {
     try {
       const user = getSessionUser(req);
@@ -93,8 +91,7 @@ export default async function authRoutes(app: any) {
     }
   });
 
-// Replace the "/link-member" route in your /server/routes/auth.ts with this version:
-
+  // Updated link-member route with dual self-healing checks for both 'user_id' and 'role' columns
   app.post("/link-member", async (req: any, reply: any) => {
     try {
       // 1. Authorization check
@@ -104,15 +101,21 @@ export default async function authRoutes(app: any) {
 
       const { memberId, userId } = req.body;
 
-      // 2. Self-Heal: Ensure the 'user_id' column exists in the family_members table
+      // 2. Self-Heal: Ensure 'user_id' column exists in family_members table
       try {
         db.prepare("ALTER TABLE family_members ADD COLUMN user_id TEXT").run();
-        console.log("🛠️ Injected missing 'user_id' column into family_members table!");
       } catch (e) {
-        // Ignore error if the column already exists
+        // Ignore if column already exists
       }
 
-      // 3. Ensure 1-to-1 association: unlink any previous link for this user first
+      // 3. Self-Heal: Ensure 'role' column exists in family_members table
+      try {
+        db.prepare("ALTER TABLE family_members ADD COLUMN role TEXT").run();
+      } catch (e) {
+        // Ignore if column already exists
+      }
+
+      // 4. Ensure 1-to-1 association: unlink any previous link for this user first
       db.prepare("UPDATE family_members SET user_id = NULL WHERE user_id = ?").run(userId);
 
       if (memberId) {
@@ -128,11 +131,32 @@ export default async function authRoutes(app: any) {
 
       return { success: true };
     } catch (error) {
-      // Print the exact error directly to your server console so we can see it
       console.error("❌ LINK-MEMBER ERROR:", error);
       return reply.code(500).send({ error: (error as Error).message });
     }
   });
+
+      app.delete("/users/:id", async (req: any, reply: any) => {
+    // 1. Authorization check
+    if (!req.user || req.user.role !== 'admin') {
+      return reply.code(403).send({ error: "Only administrators can delete user accounts" });
+    }
+
+    const { id } = req.params;
+
+    // 2. Prevent self-deletion
+    if (req.user.id === id) {
+      return reply.code(400).send({ error: "You cannot delete your own account" });
+    }
+
+    // 3. Clear database associations and perform deletion
+    db.prepare("DELETE FROM sessions WHERE user_id = ?").run(id);
+    db.prepare("DELETE FROM users WHERE id = ?").run(id);
+    db.prepare("UPDATE family_members SET user_id = NULL, role = 'user' WHERE user_id = ?").run(id);
+
+    return { success: true };
+  });
+
   // Updated promote route with correct table mapping
   app.post("/promote", async (req: any) => {
     const { userId } = req.body;
