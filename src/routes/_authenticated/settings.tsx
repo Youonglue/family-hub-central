@@ -187,6 +187,30 @@ function UnlockedSettings({
     }
   });
 
+  // Toggle dynamic roster preference (Admin Only)
+  const toggleLeaderboard = useMutation({
+    mutationFn: async ({ memberId, show }: { memberId: string; show: boolean }) => {
+      const res = await fetch('/api/auth/toggle-leaderboard', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memberId, show })
+      });
+      if (!res.ok) {
+        throw new Error("Failed to update visibility");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast.success("Roster preference updated!");
+      qc.invalidateQueries({ queryKey: ["members"] });
+      qc.invalidateQueries({ queryKey: ["known-users"] });
+      qc.invalidateQueries({ queryKey: ["points"] }); // Invalidate points to trigger live dashboard update!
+    },
+    onError: (err: any) => {
+      toast.error(err.message || "Failed to adjust roster settings");
+    }
+  });
+
   const [newUsername, setNewUsername] = useState("");
   const [unamePwd, setUnamePwd] = useState("");
   const [curPwd, setCurPwd] = useState("");
@@ -333,6 +357,45 @@ function UnlockedSettings({
               </div>
             );
           })}
+        </div>
+      </section>
+
+      {/* NEW: LEADERBOARD ROSTER CONTROLS (iOS Sliding Toggles) */}
+      <section className="rounded-[3rem] border-4 border-slate-50 bg-white p-8 shadow-xl">
+        <div className="mb-6 flex items-center gap-3">
+          <Shield className="size-6 text-indigo-500" />
+          <h2 className="font-display text-xl font-black uppercase italic">Leaderboard Roster</h2>
+        </div>
+        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-6">Select which family heroes compete on the main Dashboard leaderboard roster</p>
+        <div className="space-y-4">
+          {Array.isArray(members.data) && members.data.map((m: any) => (
+            <div key={m.id} className="flex items-center justify-between rounded-2xl bg-slate-50 p-4 border-2 border-slate-100">
+              <div className="flex items-center gap-4">
+                <div className="size-10 rounded-xl flex items-center justify-center text-white text-lg font-black shrink-0 shadow-sm" style={{ backgroundColor: m.avatar_color || '#ccc' }}>
+                  {m.name[0].toUpperCase()}
+                </div>
+                <div>
+                  <p className="font-black text-base uppercase tracking-tight text-slate-800">{m.name}</p>
+                  <p className="text-[9px] font-black text-slate-400 uppercase">Level {m.level || 1} Adventurer</p>
+                </div>
+              </div>
+              
+              <label className="relative inline-flex items-center cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={m.show_on_leaderboard !== 0} // Default is 1, so checked if not 0
+                  onChange={(e) => {
+                    toggleLeaderboard.mutate({ memberId: m.id, show: e.target.checked });
+                  }}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                <span className="ml-3 text-xs font-black text-slate-500 uppercase tracking-wider min-w-[32px]">
+                  {m.show_on_leaderboard !== 0 ? "Show" : "Hide"}
+                </span>
+              </label>
+            </div>
+          ))}
         </div>
       </section>
 

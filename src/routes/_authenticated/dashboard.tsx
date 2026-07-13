@@ -30,11 +30,17 @@ function Dashboard() {
   let idleTimer: any;
 
   // --- DATA FETCHING ---
-  // Fetch points/roster list
-  const points = useQuery({ queryKey: ["points"], queryFn: () => fetch('/api/points').then(res => res.json()) });
+  // Fix: Fetch points from the fully self-healing `/api/chores/points` endpoint to prevent 500 crashes
+  const points = useQuery({ 
+    queryKey: ["points"], 
+    queryFn: () => fetch('/api/chores/points').then(res => res.json()) 
+  });
   
   // Fetch complete calendar list to calculate today's active items
-  const events = useQuery({ queryKey: ["events"], queryFn: () => fetch('/api/events').then(res => res.json()) });
+  const events = useQuery({ 
+    queryKey: ["events"], 
+    queryFn: () => fetch('/api/events').then(res => res.json()) 
+  });
 
   // Resolve today's active quests
   const todayQuests = useMemo(() => {
@@ -63,6 +69,17 @@ function Dashboard() {
     window.addEventListener("mousemove", resetIdle);
     return () => { clearInterval(t); window.removeEventListener("mousemove", resetIdle); };
   }, []);
+
+  // --- SESSION LOADING GUARD ---
+  if (points.isLoading || events.isLoading) {
+    return (
+      <AppShell>
+        <div className="flex flex-col items-center justify-center min-h-[85vh] p-6">
+          <p className="font-black text-slate-400 uppercase tracking-widest text-xs italic animate-pulse">Synchronizing Dashboard...</p>
+        </div>
+      </AppShell>
+    );
+  }
 
   // --- 1. KIOSK MODE RENDER (Idle clock view) ---
   if (isIdle) {
@@ -108,38 +125,52 @@ function Dashboard() {
         {/* Dashboard Grid Layout */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           
-          {/* Left Column: Hero Roster Leaderboard */}
+          {/* Left Column: Hero Roster Leaderboard (Enlarged and styled) */}
           <div className="lg:col-span-2 space-y-6">
             <section className="bg-white p-8 rounded-[3rem] border-4 border-slate-50 shadow-xl">
               <h2 className="text-2xl font-black uppercase italic tracking-tighter mb-6 flex items-center gap-2 text-slate-900">
                 <Zap className="text-yellow-500 size-6 animate-pulse" /> Hero Roster
               </h2>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                {(Array.isArray(points.data) ? points.data : []).map((m: any) => {
+              <div className="space-y-6">
+                {(Array.isArray(points.data) ? points.data : []).map((m: any, index: number) => {
                   const xpProgress = (m.xp || 0) % 100;
+                  const medal = index === 0 ? "🥇" : index === 1 ? "🥈" : index === 2 ? "🥉" : null;
+
                   return (
-                    <div key={m.member_id} className="bg-slate-50 p-6 rounded-[2.5rem] border-2 border-slate-100 flex items-center gap-4 relative overflow-hidden">
-                      <div className="size-16 rounded-2xl flex items-center justify-center text-white text-3xl font-black shadow-lg shrink-0" style={{ backgroundColor: m.avatar_color || '#ccc' }}>
-                        {m.name[0].toUpperCase()}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex justify-between items-baseline">
-                          <p className="font-black text-lg uppercase tracking-tight text-slate-800 truncate">{m.name}</p>
-                          <span className="text-xs font-black text-indigo-500">Lv.{m.level || 1}</span>
+                    <div key={m.member_id} className="bg-slate-50 p-6 md:p-8 rounded-[3rem] border-2 border-slate-100 flex flex-col sm:flex-row items-center gap-6 relative overflow-hidden shadow-sm hover:shadow-md transition-all">
+                      
+                      {/* Left Side: Medal Rank and Avatar */}
+                      <div className="flex flex-col items-center gap-2 shrink-0">
+                        {medal && <span className="text-4xl animate-bounce" style={{ animationDuration: '3s' }}>{medal}</span>}
+                        <div className="size-20 rounded-[2rem] flex items-center justify-center text-white text-4xl font-black shadow-lg" style={{ backgroundColor: m.avatar_color || '#ccc' }}>
+                          {m.name[0].toUpperCase()}
                         </div>
-                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Level {m.level || 1} Adventurer</p>
+                      </div>
+
+                      {/* Right Side: High-Contrast Large Stats */}
+                      <div className="flex-1 min-w-0 w-full space-y-3">
+                        <div className="flex justify-between items-center gap-2 flex-wrap">
+                          <p className="font-black text-3xl uppercase tracking-tighter text-slate-900 truncate">{m.name}</p>
+                          <span className="text-3xl font-black italic text-indigo-600 tracking-tight">LV.{m.level || 1}</span>
+                        </div>
                         
-                        {/* XP Progress Bar */}
-                        <div className="mt-3 space-y-1">
-                          <div className="h-2 w-full bg-slate-200 rounded-full overflow-hidden">
-                            <div className="h-full rounded-full" style={{ width: `${xpProgress}%`, backgroundColor: m.avatar_color || '#ccc' }} />
+                        <div className="flex justify-between items-center">
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Active Adventurer</p>
+                          <p className="text-2xl font-black text-slate-800 tracking-tight uppercase">{m.balance} PTS BALANCE</p>
+                        </div>
+                        
+                        {/* Enlarged XP Progress Bar */}
+                        <div className="space-y-2">
+                          <div className="h-4 w-full bg-slate-200 rounded-full overflow-hidden p-1 border border-slate-300/30">
+                            <div className="h-full rounded-full transition-all duration-1000 shadow-inner" style={{ width: `${xpProgress}%`, backgroundColor: m.avatar_color || '#ccc' }} />
                           </div>
-                          <div className="flex justify-between text-[8px] font-bold text-slate-400 uppercase tracking-wider">
-                            <span>{m.balance} pts balance</span>
-                            <span>{100 - xpProgress} XP to Level Up</span>
+                          <div className="flex justify-between text-xs font-black uppercase tracking-widest text-slate-500">
+                            <span>{xpProgress} XP / 100</span>
+                            <span className="text-indigo-600 animate-pulse">{100 - xpProgress} XP TO LEVEL UP!</span>
                           </div>
                         </div>
                       </div>
+
                     </div>
                   );
                 })}

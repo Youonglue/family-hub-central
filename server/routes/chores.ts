@@ -43,6 +43,11 @@ export default async function choreRoutes(app: any, opts: any) {
         )
       `).run();
     } catch (e) {}
+
+    // Self-Heal: Ensure 'show_on_leaderboard' column exists in family_members table
+    try {
+      db.prepare("ALTER TABLE family_members ADD COLUMN show_on_leaderboard INTEGER DEFAULT 1").run();
+    } catch (e) {}
   };
 
   // 1. GET ALL ACTIVE CHORES
@@ -132,7 +137,7 @@ export default async function choreRoutes(app: any, opts: any) {
     return { success: true };
   });
 
-  // 7. POINTS LEADERBOARD (Safe and Try-Capped to prevent 500 crashes)
+  // 7. POINTS LEADERBOARD (Safe, Try-Capped, and Filtered by show_on_leaderboard)
   // Final Path: GET /api/chores/points
   app.get("/points", async (req: any, reply: any) => {
     try {
@@ -143,16 +148,18 @@ export default async function choreRoutes(app: any, opts: any) {
             (COALESCE((SELECT SUM(points_awarded) FROM chore_completions WHERE member_id = m.id AND status = 'approved'), 0) - 
              COALESCE((SELECT SUM(points_spent) FROM redemptions WHERE member_id = m.id), 0)) as balance
           FROM family_members m 
+          WHERE m.show_on_leaderboard = 1 OR m.show_on_leaderboard IS NULL
           ORDER BY m.xp DESC
       `).all();
     } catch (error) {
       console.error("❌ CHORES LEADERBOARD ERROR:", error);
       
-      // Safe Fallback: if there's any lingering query issue, return standard values without balance math to prevent 500 crash
+      // Safe Fallback: if there's any lingering query issue, return standard values without balance math
       try {
         return db.prepare(`
           SELECT id as member_id, name, avatar_color, avatar_icon, xp, level, is_kid, is_parent, 0 as balance
           FROM family_members
+          WHERE show_on_leaderboard = 1 OR show_on_leaderboard IS NULL
           ORDER BY xp DESC
         `).all();
       } catch (err) {

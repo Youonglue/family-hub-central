@@ -241,4 +241,27 @@ export default async function authRoutes(app: any) {
     
     return { success: true };
   });
+
+ app.post("/toggle-leaderboard", async (req: any, reply: any) => {
+    try {
+      // 1. Authorization check
+      if (!req.user || req.user.role !== 'admin') {
+        return reply.code(403).send({ error: "Only administrators can modify leaderboard visibility" });
+      }
+
+      const { memberId, show } = req.body;
+
+      // 2. Self-Heal: Ensure 'show_on_leaderboard' column exists in family_members table
+      try {
+        db.prepare("ALTER TABLE family_members ADD COLUMN show_on_leaderboard INTEGER DEFAULT 1").run();
+      } catch (e) {}
+
+      // 3. Update the hero's leaderboard status
+      db.prepare("UPDATE family_members SET show_on_leaderboard = ? WHERE id = ?").run(show ? 1 : 0, memberId);
+
+      return { success: true };
+    } catch (error) {
+      return reply.code(500).send({ error: (error as Error).message });
+    }
+  });
 }
