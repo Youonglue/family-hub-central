@@ -9,7 +9,7 @@ import { toast } from "sonner";
 const nav = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/chores", label: "Chores", icon: Trophy },
-  { to: "/rewards", label: "Rewards", icon: Gift }, // Added: Rewards Shop Link
+  { to: "/rewards", label: "Rewards", icon: Gift },
   { to: "/shopping", label: "Shopping", icon: ShoppingCart },
   { to: "/meals", label: "Meals", icon: ChefHat },
   { to: "/calendar", label: "Calendar", icon: Calendar },
@@ -62,8 +62,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   if (me.isLoading) {
     return (
       <div className="fixed inset-0 bg-slate-50 flex flex-col items-center justify-center p-4">
-        <Loader2 className="size-12 text-indigo-500 animate-spin mb-4" />
-        <p className="font-black uppercase tracking-widest text-xs text-slate-400 italic text-center">Synchronizing Fortress...</p>
+        <Loader2 className="size-10 text-indigo-500 animate-spin mb-4" />
+        <p className="font-black uppercase tracking-widest text-[10px] text-slate-400 italic text-center">Synchronizing Fortress...</p>
       </div>
     );
   }
@@ -138,45 +138,48 @@ export function AppShell({ children }: { children: ReactNode }) {
   // --- 3. STANDARD APP LAYOUT (Perfectly Responsive) ---
   return (
     <div className="min-h-screen bg-canvas">
-      {/* Sidebar (Desktop Only) */}
-      <aside className="fixed left-0 top-0 h-screen w-64 flex flex-col border-r border-border bg-panel/70 backdrop-blur hidden md:flex z-40">
-        <Link to="/dashboard" className="flex items-center gap-2 px-6 py-8">
-          <div className="grid size-11 place-items-center rounded-2xl bg-indigo-600 text-white font-display text-xl font-black italic">
+      
+      {/* Sidebar (Desktop Only: hidden on mobile, scrollable on low heights/landscape) */}
+      <aside className="fixed left-0 top-0 h-screen w-64 flex flex-col border-r border-border bg-panel/70 backdrop-blur hidden md:flex z-40 overflow-y-auto scrollbar-thin">
+        <Link to="/dashboard" className="flex items-center gap-2 px-6 py-6 shrink-0">
+          <div className="grid size-9 place-items-center rounded-2xl bg-indigo-600 text-white font-display text-lg font-black italic">
             H
           </div>
-          <span className="font-display text-2xl font-black uppercase italic tracking-tight">Family Hub</span>
+          <span className="font-display text-xl font-black uppercase italic tracking-tight">Family Hub</span>
         </Link>
-        <nav className="flex-1 space-y-2 px-3">
+        
+        <nav className="flex-1 space-y-1.5 px-3 py-2">
           {nav.map((item) => {
             const active = pathname === item.to || (item.to !== "/dashboard" && pathname.startsWith(item.to));
             return (
               <Link
                 key={item.to}
                 to={item.to}
-                className={`flex items-center gap-4 rounded-2xl px-4 py-3.5 text-base font-black uppercase tracking-wider transition-all ${
+                className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-black uppercase tracking-wider transition-all shrink-0 ${
                   active 
-                    ? "bg-slate-900 text-white shadow-xl scale-[1.02]" 
+                    ? "bg-slate-900 text-white shadow-lg scale-[1.01]" 
                     : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"
                 }`}
               >
-                <item.icon className="size-5 shrink-0" />
+                <item.icon className="size-4 shrink-0" />
                 {item.label}
               </Link>
             );
           })}
         </nav>
-        <div className="p-3 mb-4">
+        
+        <div className="p-3 mt-auto shrink-0 mb-2">
           <button
             onClick={signOut}
-            className="flex w-full items-center gap-4 rounded-2xl px-4 py-3.5 text-base font-black uppercase tracking-wider text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer"
+            className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-black uppercase tracking-wider text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer"
           >
-            <LogOut className="size-5 shrink-0" />
+            <LogOut className="size-4 shrink-0" />
             Sign out
           </button>
         </div>
       </aside>
 
-      {/* Mobile Bottom Navigation Bar */}
+      {/* Mobile Bottom Navigation Bar (Hidden on Desktop) */}
       <nav className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 flex items-center gap-1 rounded-2xl border border-border bg-panel/95 backdrop-blur px-3 py-2 shadow-xl md:hidden w-[90%] max-w-sm justify-between">
         {nav.map((item) => {
           const active = pathname === item.to || (item.to !== "/dashboard" && pathname.startsWith(item.to));
@@ -184,18 +187,18 @@ export function AppShell({ children }: { children: ReactNode }) {
             <Link
               key={item.to}
               to={item.to}
-              className={`grid size-10 place-items-center rounded-xl transition-all ${
-                active ? "bg-indigo-600 text-white shadow-md scale-105" : "text-slate-400 hover:bg-slate-100 hover:text-slate-800"
+              className={`grid size-9 place-items-center rounded-xl transition-all ${
+                active ? "bg-indigo-600 text-white shadow-md scale-105" : "text-slate-400 hover:bg-slate-100"
               }`}
               aria-label={item.label}
             >
-              <item.icon className="size-4.5" />
+              <item.icon className="size-4" />
             </Link>
           );
         })}
       </nav>
 
-      {/* Main Content Area (Responsive left margin) */}
+      {/* Main Content Area (Responsive margins and padding) */}
       <main className="md:ml-64 pb-28 md:pb-6 min-h-screen">
         {children}
       </main>
@@ -203,7 +206,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   );
 }
 
-/* Utility: pick css var color for a kid palette name */
+/* Utility styles */
 export const KID_COLORS = ["amber", "pink", "emerald", "sky", "rose", "violet"] as const;
 export type KidColor = (typeof KID_COLORS)[number];
 export function kidStyle(color: string): { background: string; color: string } {

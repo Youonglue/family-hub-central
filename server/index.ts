@@ -65,16 +65,43 @@ app.register(mealRoutes, { prefix: "/api/meals", broadcast });
 app.register(kioskRoutes, { prefix: "/api/kiosk", broadcast });
 app.register(calendarRoutes, { prefix: "/api/events", broadcast }); 
 
-// Points Alignment
+// Points Alignment (Safely Clamped to Prevent Negative Balances)
 app.get("/api/points", async (req: any) => {
     return db.prepare(`
         SELECT 
           m.id as member_id, m.name, m.avatar_color, m.avatar_icon, m.xp, m.level, m.is_kid, m.is_parent,
-          (COALESCE((SELECT SUM(points_awarded) FROM chore_completions WHERE member_id = m.id AND status = 'approved'), 0) - 
-           COALESCE((SELECT SUM(points_spent) FROM redemptions WHERE member_id = m.id), 0)) as balance
+          CASE 
+            WHEN (
+              COALESCE((SELECT SUM(points_awarded) FROM chore_completions WHERE member_id = m.id AND status = 'approved'), 0) - 
+              COALESCE((SELECT SUM(points_spent) FROM redemptions WHERE member_id = m.id AND status = 'approved'), 0)
+            ) < 0 THEN 0
+            ELSE (
+              COALESCE((SELECT SUM(points_awarded) FROM chore_completions WHERE member_id = m.id AND status = 'approved'), 0) - 
+              COALESCE((SELECT SUM(points_spent) FROM redemptions WHERE member_id = m.id AND status = 'approved'), 0)
+            )
+          END as balance
         FROM family_members m 
         ORDER BY m.xp DESC
     `).all();
+});
+
+// --- NEW: ADVENTURE LOG (NOTIFICATIONS) ENDPOINT ---
+app.get("/api/notifications", async (req: any) => {
+  // Self-heal table check
+  try {
+    db.prepare(`
+      CREATE TABLE IF NOT EXISTS notifications (
+        id TEXT PRIMARY KEY,
+        member_id TEXT,
+        title TEXT,
+        message TEXT,
+        type TEXT,
+        created_at TEXT
+      )
+    `).run();
+  } catch (e) {}
+
+  return db.prepare("SELECT * FROM notifications ORDER BY created_at DESC LIMIT 20").all();
 });
 
 // --- SERVE FRONTEND ---

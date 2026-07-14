@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useState, useEffect, useMemo } from "react";
 import { AppShell } from "@/components/AppShell";
-import { Clock, Calendar, Zap, Utensils, Sword } from "lucide-react";
+import { Clock, Calendar, Zap, Utensils, Sword, Gift, Flame, Scale, ScrollText } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   component: Dashboard,
@@ -24,13 +24,29 @@ const getQuestColor = (title: string): string => {
   return colors[index];
 };
 
+// Helper to determine notification icon
+const getNotificationIcon = (type: string) => {
+  switch (type) {
+    case 'chore':
+      return <Sword size={20} className="text-indigo-600" />;
+    case 'reward':
+      return <Gift size={20} className="text-emerald-600" />;
+    case 'streak':
+      return <Flame size={20} className="text-orange-500 animate-pulse" />;
+    case 'points':
+      return <Scale size={20} className="text-rose-500" />;
+    default:
+      return <ScrollText size={20} className="text-slate-500" />;
+  }
+};
+
 function Dashboard() {
   const [now, setNow] = useState(new Date());
   const [isIdle, setIsIdle] = useState(false);
   let idleTimer: any;
 
   // --- DATA FETCHING ---
-  // Fix: Fetch points from the fully self-healing `/api/chores/points` endpoint to prevent 500 crashes
+  // Fetch points/roster list
   const points = useQuery({ 
     queryKey: ["points"], 
     queryFn: () => fetch('/api/chores/points').then(res => res.json()) 
@@ -40,6 +56,12 @@ function Dashboard() {
   const events = useQuery({ 
     queryKey: ["events"], 
     queryFn: () => fetch('/api/events').then(res => res.json()) 
+  });
+
+  // Fetch the live Adventure Log notifications
+  const notifications = useQuery({ 
+    queryKey: ["notifications"], 
+    queryFn: () => fetch('/api/notifications').then(res => res.json()) 
   });
 
   // Resolve today's active quests
@@ -71,11 +93,11 @@ function Dashboard() {
   }, []);
 
   // --- SESSION LOADING GUARD ---
-  if (points.isLoading || events.isLoading) {
+  if (points.isLoading || events.isLoading || notifications.isLoading) {
     return (
       <AppShell>
         <div className="flex flex-col items-center justify-center min-h-[85vh] p-6">
-          <p className="font-black text-slate-400 uppercase tracking-widest text-xs italic animate-pulse">Synchronizing Dashboard...</p>
+          <p className="font-black text-slate-400 uppercase tracking-widest text-xs italic animate-pulse text-center">Synchronizing Dashboard...</p>
         </div>
       </AppShell>
     );
@@ -103,6 +125,9 @@ function Dashboard() {
     );
   }
 
+  const memberList = Array.isArray(points.data) ? points.data : [];
+  const logList = Array.isArray(notifications.data) ? notifications.data : [];
+
   // --- 2. STANDARD DASHBOARD RENDER (When NOT Idle) ---
   return (
     <AppShell>
@@ -125,14 +150,16 @@ function Dashboard() {
         {/* Dashboard Grid Layout */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           
-          {/* Left Column: Hero Roster Leaderboard (Enlarged and styled) */}
-          <div className="lg:col-span-2 space-y-6">
-            <section className="bg-white p-8 rounded-[3rem] border-4 border-slate-50 shadow-xl">
+          {/* Left Column: Hero Roster and Adventure Log */}
+          <div className="lg:col-span-2 space-y-8">
+            
+            {/* A. Hero Roster Leaderboard */}
+            <section className="bg-white p-6 sm:p-8 rounded-[2.5rem] sm:rounded-[3rem] border-4 border-slate-50 shadow-xl">
               <h2 className="text-2xl font-black uppercase italic tracking-tighter mb-6 flex items-center gap-2 text-slate-900">
                 <Zap className="text-yellow-500 size-6 animate-pulse" /> Hero Roster
               </h2>
               <div className="space-y-6">
-                {(Array.isArray(points.data) ? points.data : []).map((m: any, index: number) => {
+                {memberList.map((m: any, index: number) => {
                   const xpProgress = (m.xp || 0) % 100;
                   const medal = index === 0 ? "🥇" : index === 1 ? "🥈" : index === 2 ? "🥉" : null;
 
@@ -176,6 +203,48 @@ function Dashboard() {
                 })}
               </div>
             </section>
+
+            {/* B. NEW: Adventure Log (Dynamic Notifications News Feed) */}
+            <section className="bg-white p-6 sm:p-8 rounded-[2.5rem] sm:rounded-[3rem] border-4 border-slate-50 shadow-xl">
+              <h2 className="text-2xl font-black uppercase italic tracking-tighter mb-4 flex items-center gap-2 text-slate-900">
+                <ScrollText className="text-indigo-500 size-6 shrink-0" /> Adventure Log
+              </h2>
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-6">Live news feed of family achievements and claims</p>
+              
+              <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+                {logList.length === 0 ? (
+                  <p className="text-center py-16 text-xs font-black text-slate-300 uppercase tracking-wider">The adventure is just beginning. No logs recorded yet.</p>
+                ) : (
+                  logList.map((log: any) => {
+                    const hero = memberList.find((m: any) => m.member_id === log.member_id);
+                    const heroColor = hero?.avatar_color || 'transparent';
+
+                    return (
+                      <div 
+                        key={log.id} 
+                        className="p-5 rounded-3xl bg-slate-50 border-2 border-slate-100 flex items-center gap-4 shadow-sm hover:bg-slate-100 transition-all border-l-[12px]"
+                        style={{ borderLeftColor: heroColor }}
+                      >
+                        {/* Event Category Icon */}
+                        <div className="size-10 bg-white border border-slate-200 rounded-xl flex items-center justify-center shrink-0 shadow-sm">
+                          {getNotificationIcon(log.type)}
+                        </div>
+
+                        <div className="min-w-0 flex-1">
+                          <p className="font-black text-xs text-slate-400 uppercase tracking-widest leading-none mb-1">{log.title}</p>
+                          <p className="font-black text-sm text-slate-800 leading-tight">{log.message}</p>
+                          
+                          {/* Relative timestamp */}
+                          <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest block mt-1.5">
+                            {new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • {new Date(log.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </section>
           </div>
 
           {/* Right Column: Pinned Day Overview (Today's Quests) */}
@@ -183,7 +252,7 @@ function Dashboard() {
             <section className="bg-white p-8 rounded-[3rem] border-4 border-slate-50 shadow-xl min-h-[400px]">
               <div className="flex items-center justify-between mb-6">
                 <h2 className="text-2xl font-black uppercase italic tracking-tighter flex items-center gap-2 text-slate-900">
-                  <Calendar className="text-indigo-500 size-6" /> Today's Quests
+                  <Calendar className="text-indigo-500 size-6 animate-bounce" /> Today's Quests
                 </h2>
                 <span className="px-3 py-1 bg-indigo-50 text-[10px] font-black uppercase rounded-lg text-indigo-600 font-mono">
                   {now.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
@@ -198,8 +267,7 @@ function Dashboard() {
                   </div>
                 ) : (
                   todayQuests.map((e: any) => {
-                    // Match assigned hero
-                    const assignedHero = (Array.isArray(points.data) ? points.data : []).find((m: any) => m.member_id === e.member_id);
+                    const assignedHero = memberList.find((m: any) => m.member_id === e.member_id);
                     return (
                       <div key={e.id} className="flex items-center gap-4 bg-slate-50 p-4 rounded-2xl border-l-4 shadow-sm" style={{ borderLeftColor: e.color || getQuestColor(e.title) }}>
                         {assignedHero ? (
