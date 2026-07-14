@@ -6,7 +6,7 @@ import { AppShell, kidStyle } from "@/components/AppShell";
 import { exportBackup, importBackup, listMembers } from "@/lib/hub-api";
 import { changePassword, changeUsername, getMe, getPinStatus, setPin, clearPin, verifyPin } from "@/lib/auth-client";
 import { encryptBundle, decryptBundle, downloadBundle, type BackupBundle } from "@/lib/backup-crypto";
-import { Download, Upload, Lock, ShieldAlert, KeyRound, User, ShieldCheck, Users, ArrowUpCircle, Shield, Trash2 } from "lucide-react";
+import { Download, Upload, Lock, ShieldAlert, KeyRound, User, ShieldCheck, Users, ArrowUpCircle, Shield, Trash2, X } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/settings")({
   ssr: false,
@@ -211,6 +211,33 @@ function UnlockedSettings({
     }
   });
 
+  // Deduct points from family member (Admin Only)
+  const deductPoints = useMutation({
+    mutationFn: async ({ memberId, points }: { memberId: string; points: number }) => {
+      const res = await fetch('/api/chores/deduct-points', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memberId, points })
+      });
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to deduct points");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast.success("Points deducted successfully!");
+      qc.invalidateQueries({ queryKey: ["members"] });
+      qc.invalidateQueries({ queryKey: ["known-users"] });
+      qc.invalidateQueries({ queryKey: ["points"] }); // Live dashboard sync
+      setDeductingMember(null);
+      setDeductPointsAmount("");
+    },
+    onError: (err: any) => {
+      toast.error(err.message || "Failed to deduct points");
+    }
+  });
+
   const [newUsername, setNewUsername] = useState("");
   const [unamePwd, setUnamePwd] = useState("");
   const [curPwd, setCurPwd] = useState("");
@@ -221,6 +248,10 @@ function UnlockedSettings({
   const [newPin2, setNewPin2] = useState("");
   const [exportPass, setExportPass] = useState("");
   const [busy, setBusy] = useState(false);
+
+  // States to hold target member and deduction values for prompt
+  const [deductingMember, setDeductingMember] = useState<any>(null);
+  const [deductPointsAmount, setDeductPointsAmount] = useState("");
 
   async function handleChangeUsername(e: React.FormEvent) {
     e.preventDefault();
@@ -360,7 +391,7 @@ function UnlockedSettings({
         </div>
       </section>
 
-      {/* NEW: LEADERBOARD ROSTER CONTROLS (iOS Sliding Toggles) */}
+      {/* LEADERBOARD ROSTER CONTROLS (iOS Sliding Toggles & Deduct Points Modals) */}
       <section className="rounded-[3rem] border-4 border-slate-50 bg-white p-8 shadow-xl">
         <div className="mb-6 flex items-center gap-3">
           <Shield className="size-6 text-indigo-500" />
@@ -369,7 +400,7 @@ function UnlockedSettings({
         <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-6">Select which family heroes compete on the main Dashboard leaderboard roster</p>
         <div className="space-y-4">
           {Array.isArray(members.data) && members.data.map((m: any) => (
-            <div key={m.id} className="flex items-center justify-between rounded-2xl bg-slate-50 p-4 border-2 border-slate-100">
+            <div key={m.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-2xl bg-slate-50 p-4 border-2 border-slate-100">
               <div className="flex items-center gap-4">
                 <div className="size-10 rounded-xl flex items-center justify-center text-white text-lg font-black shrink-0 shadow-sm" style={{ backgroundColor: m.avatar_color || '#ccc' }}>
                   {m.name[0].toUpperCase()}
@@ -380,24 +411,89 @@ function UnlockedSettings({
                 </div>
               </div>
               
-              <label className="relative inline-flex items-center cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={m.show_on_leaderboard !== 0} // Default is 1, so checked if not 0
-                  onChange={(e) => {
-                    toggleLeaderboard.mutate({ memberId: m.id, show: e.target.checked });
-                  }}
-                  className="sr-only peer"
-                />
-                <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
-                <span className="ml-3 text-xs font-black text-slate-500 uppercase tracking-wider min-w-[32px]">
-                  {m.show_on_leaderboard !== 0 ? "Show" : "Hide"}
-                </span>
-              </label>
+              <div className="flex items-center gap-4 self-end sm:self-auto">
+                {/* Deduct Points Trigger */}
+                <button
+                  onClick={() => setDeductingMember(m)}
+                  className="px-4 py-2 bg-rose-50 border-2 border-rose-100 text-rose-600 rounded-xl text-[10px] font-black uppercase hover:bg-rose-100 transition-all cursor-pointer shadow-sm"
+                >
+                  Deduct Points
+                </button>
+
+                <label className="relative inline-flex items-center cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={m.show_on_leaderboard !== 0} // Default is 1, so checked if not 0
+                    onChange={(e) => {
+                      toggleLeaderboard.mutate({ memberId: m.id, show: e.target.checked });
+                    }}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                  <span className="ml-3 text-xs font-black text-slate-500 uppercase tracking-wider min-w-[32px]">
+                    {m.show_on_leaderboard !== 0 ? "Show" : "Hide"}
+                  </span>
+                </label>
+              </div>
             </div>
           ))}
         </div>
       </section>
+
+      {/* DEDUCT POINTS OVERLAY MODAL */}
+      {deductingMember && (
+        <div className="fixed inset-0 z-[100] grid place-items-center bg-slate-900/60 backdrop-blur-md p-4" onClick={() => setDeductingMember(null)}>
+          <div className="w-full max-w-md bg-white rounded-[4rem] p-10 shadow-2xl border-[12px] border-slate-50 animate-in zoom-in-95 duration-200 text-center" onClick={e => e.stopPropagation()}>
+            <div className="size-20 bg-rose-50 rounded-3xl flex items-center justify-center mx-auto mb-6 text-rose-500 shadow-inner">
+              <Trash2 size={40} />
+            </div>
+            
+            <h3 className="text-3xl font-black uppercase italic tracking-tighter text-slate-900 mb-2">Deduct Points</h3>
+            <p className="text-slate-400 font-bold text-[10px] uppercase tracking-widest mb-6 leading-relaxed">
+              Deducting points from <span className="text-slate-900">{deductingMember.name}</span>
+            </p>
+
+            <form 
+              onSubmit={(e) => {
+                e.preventDefault();
+                const amt = parseInt(deductPointsAmount);
+                if (isNaN(amt) || amt <= 0) {
+                  toast.error("Please enter a valid points deduction");
+                  return;
+                }
+                deductPoints.mutate({ memberId: deductingMember.id, points: amt });
+              }}
+              className="space-y-6"
+            >
+              <input
+                type="number"
+                inputMode="numeric"
+                value={deductPointsAmount}
+                onChange={(e) => setDeductPointsAmount(e.target.value.replace(/\D/g, ""))}
+                placeholder="0"
+                required
+                className="w-full text-center text-4xl font-black p-6 bg-slate-50 rounded-[2rem] border-4 border-transparent focus:border-indigo-500 outline-none"
+              />
+
+              <button
+                type="submit"
+                disabled={deductPoints.isPending || !deductPointsAmount}
+                className="w-full py-5 bg-slate-900 text-white rounded-[2rem] font-black text-lg uppercase tracking-widest hover:bg-rose-600 transition-all shadow-xl disabled:opacity-20 cursor-pointer"
+              >
+                {deductPoints.isPending ? "DEDUCTING..." : "CONFIRM DEDUCTION"}
+              </button>
+
+              <button 
+                type="button" 
+                onClick={() => setDeductingMember(null)}
+                className="text-[10px] font-black text-slate-400 uppercase tracking-widest hover:text-slate-900 transition-colors"
+              >
+                Cancel
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Account: username */}
       <section className="rounded-[3rem] border-4 border-slate-50 bg-white p-8 shadow-sm">

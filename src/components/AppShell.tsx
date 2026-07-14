@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
-import { LayoutDashboard, Trophy, ShoppingCart, ChefHat, Calendar, Users, Settings, LogOut, ShieldCheck, Lock, Loader2 } from "lucide-react";
+import { LayoutDashboard, Trophy, ShoppingCart, ChefHat, Calendar, Users, Settings, LogOut, ShieldCheck, Lock, Loader2, Gift } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLanLive } from "@/hooks/useLanLive";
@@ -9,6 +9,7 @@ import { toast } from "sonner";
 const nav = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/chores", label: "Chores", icon: Trophy },
+  { to: "/rewards", label: "Rewards", icon: Gift }, // Added: Rewards Shop Link
   { to: "/shopping", label: "Shopping", icon: ShoppingCart },
   { to: "/meals", label: "Meals", icon: ChefHat },
   { to: "/calendar", label: "Calendar", icon: Calendar },
@@ -22,12 +23,12 @@ export function AppShell({ children }: { children: ReactNode }) {
   const qc = useQueryClient();
   useLanLive(); 
 
-  // MUSCLE: Fetch user with loading and error states
+  // Fetch user session details
   const me = useQuery({ queryKey: ["me"], queryFn: () => getMe() });
   const [pinInput, setPinInput] = useState("");
   const [isSubmittingPin, setIsSubmittingPin] = useState(false);
 
-  // CRITICAL FIX: The "Safety Guard" you were looking for
+  // Safety Guard to prevent undefined crashes
   const userRole = me?.data?.role?.toLowerCase() ?? 'user';
 
   async function signOut() {
@@ -60,9 +61,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   // --- 1. LOADING STATE ---
   if (me.isLoading) {
     return (
-      <div className="fixed inset-0 bg-slate-50 flex flex-col items-center justify-center">
+      <div className="fixed inset-0 bg-slate-50 flex flex-col items-center justify-center p-4">
         <Loader2 className="size-12 text-indigo-500 animate-spin mb-4" />
-        <p className="font-black uppercase tracking-widest text-xs text-slate-400 italic">Synchronizing Fortress...</p>
+        <p className="font-black uppercase tracking-widest text-xs text-slate-400 italic text-center">Synchronizing Fortress...</p>
       </div>
     );
   }
@@ -76,18 +77,18 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-rose-500 rounded-full blur-[120px]" />
         </div>
 
-        <div className="relative w-full max-w-md bg-white rounded-[4rem] p-10 shadow-2xl border-[16px] border-slate-50 text-center animate-in zoom-in-95 duration-300">
-          <div className="size-20 bg-indigo-100 rounded-3xl flex items-center justify-center mx-auto mb-6 text-indigo-600">
+        <div className="relative w-full max-w-md bg-white rounded-[4rem] p-6 sm:p-10 shadow-2xl border-[16px] border-slate-50 text-center animate-in zoom-in-95 duration-300">
+          <div className="size-16 sm:size-20 bg-indigo-100 rounded-3xl flex items-center justify-center mx-auto mb-6 text-indigo-600">
             <ShieldCheck size={40} />
           </div>
           
-          <h2 className="text-3xl font-black uppercase italic tracking-tighter text-slate-900 mb-2">Secure Status</h2>
+          <h2 className="text-2xl sm:text-3xl font-black uppercase italic tracking-tighter text-slate-900 mb-2">Secure Status</h2>
           <p className="text-slate-400 font-bold text-[10px] uppercase tracking-widest mb-8 leading-relaxed">
             Admin Promotion Detected!<br/>Set your 6-digit access code.
           </p>
 
           <div className="relative mb-6">
-            <Lock className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-300 size-6" />
+            <Lock className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-300 size-5 sm:size-6" />
             <input 
               type="password" 
               inputMode="numeric"
@@ -95,7 +96,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               value={pinInput}
               onChange={(e) => setPinInput(e.target.value.replace(/\D/g, ""))}
               placeholder="000000"
-              className="w-full text-center text-5xl tracking-[0.4em] font-black p-8 bg-slate-50 rounded-[2.5rem] border-4 border-transparent focus:border-indigo-500 outline-none transition-all placeholder:text-slate-200"
+              className="w-full text-center text-3xl sm:text-5xl tracking-[0.4em] font-black p-6 sm:p-8 bg-slate-50 rounded-[2rem] sm:rounded-[2.5rem] border-4 border-transparent focus:border-indigo-500 outline-none transition-all placeholder:text-slate-200"
             />
           </div>
 
@@ -121,7 +122,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 setIsSubmittingPin(false);
               }
             }}
-            className="w-full py-6 bg-slate-900 text-white rounded-[2rem] font-black text-xl shadow-xl hover:bg-indigo-600 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-20"
+            className="w-full py-5 sm:py-6 bg-slate-900 text-white rounded-[2rem] font-black text-lg sm:text-xl shadow-xl hover:bg-indigo-600 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-20 cursor-pointer"
           >
             {isSubmittingPin ? "SECURING..." : "ACTIVATE ADMIN"}
           </button>
@@ -134,11 +135,11 @@ export function AppShell({ children }: { children: ReactNode }) {
     );
   }
 
-  // --- 3. STANDARD APP LAYOUT ---
+  // --- 3. STANDARD APP LAYOUT (Perfectly Responsive) ---
   return (
     <div className="min-h-screen bg-canvas">
-      {/* Sidebar (desktop) */}
-      <aside className="fixed left-0 top-0 h-screen w-64 flex flex-col border-r border-border bg-panel/70 backdrop-blur md:flex">
+      {/* Sidebar (Desktop Only) */}
+      <aside className="fixed left-0 top-0 h-screen w-64 flex flex-col border-r border-border bg-panel/70 backdrop-blur hidden md:flex z-40">
         <Link to="/dashboard" className="flex items-center gap-2 px-6 py-8">
           <div className="grid size-11 place-items-center rounded-2xl bg-indigo-600 text-white font-display text-xl font-black italic">
             H
@@ -167,7 +168,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <div className="p-3 mb-4">
           <button
             onClick={signOut}
-            className="flex w-full items-center gap-4 rounded-2xl px-4 py-3.5 text-base font-black uppercase tracking-wider text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors"
+            className="flex w-full items-center gap-4 rounded-2xl px-4 py-3.5 text-base font-black uppercase tracking-wider text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer"
           >
             <LogOut className="size-5 shrink-0" />
             Sign out
@@ -175,26 +176,29 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       </aside>
 
-      {/* Mobile bottom nav */}
-      <nav className="fixed bottom-3 left-1/2 z-30 flex -translate-x-1/2 items-center gap-1 rounded-2xl border border-border bg-panel/95 backdrop-blur px-2 py-2 shadow-lg md:hidden">
+      {/* Mobile Bottom Navigation Bar */}
+      <nav className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 flex items-center gap-1 rounded-2xl border border-border bg-panel/95 backdrop-blur px-3 py-2 shadow-xl md:hidden w-[90%] max-w-sm justify-between">
         {nav.map((item) => {
           const active = pathname === item.to || (item.to !== "/dashboard" && pathname.startsWith(item.to));
           return (
             <Link
               key={item.to}
               to={item.to}
-              className={`grid size-11 place-items-center rounded-xl transition-colors ${
-                active ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
+              className={`grid size-10 place-items-center rounded-xl transition-all ${
+                active ? "bg-indigo-600 text-white shadow-md scale-105" : "text-slate-400 hover:bg-slate-100 hover:text-slate-800"
               }`}
               aria-label={item.label}
             >
-              <item.icon className="size-4" />
+              <item.icon className="size-4.5" />
             </Link>
           );
         })}
       </nav>
 
-      <main className="md:ml-64 pb-24 md:pb-0">{children}</main>
+      {/* Main Content Area (Responsive left margin) */}
+      <main className="md:ml-64 pb-28 md:pb-6 min-h-screen">
+        {children}
+      </main>
     </div>
   );
 }
