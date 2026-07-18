@@ -1,6 +1,6 @@
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { LayoutDashboard, Trophy, ShoppingCart, ChefHat, Calendar, Users, Settings, LogOut, ShieldCheck, Lock, Loader2, Gift } from "lucide-react";
-import { useState, useEffect, useMemo, type ReactNode } from "react";
+import { useState, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLanLive } from "@/hooks/useLanLive";
 import { logout, getMe } from "@/lib/auth-client";
@@ -51,32 +51,50 @@ export function AppShell({ children }: { children: ReactNode }) {
     }
   });
 
-  let idleTimer: any;
+  const isAdmin = me.data?.role?.toLowerCase() === "admin";
+  const idleTimerRef = useRef<any>(null);
 
+  // Global Inactivity Handler
   const resetIdle = () => {
     setIsIdle(false);
-    clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => {
-      setIsIdle(true);
-      // Auto-lock: clear active character after 2 minutes of silence
-      setKioskMember(null);
-      localStorage.removeItem("kiosk_active_member");
-    }, 120000); // 2 minutes
+    
+    if (idleTimerRef.current) {
+      clearTimeout(idleTimerRef.current);
+    }
+    
+    // Configured: 30 seconds for Admin accounts, 60 seconds (1 minute) for standard Kiosk
+    const timeoutDuration = isAdmin ? 30000 : 60000;
+
+    idleTimerRef.current = setTimeout(() => {
+      if (isAdmin) {
+        // High-Security Action: Automatically sign out Admin sessions completely after 30s of silence
+        signOut();
+        toast.info("Admin session expired for security");
+      } else {
+        // Standard Kiosk Action: Clear current hero select and lock screen to clock on 1m silence
+        setIsIdle(true);
+        setKioskMember(null);
+        localStorage.removeItem("kiosk_active_member");
+      }
+    }, timeoutDuration);
   };
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
     resetIdle();
 
-    // Listen to touch, mouse, and key events to track inactivity
+    // Listen to touch, mouse, and key events to track active engagement
     const activityEvents = ["mousemove", "mousedown", "touchstart", "click", "keypress"];
     activityEvents.forEach(e => window.addEventListener(e, resetIdle));
 
     return () => {
       clearInterval(t);
       activityEvents.forEach(e => window.removeEventListener(e, resetIdle));
+      if (idleTimerRef.current) {
+        clearTimeout(idleTimerRef.current);
+      }
     };
-  }, []);
+  }, [isAdmin]); // Re-run effect if admin login status shifts
 
   const handleSelectHero = (member: any) => {
     setKioskMember(member);
@@ -89,8 +107,8 @@ export function AppShell({ children }: { children: ReactNode }) {
     resetIdle();
   };
 
-  // Restored Sign Out Functionality
-  async function signOut() {
+  // Secure and seamless Sign Out Functionality (Supports Kiosk bypass for Admin login)
+  async function signOut(isBypassKiosk = false) {
     await qc.cancelQueries();
     qc.clear();
     
@@ -98,22 +116,57 @@ export function AppShell({ children }: { children: ReactNode }) {
       // 1. Explicitly clear cookie and session from backend
       await fetch('/api/auth/logout', { method: 'POST' });
     } catch (err) {
-      console.warn("Direct logout call failed, falling back to auth client", err);
+      console.warn("Direct logout call failed", err);
     }
 
     try { 
-      // 2. Trigger additional client library cleanup if defined
       await logout(); 
-    } catch { 
-      /* ignore */ 
+    } catch { /* ignore */ }
+
+    // Clear local storage active hero
+    localStorage.removeItem('kiosk_active_member');
+    setKioskMember(null);
+
+    // If "Admin Login" was clicked, completely bypass the kiosk re-login and go to /auth
+    if (isBypassKiosk) {
+      navigate({ to: "/auth", replace: true });
+      return;
     }
 
-    // 3. Clear storage variables to ensure clean slate
-    localStorage.removeItem('family_hub_user');
-    localStorage.removeItem('auth_token');
-    sessionStorage.removeItem('family_hub_user');
+    // 2. Otherwise (Standard Lock), silently transition the tablet back to Kiosk Guest session
+    try {
+      const loginPayload = { username: "kiosk_guest", password: "kiosk_guest_password" };
+      let res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(loginPayload)
+      });
+      
+      if (!res.ok) {
+        // If kiosk_guest doesn't exist, silently register it and then log in
+        await fetch('/api/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(loginPayload)
+        });
+        res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(loginPayload)
+        });
+      }
+      
+      if (res.ok) {
+        // Transition successfully complete! Safely lock straight to the Clock screensaver
+        setIsIdle(true);
+        qc.invalidateQueries(); // Refresh cache keys for guest session
+        return;
+      }
+    } catch (e) {
+      console.warn("Failed to silently reactivate kiosk guest session:", e);
+    }
 
-    // 4. Navigate away
+    // Fallback
     navigate({ to: "/auth", replace: true });
   }
 
@@ -125,7 +178,6 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, [events.data, now]);
 
   const memberList = Array.isArray(members.data) ? members.data : [];
-  const isAdmin = me.data?.role?.toLowerCase() === "admin";
 
   // Filter navigation items dynamically: Only display Settings if logged in as Admin
   const filteredNav = nav.filter(item => {
@@ -238,44 +290,45 @@ export function AppShell({ children }: { children: ReactNode }) {
     );
   }
 
-  // --- 4. GLOBAL CHARACTER SELECT ("Which Hero Are You?") ---
+  // --- 4. GLOBAL CHARACTER SELECT ("Which Hero Are You?" - Scrollable & Mobile Optimized) ---
   if (!kioskMember) {
+    const memberList = Array.isArray(members.data) ? members.data : [];
     return (
-      <div className="fixed inset-0 z-[9998] bg-slate-900 flex flex-col items-center justify-center p-6 overflow-hidden">
-        <div className="absolute inset-0 opacity-10">
+      <div className="fixed inset-0 z-[9998] bg-slate-900 flex flex-col items-center justify-start p-6 overflow-y-auto scrollbar-thin py-16">
+        <div className="absolute inset-0 opacity-10 pointer-events-none">
           <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-indigo-500 rounded-full blur-[120px]" />
           <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-rose-500 rounded-full blur-[120px]" />
         </div>
 
-        {/* Admin Login Button in the top-right corner of the global select screen */}
+        {/* Admin Login Button - Bypasses Kiosk silently on click */}
         <button 
-          onClick={signOut}
+          onClick={() => signOut(true)}
           className="absolute top-4 right-4 bg-white/5 border-2 border-white/10 hover:bg-white/10 text-white px-5 py-3 rounded-2xl font-black text-xs uppercase tracking-wider flex items-center gap-2 cursor-pointer transition-all z-50 min-h-[44px]"
         >
           <ShieldCheck size={16} /> Admin Login
         </button>
 
-        <div className="relative text-center max-w-5xl w-full space-y-12 animate-in zoom-in-95 duration-500">
-          <Trophy className="size-20 text-yellow-500 mb-4 animate-bounce mx-auto" />
-          <h1 className="text-5xl md:text-7xl font-black uppercase italic tracking-tighter text-white">Which Hero Are You?</h1>
+        <div className="relative text-center max-w-5xl w-full space-y-8 sm:space-y-12 animate-in zoom-in-95 duration-500 my-auto">
+          <Trophy className="size-16 sm:size-20 text-yellow-500 mb-2 animate-bounce mx-auto" />
+          <h1 className="text-4xl sm:text-7xl font-black uppercase italic tracking-tighter text-white">Which Hero Are You?</h1>
           
           {/* Responsive, Touch-Optimized Character Grid */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-6 md:gap-8 w-full">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 sm:gap-8 w-full max-w-4xl mx-auto">
             {memberList.map((m: any) => {
               return (
                 <button 
                   key={m.id} 
                   onClick={() => handleSelectHero(m)} 
-                  className="group flex flex-col items-center gap-4 cursor-pointer focus:outline-none"
+                  className="group flex flex-col items-center gap-3 cursor-pointer focus:outline-none"
                 >
                   <div 
-                    className="size-36 md:size-48 rounded-[2.5rem] md:rounded-[3rem] shadow-2xl border-[10px] border-white/15 transition-all group-hover:scale-105 group-hover:rotate-3 flex items-center justify-center text-white text-5xl md:text-6xl font-black uppercase" 
+                    className="size-28 sm:size-48 rounded-[2rem] sm:rounded-[3rem] shadow-2xl border-8 sm:border-[10px] border-white/15 transition-all group-hover:scale-105 group-hover:rotate-3 flex items-center justify-center text-white text-4xl sm:text-6xl font-black uppercase" 
                     style={{ backgroundColor: m.avatar_color || '#ccc' }}
                   >
                     {m.name[0]}
                   </div>
-                  <span className="text-xl md:text-2xl font-black text-white uppercase tracking-widest leading-none mt-2">{m.name}</span>
-                  <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest leading-none">Level {m.level || 1}</p>
+                  <span className="text-lg sm:text-2xl font-black text-white uppercase tracking-widest leading-none mt-1 truncate max-w-full">{m.name}</span>
+                  <p className="text-[9px] sm:text-[10px] font-black text-indigo-400 uppercase tracking-widest leading-none">Level {m.level || 1}</p>
                 </button>
               );
             })}
@@ -351,7 +404,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       </aside>
 
-      {/* Mobile Bottom Navigation Bar (Filters Settings as well) */}
+      {/* Mobile Bottom Navigation Bar */}
       <nav className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 flex items-center gap-1 rounded-2xl border border-border bg-panel/95 backdrop-blur px-3 py-2 shadow-xl md:hidden w-[90%] max-w-sm justify-between">
         {filteredNav.map((item) => {
           const active = pathname === item.to || (item.to !== "/dashboard" && pathname.startsWith(item.to));

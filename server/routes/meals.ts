@@ -10,7 +10,6 @@ async function parseRecipeFromUrl(url: string) {
     if (!response.ok) throw new Error("Failed to fetch recipe page");
     const html = await response.text();
 
-    // Regex to extract JSON-LD script blocks
     const regex = /<script\s+type="application\/ld\+json">([\s\S]*?)<\/script>/gi;
     let match;
     let recipeData: any = null;
@@ -19,7 +18,6 @@ async function parseRecipeFromUrl(url: string) {
       try {
         const json = JSON.parse(match[1].trim());
         
-        // Recursive search for a Recipe schema type in graphs or lists
         const findRecipe = (obj: any): any => {
           if (!obj) return null;
           if (obj["@type"] === "Recipe" || (Array.isArray(obj["@type"]) && obj["@type"].includes("Recipe"))) return obj;
@@ -43,7 +41,6 @@ async function parseRecipeFromUrl(url: string) {
     }
 
     if (!recipeData) {
-      // Fallback: Extract Title from HTML if metadata is missing
       const titleMatch = html.match(/<title>([\s\S]*?)<\/title>/i);
       const name = titleMatch ? titleMatch[1].replace(/ - [^-]+$/g, "").trim() : "Imported Web Recipe";
       return {
@@ -54,13 +51,11 @@ async function parseRecipeFromUrl(url: string) {
       };
     }
 
-    // Process ingredients
     const ingredientsArray = Array.isArray(recipeData.recipeIngredient) 
       ? recipeData.recipeIngredient 
       : [];
     const ingredients = ingredientsArray.join("\n");
 
-    // Process instructions
     let instructions = "";
     if (Array.isArray(recipeData.recipeInstructions)) {
       instructions = recipeData.recipeInstructions
@@ -78,7 +73,6 @@ async function parseRecipeFromUrl(url: string) {
       instructions = recipeData.recipeInstructions;
     }
 
-    // Process image url
     let image_url = "";
     if (typeof recipeData.image === "string") {
       image_url = recipeData.image;
@@ -298,6 +292,27 @@ export default async function mealRoutes(app: any, opts: any) {
 
       db.prepare("DELETE FROM recipes WHERE id = ?").run(req.params.id);
       
+      broadcast("meal-plan");
+      return { success: true };
+    } catch (error) {
+      return reply.code(500).send({ error: (error as Error).message });
+    }
+  });
+
+  // 12. UPDATE RECIPE IN COOKBOOK (Admin Only)
+  app.patch("/recipes/:id", async (req: any, reply: any) => {
+    try {
+      if (req.user?.role !== 'admin') {
+        return reply.code(403).send({ error: "Only administrators can edit recipes" });
+      }
+
+      const { name, category, ingredients, instructions, image_url } = req.body;
+      db.prepare(`
+        UPDATE recipes 
+        SET name = ?, category = ?, ingredients = ?, instructions = ?, image_url = ? 
+        WHERE id = ?
+      `).run(name.trim(), category, ingredients, instructions, image_url || "", req.params.id);
+
       broadcast("meal-plan");
       return { success: true };
     } catch (error) {

@@ -47,20 +47,34 @@ const getSession = (req: any) => {
   return db.prepare(`SELECT u.* FROM sessions s JOIN users u ON s.user_id = u.id WHERE s.token = ? AND s.expires_at > datetime('now')`).get(token) as any;
 };
 
+// Global Gatekeeper Hook with Read-Only Whitelist
 app.addHook("preHandler", async (req, reply) => {
   const url = req.url;
-  if (!url.startsWith("/api") || ["/api/auth/login", "/api/auth/register", "/api/auth/me"].some(p => url.startsWith(p))) return;
-  
-  // Safely calls the local getSession helper
+  const method = req.method;
+
+  // 1. Whitelist open unauthenticated endpoints
+  const publicPaths = [
+    "/api/auth/login", 
+    "/api/auth/register", 
+    "/api/auth/me", 
+    "/api/auth/logout", 
+    "/api/events/calendar.ics"
+  ];
+
+  if (publicPaths.some(p => url.startsWith(p))) {
+    return;
+  }
+
+  // 2. Read-Only Security Guard: Whitelist GET (read-only) queries for members and events 
+  // so the global Lock Screen clock and Character Select can boot instantly on any device!
+  if (method === "GET" && (url.startsWith("/api/members") || url.startsWith("/api/events"))) {
+    return;
+  }
+
+  // 3. All other requests (all POST, PATCH, DELETE and other resources) require a valid session
   const user = getSession(req);
   if (!user) return reply.code(401).send({ error: "Unauthorized" });
   (req as any).user = user;
-});
-
-// --- GLOBAL ERROR LOGGER (Forces hidden 500 errors to print in your terminal) ---
-app.setErrorHandler((error, request, reply) => {
-  console.error("❌ GLOBAL SERVER ERROR:", error);
-  reply.status(error.statusCode || 500).send({ error: error.message });
 });
 
 // --- REGISTER MODULAR ROUTES ---
@@ -73,49 +87,16 @@ app.register(mealRoutes, { prefix: "/api/meals", broadcast });
 app.register(kioskRoutes, { prefix: "/api/kiosk", broadcast });
 app.register(calendarRoutes, { prefix: "/api/events", broadcast }); 
 
-// Points Alignment (Safely Clamped with Self-Healing Avatar Config Injection)
+// Points Alignment
 app.get("/api/points", async (req: any) => {
-    // Self-Heal: Ensure 'avatar_config' column exists in family_members table on points query load
-    try {
-      db.prepare("ALTER TABLE family_members ADD COLUMN avatar_config TEXT").run();
-    } catch (e) {
-      // Ignore if the column already exists
-    }
-
     return db.prepare(`
         SELECT 
-          m.id as member_id, m.name, m.avatar_color, m.avatar_icon, m.avatar_config, m.xp, m.level, m.is_kid, m.is_parent,
-          CASE 
-            WHEN (
-              COALESCE((SELECT SUM(points_awarded) FROM chore_completions WHERE member_id = m.id AND status = 'approved'), 0) - 
-              COALESCE((SELECT SUM(points_spent) FROM redemptions WHERE member_id = m.id AND status = 'approved'), 0)
-            ) < 0 THEN 0
-            ELSE (
-              COALESCE((SELECT SUM(points_awarded) FROM chore_completions WHERE member_id = m.id AND status = 'approved'), 0) - 
-              COALESCE((SELECT SUM(points_spent) FROM redemptions WHERE member_id = m.id AND status = 'approved'), 0)
-            )
-          END as balance
+          m.id as member_id, m.name, m.avatar_color, m.avatar_icon, m.xp, m.level, m.is_kid, m.is_parent,
+          (COALESCE((SELECT SUM(points_awarded) FROM chore_completions WHERE member_id = m.id AND status = 'approved'), 0) - 
+           COALESCE((SELECT SUM(points_spent) FROM redemptions WHERE member_id = m.id), 0)) as balance
         FROM family_members m 
         ORDER BY m.xp DESC
     `).all();
-});
-
-// --- NEW: ADVENTURE LOG (NOTIFICATIONS) ENDPOINT ---
-app.get("/api/notifications", async (req: any) => {
-  try {
-    db.prepare(`
-      CREATE TABLE IF NOT EXISTS notifications (
-        id TEXT PRIMARY KEY,
-        member_id TEXT,
-        title TEXT,
-        message TEXT,
-        type TEXT,
-        created_at TEXT
-      )
-    `).run();
-  } catch (e) {}
-
-  return db.prepare("SELECT * FROM notifications ORDER BY created_at DESC LIMIT 20").all();
 });
 
 // --- SERVE FRONTEND ---
