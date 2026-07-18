@@ -1,9 +1,10 @@
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { LayoutDashboard, Trophy, ShoppingCart, ChefHat, Calendar, Users, Settings, LogOut, ShieldCheck, Lock, Loader2, Gift } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useState, useEffect, useMemo, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLanLive } from "@/hooks/useLanLive";
 import { logout, getMe } from "@/lib/auth-client";
+import { listMembers } from "@/lib/hub-api";
 import { toast } from "sonner";
 
 const nav = [
@@ -17,20 +18,78 @@ const nav = [
   { to: "/settings", label: "Settings", icon: Settings },
 ] as const;
 
+const pad = (n: number) => String(n).padStart(2, "0");
+const ymd = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
 export function AppShell({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const qc = useQueryClient();
   useLanLive(); 
 
-  // Fetch user session details
+  // --- DATA FETCHING ---
   const me = useQuery({ queryKey: ["me"], queryFn: () => getMe() });
+  const members = useQuery({ queryKey: ["members"], queryFn: listMembers });
+  
+  // Fetch calendar events to display on the Lock Screen
+  const events = useQuery({ 
+    queryKey: ["events"], 
+    queryFn: () => fetch('/api/events').then(res => res.json()) 
+  });
+
   const [pinInput, setPinInput] = useState("");
   const [isSubmittingPin, setIsSubmittingPin] = useState(false);
 
-  // Safety Guard to prevent undefined crashes
-  const userRole = me?.data?.role?.toLowerCase() ?? 'user';
+  // --- GLOBAL KIOSK STATE MANAGEMENT ---
+  const [now, setNow] = useState(new Date());
+  const [isIdle, setIsIdle] = useState(false);
+  const [kioskMember, setKioskMember] = useState<any>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("kiosk_active_member") || "null");
+    } catch {
+      return null;
+    }
+  });
 
+  let idleTimer: any;
+
+  const resetIdle = () => {
+    setIsIdle(false);
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      setIsIdle(true);
+      // Auto-lock: clear active character after 2 minutes of silence
+      setKioskMember(null);
+      localStorage.removeItem("kiosk_active_member");
+    }, 120000); // 2 minutes
+  };
+
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 1000);
+    resetIdle();
+
+    // Listen to touch, mouse, and key events to track inactivity
+    const activityEvents = ["mousemove", "mousedown", "touchstart", "click", "keypress"];
+    activityEvents.forEach(e => window.addEventListener(e, resetIdle));
+
+    return () => {
+      clearInterval(t);
+      activityEvents.forEach(e => window.removeEventListener(e, resetIdle));
+    };
+  }, []);
+
+  const handleSelectHero = (member: any) => {
+    setKioskMember(member);
+    localStorage.setItem("kiosk_active_member", JSON.stringify(member));
+    toast.success(`Welcome back, ${member.name}! ⭐`, { position: "top-center" });
+  };
+
+  const handleExitKioskMode = () => {
+    setIsIdle(false);
+    resetIdle();
+  };
+
+  // Restored Sign Out Functionality
   async function signOut() {
     await qc.cancelQueries();
     qc.clear();
@@ -58,12 +117,30 @@ export function AppShell({ children }: { children: ReactNode }) {
     navigate({ to: "/auth", replace: true });
   }
 
-  // --- 1. LOADING STATE ---
-  if (me.isLoading) {
+  // Resolve upcoming event for the clock lock-screen
+  const upcomingEvent = useMemo(() => {
+    const list = Array.isArray(events.data) ? events.data : [];
+    const todayKey = ymd(now);
+    return list.find((e: any) => e.starts_at >= todayKey);
+  }, [events.data, now]);
+
+  const memberList = Array.isArray(members.data) ? members.data : [];
+  const isAdmin = me.data?.role?.toLowerCase() === "admin";
+
+  // Filter navigation items dynamically: Only display Settings if logged in as Admin
+  const filteredNav = nav.filter(item => {
+    if (item.to === "/settings") {
+      return isAdmin;
+    }
+    return true;
+  });
+
+  // --- 1. GLOBAL LOADING STATE ---
+  if (me.isLoading || members.isLoading || events.isLoading) {
     return (
       <div className="fixed inset-0 bg-slate-50 flex flex-col items-center justify-center p-4">
         <Loader2 className="size-10 text-indigo-500 animate-spin mb-4" />
-        <p className="font-black uppercase tracking-widest text-[10px] text-slate-400 italic text-center">Synchronizing Fortress...</p>
+        <p className="font-black uppercase tracking-widest text-[10px] text-slate-400 italic text-center animate-pulse">Synchronizing Fortress...</p>
       </div>
     );
   }
@@ -135,11 +212,84 @@ export function AppShell({ children }: { children: ReactNode }) {
     );
   }
 
-  // --- 3. STANDARD APP LAYOUT (Perfectly Responsive) ---
+  // --- 3. GLOBAL IDLE CLOCK VIEW (Kiosk Lock Screen) ---
+  if (isIdle) {
+    return (
+      <div 
+        className="fixed inset-0 z-[9999] bg-slate-950 text-white flex flex-col items-center justify-center animate-in fade-in duration-1000 cursor-pointer" 
+        onClick={handleExitKioskMode}
+      >
+        <p className="text-3xl font-light tracking-[0.5em] text-indigo-500 uppercase mb-4 animate-pulse">Family Hub</p>
+        <h1 className="text-[12rem] font-black leading-none tracking-tighter">
+          {now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+        </h1>
+        <p className="text-4xl text-slate-400 font-medium mt-4">
+          {now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
+        </p>
+        <div className="mt-20 flex gap-4 items-center bg-white/5 p-6 rounded-3xl border border-white/10">
+          <Calendar className="size-8 text-indigo-500 animate-pulse" />
+          <div className="text-left">
+             <p className="text-sm text-slate-500 font-bold uppercase">Next Event</p>
+             <p className="text-xl font-bold">{upcomingEvent ? upcomingEvent.title : "No more events today"}</p>
+          </div>
+        </div>
+        <p className="absolute bottom-8 text-xs font-black uppercase tracking-[0.4em] text-slate-500">Tap Screen To Wake</p>
+      </div>
+    );
+  }
+
+  // --- 4. GLOBAL CHARACTER SELECT ("Which Hero Are You?") ---
+  if (!kioskMember) {
+    return (
+      <div className="fixed inset-0 z-[9998] bg-slate-900 flex flex-col items-center justify-center p-6 overflow-hidden">
+        <div className="absolute inset-0 opacity-10">
+          <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-indigo-500 rounded-full blur-[120px]" />
+          <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-rose-500 rounded-full blur-[120px]" />
+        </div>
+
+        {/* Admin Login Button in the top-right corner of the global select screen */}
+        <button 
+          onClick={signOut}
+          className="absolute top-4 right-4 bg-white/5 border-2 border-white/10 hover:bg-white/10 text-white px-5 py-3 rounded-2xl font-black text-xs uppercase tracking-wider flex items-center gap-2 cursor-pointer transition-all z-50 min-h-[44px]"
+        >
+          <ShieldCheck size={16} /> Admin Login
+        </button>
+
+        <div className="relative text-center max-w-5xl w-full space-y-12 animate-in zoom-in-95 duration-500">
+          <Trophy className="size-20 text-yellow-500 mb-4 animate-bounce mx-auto" />
+          <h1 className="text-5xl md:text-7xl font-black uppercase italic tracking-tighter text-white">Which Hero Are You?</h1>
+          
+          {/* Responsive, Touch-Optimized Character Grid */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-6 md:gap-8 w-full">
+            {memberList.map((m: any) => {
+              return (
+                <button 
+                  key={m.id} 
+                  onClick={() => handleSelectHero(m)} 
+                  className="group flex flex-col items-center gap-4 cursor-pointer focus:outline-none"
+                >
+                  <div 
+                    className="size-36 md:size-48 rounded-[2.5rem] md:rounded-[3rem] shadow-2xl border-[10px] border-white/15 transition-all group-hover:scale-105 group-hover:rotate-3 flex items-center justify-center text-white text-5xl md:text-6xl font-black uppercase" 
+                    style={{ backgroundColor: m.avatar_color || '#ccc' }}
+                  >
+                    {m.name[0]}
+                  </div>
+                  <span className="text-xl md:text-2xl font-black text-white uppercase tracking-widest leading-none mt-2">{m.name}</span>
+                  <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest leading-none">Level {m.level || 1}</p>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // --- 5. STANDARD APP LAYOUT (With Persistent Kiosk Sidebar Card) ---
   return (
     <div className="min-h-screen bg-canvas">
       
-      {/* Sidebar (Desktop Only: hidden on mobile, scrollable on low heights/landscape) */}
+      {/* Sidebar (Desktop Only) */}
       <aside className="fixed left-0 top-0 h-screen w-64 flex flex-col border-r border-border bg-panel/70 backdrop-blur hidden md:flex z-40 overflow-y-auto scrollbar-thin">
         <Link to="/dashboard" className="flex items-center gap-2 px-6 py-6 shrink-0">
           <div className="grid size-9 place-items-center rounded-2xl bg-indigo-600 text-white font-display text-lg font-black italic">
@@ -149,7 +299,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </Link>
         
         <nav className="flex-1 space-y-1.5 px-3 py-2">
-          {nav.map((item) => {
+          {filteredNav.map((item) => {
             const active = pathname === item.to || (item.to !== "/dashboard" && pathname.startsWith(item.to));
             return (
               <Link
@@ -168,7 +318,29 @@ export function AppShell({ children }: { children: ReactNode }) {
           })}
         </nav>
         
-        <div className="p-3 mt-auto shrink-0 mb-2">
+        {/* Dynamic Active Kiosk Hero Widget */}
+        <div className="p-4 mx-3 mb-2 bg-slate-50 border-2 border-slate-100 rounded-3xl flex items-center gap-3 shrink-0">
+          <div 
+            className="size-10 rounded-xl flex items-center justify-center text-white text-lg font-black uppercase shadow-inner shrink-0"
+            style={{ backgroundColor: kioskMember.avatar_color || '#ccc' }}
+          >
+            {kioskMember.name[0]}
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-black uppercase text-slate-800 truncate">{kioskMember.name}</p>
+            <button 
+              onClick={() => {
+                setKioskMember(null);
+                localStorage.removeItem("kiosk_active_member");
+              }}
+              className="text-[9px] font-black text-indigo-500 uppercase tracking-widest hover:text-indigo-600 leading-none cursor-pointer block mt-0.5"
+            >
+              Switch Hero
+            </button>
+          </div>
+        </div>
+
+        <div className="p-3 shrink-0 mb-2">
           <button
             onClick={signOut}
             className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-black uppercase tracking-wider text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer"
@@ -179,9 +351,9 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       </aside>
 
-      {/* Mobile Bottom Navigation Bar (Hidden on Desktop) */}
+      {/* Mobile Bottom Navigation Bar (Filters Settings as well) */}
       <nav className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 flex items-center gap-1 rounded-2xl border border-border bg-panel/95 backdrop-blur px-3 py-2 shadow-xl md:hidden w-[90%] max-w-sm justify-between">
-        {nav.map((item) => {
+        {filteredNav.map((item) => {
           const active = pathname === item.to || (item.to !== "/dashboard" && pathname.startsWith(item.to));
           return (
             <Link
@@ -198,7 +370,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         })}
       </nav>
 
-      {/* Main Content Area (Responsive margins and padding) */}
+      {/* Main Content Area */}
       <main className="md:ml-64 pb-28 md:pb-6 min-h-screen">
         {children}
       </main>

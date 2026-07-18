@@ -42,8 +42,6 @@ const getNotificationIcon = (type: string) => {
 
 function Dashboard() {
   const [now, setNow] = useState(new Date());
-  const [isIdle, setIsIdle] = useState(false);
-  let idleTimer: any;
 
   // --- DATA FETCHING ---
   // Fetch points/roster list
@@ -71,64 +69,15 @@ function Dashboard() {
     return list.filter((e: any) => e.starts_at === todayKey);
   }, [events.data, now]);
 
-  // Resolve the next closest upcoming event for Kiosk Mode
-  const upcomingEvent = useMemo(() => {
-    const list = Array.isArray(events.data) ? events.data : [];
-    const todayKey = ymd(now);
-    return list.find((e: any) => e.starts_at >= todayKey);
-  }, [events.data, now]);
-
-  // --- KIOSK / INACTIVITY LOGIC ---
-  const resetIdle = () => {
-    setIsIdle(false);
-    clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => setIsIdle(true), 120000); // 2 minutes to Kiosk mode
-  };
-
+  // Clock tick timer
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
-    resetIdle();
-    window.addEventListener("mousemove", resetIdle);
-    return () => { clearInterval(t); window.removeEventListener("mousemove", resetIdle); };
+    return () => clearInterval(t);
   }, []);
-
-  // --- SESSION LOADING GUARD ---
-  if (points.isLoading || events.isLoading || notifications.isLoading) {
-    return (
-      <AppShell>
-        <div className="flex flex-col items-center justify-center min-h-[85vh] p-6">
-          <p className="font-black text-slate-400 uppercase tracking-widest text-xs italic animate-pulse text-center">Synchronizing Dashboard...</p>
-        </div>
-      </AppShell>
-    );
-  }
-
-  // --- 1. KIOSK MODE RENDER (Idle clock view) ---
-  if (isIdle) {
-    return (
-      <div className="h-screen w-full bg-slate-950 text-white flex flex-col items-center justify-center animate-in fade-in duration-1000" onClick={() => setIsIdle(false)}>
-        <p className="text-3xl font-light tracking-[0.5em] text-indigo-500 uppercase mb-4">Family Hub</p>
-        <h1 className="text-[12rem] font-black leading-none tracking-tighter">
-          {now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-        </h1>
-        <p className="text-4xl text-slate-400 font-medium mt-4">
-          {now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
-        </p>
-        <div className="mt-20 flex gap-4 items-center bg-white/5 p-6 rounded-3xl border border-white/10">
-          <Calendar className="size-8 text-indigo-500 animate-pulse" />
-          <div className="text-left">
-             <p className="text-sm text-slate-500 font-bold uppercase">Next Event</p>
-             <p className="text-xl font-bold">{upcomingEvent ? upcomingEvent.title : "No more events today"}</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   const memberList = Array.isArray(points.data) ? points.data : [];
   const logList = Array.isArray(notifications.data) ? notifications.data : [];
 
-  // --- 2. STANDARD DASHBOARD RENDER (When NOT Idle) ---
   return (
     <AppShell>
       <div className="mx-auto max-w-[1500px] px-4 py-6 md:px-8 md:py-10 space-y-8 animate-in fade-in duration-300">
@@ -139,7 +88,7 @@ function Dashboard() {
             <p className="font-mono text-xs uppercase tracking-[0.2em] text-indigo-500 font-black">Fortress Central</p>
             <h1 className="font-display text-4xl font-black italic uppercase tracking-tighter text-slate-900">Dashboard</h1>
           </div>
-          <div className="flex items-center gap-3 bg-white px-6 py-4 rounded-3xl border-4 border-slate-50 shadow-sm">
+          <div className="flex items-center gap-3 bg-white px-6 py-4 rounded-3xl border-4 border-slate-50 shadow-sm shrink-0 self-start md:self-auto">
             <Clock className="size-5 text-indigo-500 animate-spin" style={{ animationDuration: '6s' }} />
             <span className="font-black text-sm uppercase tracking-wider text-slate-800">
               {now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -147,13 +96,13 @@ function Dashboard() {
           </div>
         </header>
 
-        {/* Dashboard Grid Layout */}
+        {/* Dashboard Grid Layout (Optimized for Mobile/Tablet stacking) */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           
           {/* Left Column: Hero Roster and Adventure Log */}
           <div className="lg:col-span-2 space-y-8">
             
-            {/* A. Hero Roster Leaderboard */}
+            {/* A. Hero Roster Leaderboard (Enlarged with Podium Medals) */}
             <section className="bg-white p-6 sm:p-8 rounded-[2.5rem] sm:rounded-[3rem] border-4 border-slate-50 shadow-xl">
               <h2 className="text-2xl font-black uppercase italic tracking-tighter mb-6 flex items-center gap-2 text-slate-900">
                 <Zap className="text-yellow-500 size-6 animate-pulse" /> Hero Roster
@@ -161,37 +110,44 @@ function Dashboard() {
               <div className="space-y-6">
                 {memberList.map((m: any, index: number) => {
                   const xpProgress = (m.xp || 0) % 100;
-                  const medal = index === 0 ? "🥇" : index === 1 ? "🥈" : index === 2 ? "🥉" : null;
+                  
+                  // Podium rank indicators and background style enhancements
+                  const medal = index === 0 ? "🥇 1st" : index === 1 ? "🥈 2nd" : index === 2 ? "🥉 3rd" : null;
+                  const bgStyles = 
+                    index === 0 ? "bg-amber-50/20 border-yellow-400/40 ring-4 ring-yellow-400/5 shadow-yellow-100/50" :
+                    index === 1 ? "bg-slate-50/20 border-slate-300/40 ring-4 ring-slate-300/5 shadow-slate-100/50" :
+                    index === 2 ? "bg-orange-50/20 border-orange-300/40 ring-4 ring-orange-300/5 shadow-orange-100/50" :
+                    "bg-slate-50/10 border-slate-100/60 shadow-sm";
 
                   return (
-                    <div key={m.member_id} className="bg-slate-50 p-6 md:p-8 rounded-[3rem] border-2 border-slate-100 flex flex-col sm:flex-row items-center gap-6 relative overflow-hidden shadow-sm hover:shadow-md transition-all">
+                    <div key={m.member_id} className={`p-6 sm:p-8 rounded-[2.5rem] sm:rounded-[3rem] border-2 flex flex-col sm:flex-row items-center gap-6 relative overflow-hidden hover:shadow-md transition-all ${bgStyles}`}>
                       
                       {/* Left Side: Medal Rank and Avatar */}
                       <div className="flex flex-col items-center gap-2 shrink-0">
-                        {medal && <span className="text-4xl animate-bounce" style={{ animationDuration: '3s' }}>{medal}</span>}
-                        <div className="size-20 rounded-[2rem] flex items-center justify-center text-white text-4xl font-black shadow-lg" style={{ backgroundColor: m.avatar_color || '#ccc' }}>
+                        {medal && <span className="text-3xl font-black uppercase tracking-tighter text-slate-800 animate-pulse">{medal}</span>}
+                        <div className="size-24 rounded-[2.5rem] flex items-center justify-center text-white text-5xl font-black shadow-lg" style={{ backgroundColor: m.avatar_color || '#ccc' }}>
                           {m.name[0].toUpperCase()}
                         </div>
                       </div>
 
                       {/* Right Side: High-Contrast Large Stats */}
                       <div className="flex-1 min-w-0 w-full space-y-3">
-                        <div className="flex justify-between items-center gap-2 flex-wrap">
-                          <p className="font-black text-3xl uppercase tracking-tighter text-slate-900 truncate">{m.name}</p>
-                          <span className="text-3xl font-black italic text-indigo-600 tracking-tight">LV.{m.level || 1}</span>
+                        <div className="flex justify-between items-center gap-4 flex-wrap">
+                          <p className="font-black text-3xl sm:text-4xl uppercase tracking-tighter text-slate-900 truncate">{m.name}</p>
+                          <span className="text-3xl sm:text-4xl font-black italic text-indigo-600 tracking-tight">LV.{m.level || 1}</span>
                         </div>
                         
-                        <div className="flex justify-between items-center">
-                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Active Adventurer</p>
-                          <p className="text-2xl font-black text-slate-800 tracking-tight uppercase">{m.balance} PTS BALANCE</p>
+                        <div className="flex justify-between items-center gap-2 flex-wrap">
+                          <p className="text-[10px] sm:text-xs font-black text-slate-400 uppercase tracking-widest">Active Adventurer</p>
+                          <p className="text-xl sm:text-2xl font-black text-slate-800 tracking-tight uppercase">{m.balance} PTS BALANCE</p>
                         </div>
                         
                         {/* Enlarged XP Progress Bar */}
                         <div className="space-y-2">
-                          <div className="h-4 w-full bg-slate-200 rounded-full overflow-hidden p-1 border border-slate-300/30">
+                          <div className="h-5 w-full bg-slate-200 rounded-full overflow-hidden p-1 border border-slate-300/30">
                             <div className="h-full rounded-full transition-all duration-1000 shadow-inner" style={{ width: `${xpProgress}%`, backgroundColor: m.avatar_color || '#ccc' }} />
                           </div>
-                          <div className="flex justify-between text-xs font-black uppercase tracking-widest text-slate-500">
+                          <div className="flex justify-between text-[10px] sm:text-xs font-black uppercase tracking-widest text-slate-500">
                             <span>{xpProgress} XP / 100</span>
                             <span className="text-indigo-600 animate-pulse">{100 - xpProgress} XP TO LEVEL UP!</span>
                           </div>
@@ -204,7 +160,7 @@ function Dashboard() {
               </div>
             </section>
 
-            {/* B. NEW: Adventure Log (Dynamic Notifications News Feed) */}
+            {/* B. Adventure Log (Dynamic Notifications News Feed) */}
             <section className="bg-white p-6 sm:p-8 rounded-[2.5rem] sm:rounded-[3rem] border-4 border-slate-50 shadow-xl">
               <h2 className="text-2xl font-black uppercase italic tracking-tighter mb-4 flex items-center gap-2 text-slate-900">
                 <ScrollText className="text-indigo-500 size-6 shrink-0" /> Adventure Log
@@ -249,7 +205,7 @@ function Dashboard() {
 
           {/* Right Column: Pinned Day Overview (Today's Quests) */}
           <div className="space-y-6">
-            <section className="bg-white p-8 rounded-[3rem] border-4 border-slate-50 shadow-xl min-h-[400px]">
+            <section className="bg-white p-6 sm:p-8 rounded-[2.5rem] sm:rounded-[3rem] border-4 border-slate-50 shadow-xl min-h-[400px]">
               <div className="flex items-center justify-between mb-6">
                 <h2 className="text-2xl font-black uppercase italic tracking-tighter flex items-center gap-2 text-slate-900">
                   <Calendar className="text-indigo-500 size-6 animate-bounce" /> Today's Quests

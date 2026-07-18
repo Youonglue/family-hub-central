@@ -1,10 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { listMembers } from "@/lib/hub-api";
 import { getMe } from "@/lib/auth-client";
-import { Trophy, ShieldCheck, UserCircle, Flame } from "lucide-react";
+import { Trophy, ShieldCheck, Flame } from "lucide-react";
 
-// HERO ICON MAP
-const ICONS: Record<string, any> = { UserCircle }; // Icons will fallback safely
+// Offline Avatar Renderer
+import { Avatar, parseAvatarConfig } from "@/components/avatar/Avatar";
 
 interface ChoreCharacterSelectProps {
   onSelectMember: (member: any) => void;
@@ -43,8 +43,6 @@ export function ChoreCharacterSelect({ onSelectMember, onOpenAdmin }: ChoreChara
       {/* Responsive character cards grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 sm:gap-8 max-w-5xl w-full">
         {memberList.map((m: any) => {
-          const HeroIcon = ICONS[m.avatar_icon] || UserCircle;
-          
           // Fetch active consecutive-day streaks from leaderboard query cache
           const rosterMember = (Array.isArray(pointsData.data) ? pointsData.data : [])?.find((p: any) => p.member_id === m.id);
           const streak = rosterMember?.streak_count || 0;
@@ -55,9 +53,11 @@ export function ChoreCharacterSelect({ onSelectMember, onOpenAdmin }: ChoreChara
               onClick={() => onSelectMember(m)} 
               className="group flex flex-col items-center gap-3 sm:gap-4 cursor-pointer focus:outline-none"
             >
-              <div className="size-32 sm:size-48 rounded-[2.5rem] sm:rounded-[3rem] shadow-2xl border-4 sm:border-8 border-white transition-all group-hover:scale-105 group-hover:rotate-3 flex items-center justify-center text-white" style={{ backgroundColor: m.avatar_color }}>
-                <HeroIcon className="size-16 sm:size-20" />
-              </div>
+              {/* Dynamic Vector Avatar Rendering */}
+              <Avatar 
+                config={parseAvatarConfig(m.avatar_config)} 
+                className="size-32 sm:size-48 rounded-[2.5rem] sm:rounded-[3rem] shadow-2xl border-4 sm:border-8 border-white transition-all group-hover:scale-105 group-hover:rotate-3" 
+              />
               <span className="text-lg sm:text-2xl font-black text-slate-800 uppercase tracking-widest text-center truncate max-w-full">{m.name}</span>
               <div className="flex items-center gap-1.5 sm:gap-2 text-[9px] sm:text-[10px] font-black text-slate-400 uppercase tracking-widest">
                 <span>Level {m.level || 1}</span>

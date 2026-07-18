@@ -66,6 +66,9 @@
 :root {
   --radius: 0.75rem;
 
+  /* Global calendar cell sizing: touch-friendly on mobile, compact on desktop */
+  --cell-size: 2.75rem;
+
   --canvas: oklch(0.985 0.005 95);
   --panel: oklch(1 0 0);
   --background: oklch(0.985 0.005 95);
@@ -106,6 +109,12 @@
   --kid-violet-soft: oklch(0.96 0.03 300);
 }
 
+@media (min-width: 768px) {
+  :root {
+    --cell-size: 2.25rem; /* Sizing targets match desktop precision clickers */
+  }
+}
+
 .dark {
   --canvas: oklch(0.18 0.02 260);
   --panel: oklch(0.24 0.02 260);
@@ -131,14 +140,26 @@
 }
 
 @layer base {
-  * { border-color: var(--color-border); }
+  * { 
+    border-color: var(--color-border);
+    -webkit-tap-highlight-color: transparent; /* Clean iOS tap interactions */
+  }
   body {
     background-color: var(--color-canvas);
     color: var(--color-foreground);
     font-family: var(--font-sans);
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    -webkit-overflow-scrolling: touch; /* Momentum scroll for touch screens */
   }
   h1, h2, h3, h4 { font-family: var(--font-display); letter-spacing: -0.02em; }
+}
+
+@utility scrollbar-none {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+  &::-webkit-scrollbar {
+    display: none; /* Chrome, Safari, and Opera */
+  }
 }
 
 /* Kid-mode confetti burst on chore completion */

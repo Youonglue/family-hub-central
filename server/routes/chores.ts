@@ -1,3 +1,4 @@
+
 import { randomUUID } from "node:crypto";
 import { db } from "../db.js";
 
@@ -155,7 +156,7 @@ export default async function choreRoutes(app: any, opts: any) {
     `).all();
   });
 
-  // 6. APPROVE CHORE (Award XP, process Boss multipliers, Co-op Synergy, and Streak bonuses)
+  // 6. APPROVE CHORE
   app.post("/completions/:id/approve", async (req: any, reply: any) => {
     ensureTablesExist();
     const completionId = req.params.id;
@@ -244,14 +245,14 @@ export default async function choreRoutes(app: any, opts: any) {
     return { success: true };
   });
 
-  // 7. POINTS LEADERBOARD (Safely Clamped to Prevent Negative Balances)
+  // 7. POINTS LEADERBOARD (Safely Selecting m.avatar_config for Fluent UI Synchronization)
   app.get("/points", async (req: any, reply: any) => {
     try {
       ensureTablesExist();
-      // SQL Case Clamp prevents calculations from returning values below 0
+      // Added m.avatar_config to SELECT block to populate Dashboard Leaderboard
       return db.prepare(`
           SELECT 
-            m.id as member_id, m.name, m.avatar_color, m.avatar_icon, m.xp, m.level, m.is_kid, m.is_parent, m.streak_count, m.last_completion_date,
+            m.id as member_id, m.name, m.avatar_color, m.avatar_icon, m.avatar_config, m.xp, m.level, m.is_kid, m.is_parent, m.streak_count, m.last_completion_date,
             CASE 
               WHEN (
                 COALESCE((SELECT SUM(points_awarded) FROM chore_completions WHERE member_id = m.id AND status = 'approved'), 0) - 
@@ -270,8 +271,9 @@ export default async function choreRoutes(app: any, opts: any) {
       console.error("❌ CHORES LEADERBOARD ERROR:", error);
       
       try {
+        // Fallback query selects m.avatar_config safely
         return db.prepare(`
-          SELECT id as member_id, name, avatar_color, avatar_icon, xp, level, is_kid, is_parent, 0 as balance, 0 as streak_count
+          SELECT id as member_id, name, avatar_color, avatar_icon, avatar_config, xp, level, is_kid, is_parent, 0 as balance, 0 as streak_count
           FROM family_members
           WHERE show_on_leaderboard = 1 OR show_on_leaderboard IS NULL
           ORDER BY xp DESC
@@ -282,7 +284,7 @@ export default async function choreRoutes(app: any, opts: any) {
     }
   });
 
-  // 8. DEDUCT POINTS (With dynamic log writing and Math.min clamp safeguard)
+  // 8. DEDUCT POINTS
   app.post("/deduct-points", async (req: any, reply: any) => {
     try {
       ensureTablesExist();
@@ -319,8 +321,6 @@ export default async function choreRoutes(app: any, opts: any) {
       `).get(memberId) as any;
 
       const currentBalance = balanceRecord ? balanceRecord.balance : 0;
-
-      // Anti-Exploit Safeguard: Cap the deduction to their exact remaining balance so they hit 0 instead of a negative number
       const pointsToDeduct = Math.min(currentBalance, parsedPoints);
 
       if (pointsToDeduct <= 0) {

@@ -61,6 +61,48 @@ export default async function familyRoutes(app: any, opts: any) {
     return { success: true };
   });
 
+  // 3.5. Update Avatar Vector Configuration (Self-Healing & Diagnostic Logging Hook)
+  app.post("/:id/avatar", async (req: any, reply: any) => {
+    try {
+      const { id } = req.params;
+      const { avatar_config } = req.body;
+
+      if (!avatar_config) {
+        return reply.code(400).send({ error: "Avatar configuration is required" });
+      }
+
+      // Self-Heal: Guarantee that the column exists immediately prior to update
+      try {
+        db.prepare("ALTER TABLE family_members ADD COLUMN avatar_config TEXT").run();
+      } catch (e) {
+        // Ignore if column is already present in the SQLite schema
+      }
+
+      const currentMember = db.prepare("SELECT * FROM family_members WHERE id = ?").get(id) as any;
+      if (!currentMember) {
+        console.warn(`[DB WARNING] Attempted avatar update, but Hero ID ${id} was not found.`);
+        return reply.code(404).send({ error: "Hero not found" });
+      }
+
+      // Execute update statement
+      const result = db.prepare("UPDATE family_members SET avatar_config = ? WHERE id = ?").run(avatar_config, id);
+      
+      // DIAGNOSTIC LOGGING: This prints directly to your backend terminal when you click save
+      console.log(`[DB SUCCESS] Avatar update complete. ID: ${id} | Changes: ${result.changes}`);
+
+      // Trigger real-time sync across connected clients
+      if (broadcast) {
+        broadcast("members");
+      }
+      
+      return { success: true, changes: result.changes };
+    } catch (err) {
+      // Logs the exact underlying error to your Fastify console for troubleshooting
+      console.error("❌ SAVE AVATAR 500 ERROR:", err);
+      return reply.code(500).send({ error: (err as Error).message });
+    }
+  });
+
   // 4. DELETE HERO
   app.delete("/:id", async (req: any) => {
     db.prepare("DELETE FROM family_members WHERE id = ?").run(req.params.id);

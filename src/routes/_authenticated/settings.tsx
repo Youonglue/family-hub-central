@@ -4,7 +4,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/AppShell";
 import { getMe, getPinStatus, verifyPin } from "@/lib/auth-client";
-import { ShieldCheck, Loader2 } from "lucide-react";
+import { ShieldCheck, ShieldAlert, Loader2 } from "lucide-react";
 
 // Sub-component Imports (Compartmentalized)
 import { LeaderboardRoster } from "@/components/settings/LeaderboardRoster";
@@ -26,6 +26,22 @@ function SettingsPage() {
   const [unlocked, setUnlocked] = useState(false);
   const [pin, setPinInput] = useState("");
   const [unlocking, setUnlocking] = useState(false);
+
+  const isAdmin = me.data?.role?.toLowerCase() === "admin";
+
+  // --- HARD ROUTE GUARD ---
+  // If the user is loaded and they are NOT an Admin, completely lock them out!
+  if (me.isSuccess && !isAdmin) {
+    return (
+      <AppShell>
+        <div className="flex flex-col items-center justify-center min-h-[85vh] p-6 text-center animate-in fade-in duration-300">
+          <ShieldAlert className="size-16 text-rose-500 mb-6 animate-bounce" />
+          <h1 className="text-4xl font-black uppercase italic tracking-tighter text-slate-900 mb-2">Access Denied</h1>
+          <p className="text-sm font-bold text-slate-400 uppercase tracking-widest">Only administrators are permitted in Settings.</p>
+        </div>
+      </AppShell>
+    );
+  }
 
   // If a PIN exists and we haven't unlocked yet, show the gate.
   const gateActive = pinStatus.data?.has_pin === true && !unlocked;

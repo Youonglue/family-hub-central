@@ -3,7 +3,10 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { listMembers } from "@/lib/hub-api";
 import { getMe } from "@/lib/auth-client";
-import { Users, Shield, Trash2, X, Check, ShieldCheck } from "lucide-react";
+import { Users, Trash2, ShieldCheck } from "lucide-react";
+
+// Offline Avatar Renderer
+import { Avatar, parseAvatarConfig } from "@/components/avatar/Avatar";
 
 export function LeaderboardRoster() {
   const qc = useQueryClient();
@@ -241,9 +244,11 @@ export function LeaderboardRoster() {
           {memberList.map((m: any) => (
             <div key={m.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-2xl bg-slate-50 p-4 border-2 border-slate-100">
               <div className="flex items-center gap-4">
-                <div className="size-10 rounded-xl flex items-center justify-center text-white text-lg font-black shrink-0 shadow-sm" style={{ backgroundColor: m.avatar_color || '#ccc' }}>
-                  {m.name[0].toUpperCase()}
-                </div>
+                {/* Responsive Avatar replaces initials */}
+                <Avatar 
+                  config={parseAvatarConfig(m.avatar_config)} 
+                  className="size-10 rounded-xl shadow-sm" 
+                />
                 <div>
                   <p className="font-black text-base uppercase tracking-tight text-slate-800">{m.name}</p>
                   <p className="text-[9px] font-black text-slate-400 uppercase">Level {m.level || 1} Adventurer</p>

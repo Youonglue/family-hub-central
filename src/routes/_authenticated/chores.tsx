@@ -19,20 +19,52 @@ export const Route = createFileRoute("/_authenticated/chores")({
 function ChoresKiosk() {
   const me = useQuery({ queryKey: ["me"], queryFn: () => getMe() });
   
-  // Core Kiosk States
-  const [activeMember, setActiveMember] = useState<any>(null);
+  // Core Kiosk States (Linked to persistent global storage)
+  const [activeMember, setActiveMember] = useState<any>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("kiosk_active_member") || "null");
+    } catch {
+      return null;
+    }
+  });
+  
   const [lastActivity, setLastActivity] = useState(Date.now());
   const [isAdminView, setIsAdminView] = useState(false);
 
   const isSystemAdmin = me.data?.role?.toLowerCase() === "admin";
 
-  // --- INACTIVITY TIMEOUT (Resets active character after 60 seconds of idle time) ---
+  // --- KIOSK STATE SYNCER ---
+  // Keeps the local active member in sync with any changes made globally (e.g. Switching Heroes from sidebar)
+  useEffect(() => {
+    const syncMember = () => {
+      try {
+        const stored = localStorage.getItem("kiosk_active_member");
+        const parsed = stored ? JSON.parse(stored) : null;
+        if (JSON.stringify(parsed) !== JSON.stringify(activeMember)) {
+          setActiveMember(parsed);
+        }
+      } catch (e) {
+        // Ignore JSON read errors
+      }
+    };
+
+    const t = setInterval(syncMember, 500); // Poll local storage
+    window.addEventListener("storage", syncMember); // Listen to storage updates
+
+    return () => {
+      clearInterval(t);
+      window.removeEventListener("storage", syncMember);
+    };
+  }, [activeMember]);
+
+  // --- INACTIVITY TIMEOUT ---
   useEffect(() => {
     if (!activeMember) return;
     const interval = setInterval(() => {
       if (Date.now() - lastActivity > 60000) {
         setActiveMember(null);
         setIsAdminView(false);
+        localStorage.removeItem("kiosk_active_member"); // Lock global kiosk
         toast("Hub Reset for Safety", { icon: <Timer className="size-4" /> });
       }
     }, 1000);
@@ -84,16 +116,18 @@ function ChoresKiosk() {
             onBack={() => {
               setActiveMember(null);
               setIsAdminView(false);
+              localStorage.removeItem("kiosk_active_member"); // Clear global select
             }}
             isAdminView={isAdminView}
             setIsAdminView={setIsAdminView}
             canAccessAdmin={canAccessAdmin}
           />
         ) : (
-          // Render SCREEN C: Character Select View
+          // Render SCREEN C: Character Select View (Fallback if bypassed)
           <ChoreCharacterSelect
             onSelectMember={(m) => {
               setActiveMember(m);
+              localStorage.setItem("kiosk_active_member", JSON.stringify(m)); // Propagate globally
               recordActivity();
             }}
             onOpenAdmin={() => {

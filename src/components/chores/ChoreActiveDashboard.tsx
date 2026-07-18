@@ -1,7 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { toast } from "sonner";
-import { ArrowLeft, ShieldCheck, Flame, Sword, Timer } from "lucide-react";
+import { ArrowLeft, ShieldCheck, Flame, Sword } from "lucide-react";
+
+// Offline Avatar Renderer Imports
+import { Avatar, parseAvatarConfig } from "@/components/avatar/Avatar";
 
 interface ChoreActiveDashboardProps {
   activeMember: any;
@@ -31,23 +34,30 @@ export function ChoreActiveDashboard({
     queryFn: () => fetch('/api/chores/points').then(res => res.json()) 
   });
 
+  // Resolve the active member's latest data dynamically from points roster
+  const memberRecord = useMemo(() => {
+    const list = Array.isArray(pointsData.data) ? pointsData.data : [];
+    return list.find((p: any) => p.member_id === activeMember.id) || activeMember;
+  }, [pointsData.data, activeMember]);
+
+  // Decode the avatar customizer configuration string
+  const avatarConfig = useMemo(() => {
+    return parseAvatarConfig(memberRecord?.avatar_config);
+  }, [memberRecord]);
+
   // Calculate XP, balance, and streak dynamically
   const stats = useMemo(() => {
-    const data = Array.isArray(pointsData.data) ? pointsData.data : [];
-    if (!activeMember || data.length === 0) return { balance: 0, level: 1, progress: 0, xp: 0, streak_count: 0 };
-    const found = data.find((p: any) => p.member_id === activeMember.id);
-    if (!found) return { balance: 0, level: 1, progress: 0, xp: 0, streak_count: 0 };
-    
+    if (!memberRecord) return { balance: 0, level: 1, progress: 0, xp: 0, streak_count: 0 };
     return { 
-      balance: found.balance, 
-      level: found.level || 1, 
-      xp: found.xp || 0,
-      streak_count: found.streak_count || 0,
-      progress: (found.xp || 0) % 100
+      balance: memberRecord.balance || 0, 
+      level: memberRecord.level || 1, 
+      xp: memberRecord.xp || 0,
+      streak_count: memberRecord.streak_count || 0,
+      progress: (memberRecord.xp || 0) % 100
     };
-  }, [activeMember, pointsData.data]);
+  }, [memberRecord]);
 
-  // --- MUTATION ---
+  // --- MUTATIONS ---
   const completeChore = useMutation({
     mutationFn: (id: string) => fetch(`/api/chores/${id}/complete`, { 
         method: "POST", 
@@ -81,11 +91,19 @@ export function ChoreActiveDashboard({
         </div>
       </div>
 
-      {/* HERO CHARACTER DETAILS PANEL */}
+      {/* HERO CHARACTER DETAILS PANEL (Non-clickable, display only) */}
       <div className="bg-white p-6 md:p-10 rounded-[3rem] md:rounded-[4rem] shadow-2xl border-4 border-slate-50 flex flex-col md:flex-row items-center gap-6 md:gap-10 relative overflow-hidden">
-         <div className="size-28 sm:size-40 rounded-[2rem] sm:rounded-[2.5rem] flex items-center justify-center text-4xl sm:text-6xl font-black text-white shadow-2xl border-4 sm:border-[10px] border-white/30 shrink-0" style={{ backgroundColor: activeMember.avatar_color }}>
-           {stats.level}
+         
+         <div className="relative shrink-0">
+           <Avatar 
+             config={avatarConfig} 
+             className="size-28 sm:size-40 rounded-[2rem] sm:rounded-[2.5rem] border-4 sm:border-[10px] border-white/30 shadow-2xl" 
+           />
+           <span className="absolute -bottom-1 -right-1 sm:-bottom-2 sm:-right-2 bg-slate-900 text-white border-2 border-white text-xs sm:text-sm font-black size-8 sm:size-10 rounded-xl sm:rounded-2xl flex items-center justify-center shadow-lg select-none">
+             {stats.level}
+           </span>
          </div>
+
          <div className="flex-1 w-full space-y-3 sm:space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
               <h2 className="text-3xl sm:text-5xl font-black tracking-tighter uppercase italic text-slate-900 truncate max-w-full text-center sm:text-left">{activeMember.name}</h2>
@@ -95,7 +113,9 @@ export function ChoreActiveDashboard({
                     <Flame className="size-3.5 sm:size-4" /> {stats.streak_count}d Streak
                   </div>
                 )}
-                <div className="bg-slate-900 text-white px-3 py-1 sm:px-4 sm:py-1.5 rounded-full text-[10px] sm:text-xs font-black flex items-center justify-center gap-1 shadow-lg"><Flame className="size-3.5 sm:size-4" /> HERO STATUS</div>
+                <div className="bg-slate-900 text-white px-3 py-1 sm:px-4 sm:py-1.5 rounded-full text-[10px] sm:text-xs font-black flex items-center justify-center gap-1 shadow-lg select-none">
+                  HERO STATUS
+                </div>
               </div>
             </div>
             <div className="space-y-1 sm:space-y-2 relative z-10">
@@ -104,7 +124,7 @@ export function ChoreActiveDashboard({
                 <span>{stats.balance} Total Points</span>
               </div>
               <div className="h-8 sm:h-10 w-full bg-slate-100 rounded-full p-1.5 sm:p-2 shadow-inner border-2 border-slate-50">
-                 <div className="h-full rounded-full transition-all duration-1000 shadow-lg relative" style={{ width: `${stats.progress}%`, backgroundColor: activeMember.avatar_color }}>
+                 <div className="h-full rounded-full transition-all duration-1000 shadow-lg relative" style={{ width: `${stats.progress}%`, backgroundColor: memberRecord.avatar_color || '#ccc' }}>
                     <div className="absolute inset-0 bg-white/30 animate-pulse rounded-full" />
                  </div>
               </div>
