@@ -1,4 +1,4 @@
-import { Target, X, Clock } from "lucide-react";
+import { Target, Trash2, Clock } from "lucide-react";
 
 export function CalendarSidebarOverview({ focusedDate, dailyAgenda, memberList, onDelete }: any) {
   return (
@@ -22,9 +22,9 @@ export function CalendarSidebarOverview({ focusedDate, dailyAgenda, memberList, 
           const assignedHero = memberList.find((m: any) => m.id === e.member_id);
           return (
             <div key={e.id} className="group flex gap-4 items-start relative">
-               <div className="flex-1 bg-slate-50 p-4 rounded-2xl group-hover:bg-slate-100 transition-all border-l-4 relative flex flex-col gap-1.5" style={{ borderLeftColor: e.color || 'gray' }}>
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-3">
+               <div className="flex-1 bg-slate-50 p-4 rounded-2xl border-l-4 relative flex items-center justify-between gap-3" style={{ borderLeftColor: e.color || 'gray' }}>
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <div className="flex items-center gap-2">
                       {assignedHero ? (
                         <div 
                           className="size-6 rounded-full flex items-center justify-center text-[10px] font-black text-white shrink-0 shadow-sm" 
@@ -36,21 +36,26 @@ export function CalendarSidebarOverview({ focusedDate, dailyAgenda, memberList, 
                       ) : (
                         <div className="size-6 rounded-full bg-slate-800 text-white flex items-center justify-center text-[8px] font-black shrink-0 shadow-sm" title="Whole Family">ALL</div>
                       )}
-                      <p className="font-black text-sm text-slate-900 leading-tight">
+                      <p className="font-black text-sm text-slate-900 leading-tight truncate">
                         {e.title}
                       </p>
                     </div>
-                    <button onClick={() => onDelete(e.id)} className="p-2 text-slate-300 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all cursor-pointer">
-                      <X size={16} />
-                    </button>
+
+                    {e.time_from && (
+                      <div className="flex items-center gap-1 text-[9px] font-bold text-slate-400 uppercase tracking-widest pl-8">
+                        <Clock size={10} /> {e.time_from} {e.time_to ? ` - ${e.time_to}` : ""}
+                      </div>
+                    )}
                   </div>
-                  
-                  {/* Inline Time display */}
-                  {e.time_from && (
-                    <div className="flex items-center gap-1 text-[9px] font-bold text-slate-400 uppercase tracking-widest pl-9">
-                      <Clock size={10} /> {e.time_from} {e.time_to ? ` - ${e.time_to}` : ""}
-                    </div>
-                  )}
+
+                  {/* Always-visible, touch-friendly delete button */}
+                  <button 
+                    onClick={() => onDelete(e.id)} 
+                    className="size-9 bg-rose-50 border border-rose-100 hover:bg-rose-100 text-rose-500 rounded-xl flex items-center justify-center cursor-pointer transition-all shrink-0 hover:scale-105 active:scale-95"
+                    title="Remove Quest"
+                  >
+                    <Trash2 size={14} />
+                  </button>
                </div>
             </div>
           );

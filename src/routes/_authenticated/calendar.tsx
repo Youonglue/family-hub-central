@@ -12,7 +12,7 @@ import {
   startOfYear as fnsStartOfYear, 
   endOfYear as fnsEndOfYear 
 } from 'date-fns';
-import { CalendarPlus, ChevronLeft, ChevronRight, Trash2, Calendar as CalendarIcon } from "lucide-react";
+import { CalendarPlus, ChevronLeft, ChevronRight, Trash2, Calendar as CalendarIcon, Filter } from "lucide-react";
 
 // Sub-Component Imports (Compartmentalized)
 import { YearView } from "@/components/calendar/YearView";
@@ -36,6 +36,9 @@ const startOfWeek = (d: Date) => { const s = new Date(d.getFullYear(), d.getMont
 
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
+// Added "Work" category to the main list
+const CATEGORIES = ["all", "School", "Sports", "Fun", "Chores", "Work", "General"];
+
 function CalendarPage() {
   const qc = useQueryClient();
   const events = useQuery({ queryKey: ["events"], queryFn: () => listEvents() });
@@ -46,6 +49,10 @@ function CalendarPage() {
   const [focusedDate, setFocusedDate] = useState<Date>(() => new Date());
 
   const [memberFilter, setMemberFilter] = useState<string | null>(null);
+  
+  // Active Category Filter State
+  const [selectedCategory, setSelectedCategory] = useState("all");
+
   const [selectedDates, setSelectedDates] = useState<string[]>([]); 
   const [showAddModal, setShowAddModal] = useState(false);
   const [dayViewDate, setDayViewDate] = useState<Date | null>(null);
@@ -85,29 +92,37 @@ function CalendarPage() {
     }
   };
 
+  // --- FILTERED EVENTS & AGENDA MUTATIONS ---
+  const filteredEvents = useMemo(() => {
+    return eventList.filter((e: any) => {
+      const matchesMember = !memberFilter || e.member_id === memberFilter;
+      const matchesCategory = selectedCategory === "all" || e.category?.toLowerCase() === selectedCategory.toLowerCase();
+      return matchesMember && matchesCategory;
+    });
+  }, [eventList, memberFilter, selectedCategory]);
+
   const byDay = useMemo(() => {
     const m = new Map<string, any[]>();
-    for (const e of eventList) {
+    for (const e of filteredEvents) {
       const key = e.starts_at; 
       const arr = m.get(key) ?? [];
       arr.push(e); m.set(key, arr);
     }
     return m;
-  }, [eventList]);
+  }, [filteredEvents]);
 
-  // Lock agenda panel to the selected day's quests
+  // Lock agenda panel to the selected day's quests (correlates Category)
   const dailyAgenda = useMemo(() => {
     const dayKey = ymd(focusedDate);
-    const dayEvents = byDay.get(dayKey) ?? [];
-    return dayEvents.filter((e: any) => !memberFilter || e.member_id === memberFilter);
-  }, [byDay, focusedDate, memberFilter]);
+    return byDay.get(dayKey) ?? [];
+  }, [byDay, focusedDate]);
 
   const monthAgenda = useMemo(() => {
-    return eventList.filter((e: any) => {
+    return filteredEvents.filter((e: any) => {
       const d = new Date(e.starts_at);
       return d.getMonth() === anchor.getMonth() && d.getFullYear() === anchor.getFullYear();
     }).sort((a: any, b: any) => a.starts_at.localeCompare(b.starts_at));
-  }, [eventList, anchor]);
+  }, [filteredEvents, anchor]);
 
   function navigate(dir: -1 | 1) {
     const d = new Date(anchor);
@@ -132,10 +147,10 @@ function CalendarPage() {
 
   return (
     <AppShell>
-      <div className="mx-auto max-w-[1500px] px-4 py-6 md:px-8">
+      <div className="mx-auto max-w-[1500px] px-4 py-6 md:px-8 space-y-6">
         
         {/* HEADER */}
-        <header className="mb-8 flex flex-wrap items-center justify-between gap-4">
+        <header className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-4">
              <div className="p-3 bg-indigo-100 rounded-2xl shadow-inner">
                <CalendarIcon className="size-8 text-indigo-600" />
@@ -156,22 +171,49 @@ function CalendarPage() {
           </div>
         </header>
 
-        {/* TOOLBAR */}
-        <div className="mb-8 flex flex-wrap items-center gap-4">
-          <div className="flex items-center gap-1 bg-white p-1.5 rounded-2xl border-4 border-slate-50 shadow-sm">
-            {(["year", "month", "week", "day"] as ViewMode[]).map((v) => (
-              <button key={v} onClick={() => setView(v)} className={`rounded-xl px-5 py-2 text-xs font-black uppercase transition-all ${view === v ? "bg-slate-900 text-white shadow-lg" : "text-slate-400 hover:text-slate-600"}`}>
-                {v}
-              </button>
-            ))}
+        {/* TOOLBAR & DYNAMIC CATEGORY FILTERS */}
+        <div className="flex flex-col gap-4 bg-white p-4 rounded-3xl border-4 border-slate-50 shadow-md">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-1 bg-slate-100 p-1.5 rounded-2xl">
+              {(["year", "month", "week", "day"] as ViewMode[]).map((v) => (
+                <button key={v} onClick={() => setView(v)} className={`rounded-xl px-5 py-2 text-xs font-black uppercase transition-all ${view === v ? "bg-slate-900 text-white shadow-md" : "text-slate-400 hover:text-slate-600"}`}>
+                  {v}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-2">
+              <button onClick={() => navigate(-1)} className="p-3 bg-slate-50 rounded-2xl shadow-sm hover:bg-slate-100 cursor-pointer"><ChevronLeft /></button>
+              <button onClick={() => { setAnchor(new Date()); setFocusedDate(new Date()); }} className="px-6 py-3 bg-slate-50 rounded-2xl shadow-sm font-black text-xs uppercase tracking-widest hover:bg-slate-100 cursor-pointer">Today</button>
+              <button onClick={() => navigate(1)} className="p-3 bg-slate-50 rounded-2xl shadow-sm hover:bg-slate-100 cursor-pointer"><ChevronRight /></button>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <button onClick={() => navigate(-1)} className="p-3 bg-white border-4 border-slate-50 rounded-2xl shadow-sm hover:bg-slate-100 cursor-pointer"><ChevronLeft /></button>
-            <button onClick={() => { setAnchor(new Date()); setFocusedDate(new Date()); }} className="px-6 py-3 bg-white border-4 border-slate-50 rounded-2xl shadow-sm font-black text-xs uppercase tracking-widest hover:bg-slate-100 cursor-pointer">Today</button>
-            <button onClick={() => navigate(1)} className="p-3 bg-white border-4 border-slate-50 rounded-2xl shadow-sm hover:bg-slate-100 cursor-pointer"><ChevronRight /></button>
+
+          <div className="border-t border-slate-100/60 my-1" />
+
+          {/* Swipe-Optimized Categories Bar */}
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-slate-400 mr-2 shrink-0">
+              <Filter size={12} className="text-indigo-500" /> Filter:
+            </div>
+            <div className="flex items-center gap-2 overflow-x-auto py-1 shrink-0 max-w-full scrollbar-thin scroll-smooth pr-6">
+              {CATEGORIES.map((cat) => (
+                <button
+                  key={cat}
+                  onClick={() => setSelectedCategory(cat)}
+                  className={`px-5 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all cursor-pointer whitespace-nowrap min-h-[44px] ${
+                    selectedCategory === cat
+                      ? "bg-indigo-600 text-white shadow-md scale-102"
+                      : "bg-slate-50 text-slate-500 border border-slate-100 hover:bg-slate-100"
+                  }`}
+                >
+                  {cat === "all" ? "🌟 Show All" : cat}
+                </button>
+              ))}
+            </div>
           </div>
-          <h2 className="text-2xl font-black text-slate-800 uppercase italic ml-2">{headerLabel}</h2>
         </div>
+
+        <h2 className="text-3xl font-black text-slate-800 uppercase italic leading-none pt-2">{headerLabel}</h2>
 
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
           <div className="lg:col-span-3">
@@ -182,7 +224,6 @@ function CalendarPage() {
           </div>
 
           <aside className="space-y-8">
-             {/* --- DYNAMIC SIDEBAR: Focuses on Selected Date's Quests --- */}
              <CalendarSidebarOverview
                focusedDate={focusedDate}
                dailyAgenda={dailyAgenda}
@@ -190,7 +231,6 @@ function CalendarPage() {
                onDelete={(id) => del.mutate(id)}
              />
 
-             {/* --- MOBILE / WIFI CALENDAR SYNC FEED WIDGET --- */}
              <CalendarSyncWidget />
           </aside>
         </div>

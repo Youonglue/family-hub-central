@@ -4,7 +4,7 @@ import { db } from "../db.js";
 export default async function calendarRoutes(app: any, opts: any) {
   const { broadcast } = opts;
 
-  // Self-heal utility to guarantee the time_from and time_to columns exist
+  // Self-heal utility to guarantee all columns (including category) exist
   const ensureTimeColumnsExist = () => {
     try {
       db.prepare("ALTER TABLE events ADD COLUMN time_from TEXT").run();
@@ -12,6 +12,10 @@ export default async function calendarRoutes(app: any, opts: any) {
 
     try {
       db.prepare("ALTER TABLE events ADD COLUMN time_to TEXT").run();
+    } catch (e) {}
+
+    try {
+      db.prepare("ALTER TABLE events ADD COLUMN category TEXT DEFAULT 'General'").run();
     } catch (e) {}
   };
 
@@ -27,14 +31,12 @@ export default async function calendarRoutes(app: any, opts: any) {
     return db.prepare("SELECT * FROM events WHERE starts_at >= date('now') ORDER BY starts_at ASC, time_from ASC LIMIT 5").all();
   });
 
-  // --- NEW: iCalendar (.ics) Feed exporter for Mobile synchronization ---
-  // Final Path: GET /api/events/calendar.ics (Bypasses preHandler check in index.ts)
+  // --- iCalendar (.ics) Feed exporter for Mobile synchronization ---
   app.get("/calendar.ics", async (req: any, reply: any) => {
     try {
       ensureTimeColumnsExist();
       const list = db.prepare("SELECT * FROM events").all() as any[];
       
-      // Compile into standard iCalendar (.ics) format
       let ics = "BEGIN:VCALENDAR\r\n";
       ics += "VERSION:2.0\r\n";
       ics += "PRODID:-//Family Hub Central//NONSGML Calendar//EN\r\n";
@@ -46,18 +48,15 @@ export default async function calendarRoutes(app: any, opts: any) {
       for (const e of list) {
         const dtStamp = new Date().toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
         
-        // Default fallbacks (all-day display: 9am - 10am)
         let startHrs = "09", startMins = "00";
         let endHrs = "10", endMins = "00";
 
-        // Parse custom start time if provided
         if (e.time_from && e.time_from.includes(":")) {
           const parts = e.time_from.split(":");
           startHrs = parts[0].padStart(2, "0");
           startMins = parts[1].padStart(2, "0");
         }
 
-        // Parse custom end time if provided
         if (e.time_to && e.time_to.includes(":")) {
           const parts = e.time_to.split(":");
           endHrs = parts[0].padStart(2, "0");
@@ -81,7 +80,6 @@ export default async function calendarRoutes(app: any, opts: any) {
 
       ics += "END:VCALENDAR\r\n";
 
-      // Set correct content-type so mobile devices recognize it as a calendar subscription
       reply.header("Content-Type", "text/calendar; charset=utf-8");
       reply.header("Content-Disposition", 'attachment; filename="familyhub.ics"');
       
@@ -92,17 +90,17 @@ export default async function calendarRoutes(app: any, opts: any) {
     }
   });
 
-  // POST: /api/events (Create with optional times)
+  // POST: /api/events (Create with optional times and category)
   app.post("/", async (req: any) => {
     ensureTimeColumnsExist();
-    const { title, location, member_id, color, dates, time_from, time_to } = req.body;
+    const { title, location, member_id, color, dates, time_from, time_to, category } = req.body;
     const stmt = db.prepare(`
-      INSERT INTO events (id, title, location, member_id, color, starts_at, time_from, time_to, created_at) 
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      INSERT INTO events (id, title, location, member_id, color, starts_at, time_from, time_to, category, created_at) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
     `);
     db.transaction(() => {
       for (const date of dates) { 
-        stmt.run(randomUUID(), title, location, member_id, color, date, time_from || "", time_to || ""); 
+        stmt.run(randomUUID(), title, location, member_id, color, date, time_from || "", time_to || "", category || "General"); 
       }
     })();
     broadcast("calendar");

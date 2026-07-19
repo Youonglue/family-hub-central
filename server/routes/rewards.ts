@@ -132,7 +132,7 @@ export default async function rewardRoutes(app: any, opts: any) {
     }
   });
 
-  // 4. CLAIM/REDEEM REWARD
+  // 4. CLAIM/REDEEM REWARD (Now always creates a PENDING claim requiring Admin approval)
   app.post("/:id/claim", async (req: any, reply: any) => {
     try {
       ensureTablesExist();
@@ -162,20 +162,21 @@ export default async function rewardRoutes(app: any, opts: any) {
         }
       }
 
-      const groupId = isCoOp ? randomUUID() : null;
+      // Assign a unique groupId to EVERY redemption (even single ones) to make approval a breeze!
+      const groupId = randomUUID();
 
       db.transaction(() => {
         for (const memberId of memberIds) {
           db.prepare(`
             INSERT INTO redemptions (id, reward_id, member_id, points_spent, status, group_id, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
-          `).run(randomUUID(), rewardId, memberId, splitCost, isCoOp ? 'pending' : 'approved', groupId);
+            VALUES (?, ?, ?, ?, 'pending', ?, datetime('now'))
+          `).run(randomUUID(), rewardId, memberId, splitCost, groupId);
         }
       })();
 
-      // Log the purchase milestones to the Adventure log
+      // Log the purchase milestones to the Adventure log as pending
+      const contributorsNames = memberIds.map(mId => (db.prepare("SELECT name FROM family_members WHERE id = ?").get(mId) as any)?.name || "Hero").join(" & ");
       if (isCoOp) {
-        const contributorsNames = memberIds.map(mId => (db.prepare("SELECT name FROM family_members WHERE id = ?").get(mId) as any)?.name || "Hero").join(" & ");
         logNotification(
           null, 
           "Co-Op Purchase Requested! 👥", 
@@ -183,11 +184,10 @@ export default async function rewardRoutes(app: any, opts: any) {
           "reward"
         );
       } else {
-        const memberName = (db.prepare("SELECT name FROM family_members WHERE id = ?").get(memberIds[0]) as any)?.name || "Hero";
         logNotification(
           memberIds[0], 
-          "Reward Unlocked! 🎁", 
-          `"${memberName}" redeemed points for "${reward.title}" (${splitCost} pts spent).`, 
+          "Reward Purchase Requested! 🎁", 
+          `"${contributorsNames}" requested redemption for "${reward.title}" (${splitCost} pts). Pending Admin approval.`, 
           "reward"
         );
       }
@@ -197,14 +197,14 @@ export default async function rewardRoutes(app: any, opts: any) {
       broadcast("rewards");
       broadcast("notifications");
       
-      return { success: true, pending: isCoOp, splitCost };
+      return { success: true, pending: true, splitCost };
     } catch (error) {
       console.error("❌ CLAIM REWARD ERROR:", error);
       return reply.code(500).send({ error: (error as Error).message });
     }
   });
 
-  // 5. GET ALL PENDING CO-OP REDEMPTIONS
+  // 5. GET ALL PENDING REDEMPTIONS (Fetches both Single and Co-Op pending claims)
   app.get("/redemptions/pending", async (req: any, reply: any) => {
     try {
       ensureTablesExist();
@@ -229,7 +229,7 @@ export default async function rewardRoutes(app: any, opts: any) {
     }
   });
 
-  // 6. APPROVE PENDING CO-OP GROUP
+  // 6. APPROVE PENDING REDEMPTION (Supports both Single and Co-Op groups)
   app.post("/redemptions/:groupId/approve", async (req: any, reply: any) => {
     try {
       ensureTablesExist();
@@ -247,10 +247,14 @@ export default async function rewardRoutes(app: any, opts: any) {
         
         const rewardTitle = pendingClaims[0].reward_title;
         const contributorsNames = pendingClaims.map(c => c.member_name).join(" & ");
+        const isCoOp = pendingClaims.length > 1;
+
         logNotification(
-          null,
-          "Co-Op Purchase Approved! 🎁",
-          `Joint purchase of "${rewardTitle}" by ${contributorsNames} was approved by parent!`,
+          isCoOp ? null : pendingClaims[0].member_id,
+          isCoOp ? "Co-Op Purchase Approved! 👥" : "Reward Purchase Approved! 🎁",
+          isCoOp 
+            ? `Joint purchase of "${rewardTitle}" by ${contributorsNames} was approved by parent!`
+            : `"${contributorsNames}"'s purchase of "${rewardTitle}" was approved by parent!`,
           "reward"
         );
       }
@@ -266,7 +270,7 @@ export default async function rewardRoutes(app: any, opts: any) {
     }
   });
 
-  // 7. REJECT PENDING CO-OP GROUP
+  // 7. REJECT PENDING REDEMPTION (Supports both Single and Co-Op groups)
   app.post("/redemptions/:groupId/reject", async (req: any, reply: any) => {
     try {
       ensureTablesExist();
@@ -283,10 +287,14 @@ export default async function rewardRoutes(app: any, opts: any) {
 
         const rewardTitle = pendingClaims[0].reward_title;
         const contributorsNames = pendingClaims.map(c => c.member_name).join(" & ");
+        const isCoOp = pendingClaims.length > 1;
+
         logNotification(
-          null,
-          "Co-Op Purchase Canceled! ❌",
-          `Joint purchase request for "${rewardTitle}" by ${contributorsNames} was canceled.`,
+          isCoOp ? null : pendingClaims[0].member_id,
+          isCoOp ? "Co-Op Purchase Canceled! ❌" : "Reward Purchase Canceled! ❌",
+          isCoOp
+            ? `Joint purchase request for "${rewardTitle}" by ${contributorsNames} was canceled.`
+            : `Purchase request for "${rewardTitle}" by ${contributorsNames} was canceled.`,
           "reward"
         );
       }

@@ -1,4 +1,4 @@
-import { Check } from "lucide-react";
+import { Check, Sword } from "lucide-react";
 
 const pad = (n: number) => String(n).padStart(2, "0");
 const ymd = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -29,10 +29,36 @@ export function MonthView({ anchor, byDay, onPickDay, onToggleDate, onSelectDate
                 isToday ? "border-slate-900 bg-slate-50 shadow-sm" : "border-slate-50 bg-white hover:border-slate-200"
               } ${d.getMonth() !== anchor.getMonth() ? "opacity-20" : ""}`}
             >
-              <div className="flex justify-between items-center mb-1 md:mb-2">
-                <span onClick={(e) => { e.stopPropagation(); onPickDay(d); onSelectDate(d); }} className={`text-[10px] md:text-sm font-black p-1 rounded-lg ${isToday ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-500'}`}>{d.getDate()}</span>
-                {isSelected && <Check className="size-3 text-indigo-500" />}
+              {/* Header area with enlarged tap targets and quick-launch Sword button */}
+              <div className="flex justify-between items-center mb-1.5 md:mb-3 shrink-0">
+                <span 
+                  onClick={(e) => { 
+                    e.stopPropagation(); 
+                    onPickDay(d); 
+                    onSelectDate(d); 
+                  }} 
+                  className={`text-[10px] md:text-sm font-black px-2 py-1 sm:px-2.5 sm:py-1.5 rounded-xl hover:bg-slate-200 transition-all ${
+                    isToday ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-500'
+                  }`}
+                >
+                  {d.getDate()}
+                </span>
+                
+                {evs.length > 0 && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onPickDay(d);
+                      onSelectDate(d);
+                    }}
+                    className="p-1 bg-indigo-50 text-indigo-600 rounded-lg border border-indigo-100 hover:bg-indigo-100 cursor-pointer shrink-0 flex items-center justify-center"
+                    title="View Daily Quests"
+                  >
+                    <Sword size={12} />
+                  </button>
+                )}
               </div>
+
               <div className="space-y-0.5 md:space-y-1 flex-1 overflow-hidden">
                 {evs.slice(0, 3).map((e: any) => {
                   const assignedHero = memberList.find((m: any) => m.id === e.member_id);

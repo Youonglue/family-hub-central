@@ -52,7 +52,12 @@ app.addHook("preHandler", async (req, reply) => {
   const url = req.url;
   const method = req.method;
 
-  // 1. Whitelist open unauthenticated endpoints
+  // 1. Critical Safeguard: If the URL is NOT an API request (e.g., loading static pages, images, favicon), bypass the gatekeeper completely!
+  if (!url.startsWith("/api")) {
+    return;
+  }
+
+  // 2. Whitelist open unauthenticated API endpoints
   const publicPaths = [
     "/api/auth/login", 
     "/api/auth/register", 
@@ -65,13 +70,13 @@ app.addHook("preHandler", async (req, reply) => {
     return;
   }
 
-  // 2. Read-Only Security Guard: Whitelist GET (read-only) queries for members and events 
+  // 3. Read-Only Security Guard: Whitelist GET (read-only) queries for members and events 
   // so the global Lock Screen clock and Character Select can boot instantly on any device!
   if (method === "GET" && (url.startsWith("/api/members") || url.startsWith("/api/events"))) {
     return;
   }
 
-  // 3. All other requests (all POST, PATCH, DELETE and other resources) require a valid session
+  // 4. All other API requests (all POST, PATCH, DELETE and other resources) require a valid session
   const user = getSession(req);
   if (!user) return reply.code(401).send({ error: "Unauthorized" });
   (req as any).user = user;
