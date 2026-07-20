@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import crypto from "node:crypto";
 import { db } from "../db.js";
 
 export default async function rewardRoutes(app: any, opts: any) {
@@ -61,7 +61,7 @@ export default async function rewardRoutes(app: any, opts: any) {
       db.prepare(`
         INSERT INTO notifications (id, member_id, title, message, type, created_at)
         VALUES (?, ?, ?, ?, ?, datetime('now'))
-      `).run(randomUUID(), memberId, title, message, type);
+      `).run(crypto.randomUUID(), memberId, title, message, type);
     } catch (e) {
       console.error("❌ LOG NOTIFICATION ERROR:", e);
     }
@@ -104,7 +104,7 @@ export default async function rewardRoutes(app: any, opts: any) {
       }
 
       db.prepare("INSERT INTO rewards (id, title, points, active, created_at) VALUES (?, ?, ?, 1, datetime('now'))")
-        .run(randomUUID(), title.trim(), pointsCost);
+        .run(crypto.randomUUID(), title.trim(), pointsCost);
 
       broadcast("rewards");
       return { success: true };
@@ -163,14 +163,14 @@ export default async function rewardRoutes(app: any, opts: any) {
       }
 
       // Assign a unique groupId to EVERY redemption (even single ones) to make approval a breeze!
-      const groupId = randomUUID();
+      const groupId = crypto.randomUUID();
 
       db.transaction(() => {
         for (const memberId of memberIds) {
           db.prepare(`
             INSERT INTO redemptions (id, reward_id, member_id, points_spent, status, group_id, created_at)
             VALUES (?, ?, ?, ?, 'pending', ?, datetime('now'))
-          `).run(randomUUID(), rewardId, memberId, splitCost, groupId);
+          `).run(crypto.randomUUID(), rewardId, memberId, splitCost, groupId);
         }
       })();
 

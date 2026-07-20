@@ -70,9 +70,9 @@ app.addHook("preHandler", async (req, reply) => {
     return;
   }
 
-  // 3. Read-Only Security Guard: Whitelist GET (read-only) queries for members and events 
+  // 3. Read-Only Security Guard: Whitelist GET (read-only) queries for members, events, and notifications
   // so the global Lock Screen clock and Character Select can boot instantly on any device!
-  if (method === "GET" && (url.startsWith("/api/members") || url.startsWith("/api/events"))) {
+  if (method === "GET" && (url.startsWith("/api/members") || url.startsWith("/api/events") || url.startsWith("/api/notifications"))) {
     return;
   }
 
@@ -102,6 +102,15 @@ app.get("/api/points", async (req: any) => {
         FROM family_members m 
         ORDER BY m.xp DESC
     `).all();
+});
+
+// New: Adventure Log Notifications Alignment
+app.get("/api/notifications", async () => {
+    try {
+      return db.prepare("SELECT * FROM notifications ORDER BY created_at DESC LIMIT 30").all();
+    } catch (e) {
+      return [];
+    }
 });
 
 // --- SERVE FRONTEND ---

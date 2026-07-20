@@ -1,4 +1,3 @@
-
 import { randomUUID } from "node:crypto";
 import { db } from "../db.js";
 
@@ -156,7 +155,7 @@ export default async function choreRoutes(app: any, opts: any) {
     `).all();
   });
 
-  // 6. APPROVE CHORE
+  // 6. APPROVE CHORE (Award XP, process Boss multipliers, Co-op Synergy, and Streak bonuses)
   app.post("/completions/:id/approve", async (req: any, reply: any) => {
     ensureTablesExist();
     const completionId = req.params.id;
@@ -245,14 +244,14 @@ export default async function choreRoutes(app: any, opts: any) {
     return { success: true };
   });
 
-  // 7. POINTS LEADERBOARD (Safely Selecting m.avatar_config for Fluent UI Synchronization)
+  // 7. POINTS LEADERBOARD (Safely Clamped to Prevent Negative Balances)
   app.get("/points", async (req: any, reply: any) => {
     try {
       ensureTablesExist();
-      // Added m.avatar_config to SELECT block to populate Dashboard Leaderboard
+      // SQL Case Clamp prevents calculations from returning values below 0
       return db.prepare(`
           SELECT 
-            m.id as member_id, m.name, m.avatar_color, m.avatar_icon, m.avatar_config, m.xp, m.level, m.is_kid, m.is_parent, m.streak_count, m.last_completion_date,
+            m.id as member_id, m.name, m.avatar_color, m.avatar_icon, m.xp, m.level, m.is_kid, m.is_parent, m.streak_count, m.last_completion_date,
             CASE 
               WHEN (
                 COALESCE((SELECT SUM(points_awarded) FROM chore_completions WHERE member_id = m.id AND status = 'approved'), 0) - 
@@ -271,9 +270,8 @@ export default async function choreRoutes(app: any, opts: any) {
       console.error("❌ CHORES LEADERBOARD ERROR:", error);
       
       try {
-        // Fallback query selects m.avatar_config safely
         return db.prepare(`
-          SELECT id as member_id, name, avatar_color, avatar_icon, avatar_config, xp, level, is_kid, is_parent, 0 as balance, 0 as streak_count
+          SELECT id as member_id, name, avatar_color, avatar_icon, xp, level, is_kid, is_parent, 0 as balance, 0 as streak_count
           FROM family_members
           WHERE show_on_leaderboard = 1 OR show_on_leaderboard IS NULL
           ORDER BY xp DESC
@@ -284,7 +282,7 @@ export default async function choreRoutes(app: any, opts: any) {
     }
   });
 
-  // 8. DEDUCT POINTS
+  // 8. DEDUCT POINTS (With dynamic log writing and Math.min clamp safeguard)
   app.post("/deduct-points", async (req: any, reply: any) => {
     try {
       ensureTablesExist();
@@ -321,6 +319,8 @@ export default async function choreRoutes(app: any, opts: any) {
       `).get(memberId) as any;
 
       const currentBalance = balanceRecord ? balanceRecord.balance : 0;
+
+      // Anti-Exploit Safeguard: Cap the deduction to their exact remaining balance so they hit 0 instead of a negative number
       const pointsToDeduct = Math.min(currentBalance, parsedPoints);
 
       if (pointsToDeduct <= 0) {
@@ -346,6 +346,65 @@ export default async function choreRoutes(app: any, opts: any) {
       return { success: true };
     } catch (error) {
       console.error("❌ DEDUCT POINTS ERROR:", error);
+      return reply.code(500).send({ error: (error as Error).message });
+    }
+  });
+
+  // 9. REJECT/DECLINE CHORE COMPLETION (Admin Only - Un-nested to the correct outer level)
+  // Final Path: POST /api/chores/completions/:id/reject
+  app.post("/completions/:id/reject", async (req: any, reply: any) => {
+    try {
+      ensureTablesExist();
+      if (!req.user || req.user.role !== 'admin') {
+        return reply.code(403).send({ error: "Only administrators can reject quest completions" });
+      }
+
+      const completionId = req.params.id;
+
+      // Fetch details before deleting to write a nice log entry
+      let memberId = null;
+      let memberName = "Hero";
+      let choreTitle = "Quest";
+
+      try {
+        const comp = db.prepare(`
+          SELECT cc.*, c.title as chore_title, m.name as member_name 
+          FROM chore_completions cc 
+          JOIN chores c ON cc.chore_id = c.id 
+          JOIN family_members m ON cc.member_id = m.id 
+          WHERE cc.id = ?
+        `).get(completionId) as any;
+
+        if (comp) {
+          memberId = comp.member_id;
+          memberName = comp.member_name;
+          choreTitle = comp.chore_title;
+        }
+      } catch (e) {
+        // Safe fallback
+      }
+
+      // Delete the pending completion first
+      db.prepare("DELETE FROM chore_completions WHERE id = ?").run(completionId);
+
+      // Log the decline action directly to the Adventure log
+      try {
+        db.prepare(`
+          INSERT INTO notifications (id, member_id, title, message, type, created_at)
+          VALUES (?, ?, ?, ?, 'chore', datetime('now'))
+        `).run(randomUUID(), memberId, "Quest Declined ❌", `"${memberName}"'s quest "${choreTitle}" was declined by parent.`, "chore");
+      } catch (e) {
+        console.error("❌ LOG DECLINE NOTIFICATION ERROR:", e);
+      }
+
+      broadcast("points");
+      broadcast("completions");
+      broadcast("members");
+      broadcast("notifications");
+      
+      return { success: true };
+    } catch (error) {
+      console.error("❌ REJECT CHORE COMPLETION ERROR:", error);
       return reply.code(500).send({ error: (error as Error).message });
     }
   });

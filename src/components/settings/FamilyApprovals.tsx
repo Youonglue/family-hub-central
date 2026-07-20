@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { listMembers } from "@/lib/hub-api";
-import { ShieldCheck, CheckCircle2, Gift, X, Check, Sword, Users, FolderSync } from "lucide-react";
+import { ShieldCheck, CheckCircle2, Gift, X, Check, Sword, Users } from "lucide-react";
 
 type ApprovalsTabMode = "chores" | "single_rewards" | "coop_rewards";
 
@@ -34,14 +34,34 @@ export function FamilyApprovals() {
     qc.invalidateQueries({ queryKey: ["pending-redemptions"] });
     qc.invalidateQueries({ queryKey: ["members"] });
     qc.invalidateQueries({ queryKey: ["points"] }); 
+    qc.invalidateQueries({ queryKey: ["notifications"] }); 
   };
 
-  // --- CHORE APPROVAL MUTATION ---
+  // --- CHORE APPROVAL & REJECTION MUTATIONS ---
   const approveChore = useMutation({
     mutationFn: (id: string) => fetch(`/api/chores/completions/${id}/approve`, { method: "POST" }).then(res => res.json()),
     onSuccess: () => { 
         toast.success("Quest Approved! XP & Points Granted. ⭐"); 
         inv();
+    }
+  });
+
+  const rejectChore = useMutation({
+    // Checked: Checks res.ok to trigger true onError states
+    mutationFn: async (id: string) => {
+      const res = await fetch(`/api/chores/completions/${id}/reject`, { method: "POST" });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Failed to decline quest");
+      }
+      return res.json();
+    },
+    onSuccess: () => { 
+        toast.success("Quest completion declined."); 
+        inv();
+    },
+    onError: (err: any) => {
+        toast.error(err.message || "Failed to decline quest");
     }
   });
 
@@ -72,7 +92,7 @@ export function FamilyApprovals() {
     onError: (err: any) => toast.error(err.message || "Failed to cancel purchase")
   });
 
-  // Group flat pending redemptions by dynamic group_id on load
+  // Group flat pending redemptions by group_id on load
   const redemptionGroups = useMemo(() => {
     const map = new Map<string, any>();
     for (const item of redemptionList) {
@@ -96,7 +116,7 @@ export function FamilyApprovals() {
     return Array.from(map.values());
   }, [redemptionList]);
 
-  // Separate single claims and joint co-op claims dynamically based on contributor counts
+  // Separate single claims and joint co-op claims dynamically
   const singleClaims = useMemo(() => {
     return redemptionGroups.filter(g => g.contributors.length === 1);
   }, [redemptionGroups]);
@@ -122,7 +142,7 @@ export function FamilyApprovals() {
         Centralized Admin cockpit to review, validate, and approve all pending household quests and reward purchases in one secure place.
       </p>
 
-      {/* Dynamic Sub-Tab Selector (Tablet-optimized 48px touch targets) */}
+      {/* Dynamic Sub-Tab Selector */}
       <div className="flex overflow-x-auto gap-2 bg-slate-50 p-1.5 rounded-2xl scrollbar-thin">
         
         {/* Tab 1: Chores */}
@@ -182,9 +202,24 @@ export function FamilyApprovals() {
                     </div>
                     <p className="text-xs font-black text-indigo-500 uppercase tracking-widest mt-1">Claimed by {p.member_name} (+{p.points_awarded} pts)</p>
                   </div>
-                  <button onClick={() => approveChore.mutate(p.id)} className="bg-green-500 hover:bg-green-600 text-white px-6 py-4 rounded-2xl font-black shadow-lg transition-all active:scale-95 flex items-center justify-center gap-2 text-xs cursor-pointer w-full md:w-auto shrink-0 min-h-[48px]">
-                    <Check size={16} /> APPROVE QUEST
-                  </button>
+                  
+                  {/* Symmetrical Approve & Decline Buttons */}
+                  <div className="flex items-center gap-2 shrink-0 w-full md:w-auto justify-center">
+                    <button 
+                      onClick={() => approveChore.mutate(p.id)} 
+                      disabled={approveChore.isPending}
+                      className="px-6 py-4 bg-green-500 hover:bg-green-600 text-white rounded-2xl text-xs font-black uppercase tracking-wider shadow-md hover:scale-[1.02] active:scale-95 transition-all cursor-pointer flex items-center justify-center gap-2 w-full md:w-auto min-h-[48px]"
+                    >
+                      <Check size={16} /> {approveChore.isPending ? "Approving..." : "Approve"}
+                    </button>
+                    <button 
+                      onClick={() => rejectChore.mutate(p.id)} 
+                      disabled={rejectChore.isPending}
+                      className="px-6 py-4 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 rounded-2xl text-xs font-black uppercase tracking-wider shadow-sm cursor-pointer flex items-center justify-center gap-2 w-full md:w-auto min-h-[48px]"
+                    >
+                      <X size={16} /> {rejectChore.isPending ? "Declining..." : "Decline"}
+                    </button>
+                  </div>
                 </div>
               ))
             )}
@@ -226,14 +261,14 @@ export function FamilyApprovals() {
                         disabled={approveRedemption.isPending}
                         className="px-6 py-4 bg-green-500 hover:bg-green-600 text-white rounded-2xl text-xs font-black uppercase tracking-wider shadow-md hover:scale-[1.02] active:scale-95 transition-all cursor-pointer flex items-center justify-center gap-2 w-full md:w-auto min-h-[48px]"
                       >
-                        <Check size={16} /> APPROVE
+                        <Check size={16} /> Approve
                       </button>
                       <button
                         onClick={() => rejectRedemption.mutate(g.group_id)}
                         disabled={rejectRedemption.isPending}
                         className="px-6 py-4 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 rounded-2xl text-xs font-black uppercase tracking-wider shadow-sm cursor-pointer flex items-center justify-center gap-2 w-full md:w-auto min-h-[48px]"
                       >
-                        <X size={16} /> REJECT
+                        <X size={16} /> Decline
                       </button>
                     </div>
                   </div>
@@ -279,14 +314,14 @@ export function FamilyApprovals() {
                       disabled={approveRedemption.isPending}
                       className="px-6 py-4 bg-green-500 hover:bg-green-600 text-white rounded-2xl text-xs font-black uppercase tracking-wider shadow-md hover:scale-[1.02] active:scale-95 transition-all cursor-pointer flex items-center justify-center gap-2 w-full md:w-auto min-h-[48px]"
                     >
-                      <Check size={16} /> APPROVE
+                      <Check size={16} /> Approve
                     </button>
                     <button
                       onClick={() => rejectRedemption.mutate(g.group_id)}
                       disabled={rejectRedemption.isPending}
                       className="px-6 py-4 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 rounded-2xl text-xs font-black uppercase tracking-wider shadow-sm cursor-pointer flex items-center justify-center gap-2 w-full md:w-auto min-h-[48px]"
                     >
-                      <X size={16} /> REJECT
+                      <X size={16} /> Decline
                     </button>
                   </div>
                 </div>
