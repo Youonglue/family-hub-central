@@ -32,17 +32,28 @@ function FamilyPage() {
   const isAdmin = me.data?.role?.toLowerCase() === "admin";
 
   const addHero = useMutation({
-    mutationFn: (data: any) => fetch('/api/members', { 
-        method: 'POST', 
-        headers: {'Content-Type':'application/json'}, 
-        body: JSON.stringify(data) 
-    }),
+    // Checked: Checks res.ok to trigger true error toast messages on failure (Solves the false success bug!)
+    mutationFn: async (data: any) => {
+      const res = await fetch('/api/members', { 
+          method: 'POST', 
+          headers: {'Content-Type':'application/json'}, 
+          body: JSON.stringify(data) 
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Recruitment failed");
+      }
+      return res.json();
+    },
     onSuccess: () => { 
-        toast.success("Hero Recruited!"); 
+        toast.success("Hero Recruited! ⭐"); 
         qc.invalidateQueries({ queryKey: ["members"] }); 
         qc.invalidateQueries({ queryKey: ["users"] });
         qc.invalidateQueries({ queryKey: ["points"] });
         setShowAdd(false); 
+    },
+    onError: (err: any) => {
+        toast.error(err.message || "Failed to recruit hero");
     }
   });
 
@@ -170,9 +181,9 @@ function FamilyPage() {
                               className="size-20 sm:size-24 rounded-[1.5rem] sm:rounded-[2rem] border-2 border-white shadow-md" 
                             />
                             <div>
-                              <p className="text-xl sm:text-2xl font-black uppercase italic text-slate-800 leading-none mb-1.5">{m.name}</p>
+                              <p className="text-xl sm:text-2xl font-black uppercase italic text-slate-800 leading-none mb-1.5 truncate">{m.name}</p>
                               <p className="text-[9px] sm:text-[10px] font-black text-slate-400 uppercase tracking-wider">
-                                Level {m.level || 1} Adventurer {mIsAdmin && '🛡y'}
+                                Level {m.level || 1} Adventurer {mIsAdmin && '🛡️'}
                               </p>
                             </div>
                         </button>
@@ -181,7 +192,7 @@ function FamilyPage() {
             </div>
         )}
 
-        {/* --- HERO PROFILE MODAL (Mobile-Optimized Padding & Borders) --- */}
+        {/* --- HERO PROFILE MODAL --- */}
         {edit && (() => {
           const associatedUser = userList.find(
             (u: any) => u.id === edit.user_id || u.username?.toLowerCase() === edit.name?.toLowerCase()
@@ -340,18 +351,18 @@ function FamilyPage() {
         {/* RECRUIT MODAL */}
         {showAdd && (
             <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4">
-                <form className="bg-white p-6 sm:p-10 rounded-[2.5rem] sm:rounded-[3rem] w-full max-w-md shadow-2xl" onSubmit={(e) => {
+                <form className="bg-white p-10 rounded-[3rem] w-full max-w-md shadow-2xl" onSubmit={(e) => {
                     e.preventDefault();
                     const fd = new FormData(e.currentTarget);
                     addHero.mutate({ name: fd.get('name'), is_kid: fd.get('type') === 'kid' });
                 }}>
-                    <h2 className="text-2xl sm:text-3xl font-black uppercase italic mb-6 text-slate-900">Recruit Hero</h2>
-                    <input name="name" placeholder="Hero Name" className="w-full p-4 sm:p-5 bg-slate-50 rounded-2xl mb-4 font-black outline-none border-4 border-transparent focus:border-indigo-500 text-lg" required />
-                    <select name="type" className="w-full p-4 sm:p-5 bg-slate-50 rounded-2xl mb-6 font-black uppercase text-sm">
+                    <h2 className="text-3xl font-black uppercase italic mb-6">Recruit Hero</h2>
+                    <input name="name" placeholder="Hero Name" className="w-full p-5 bg-slate-50 rounded-2xl mb-4 font-black outline-none border-4 border-transparent focus:border-indigo-500 text-lg" required />
+                    <select name="type" className="w-full p-5 bg-slate-50 rounded-2xl mb-6 font-black uppercase text-sm">
                         <option value="kid">Kid (Adventurer)</option>
                         <option value="parent">Adult (Master)</option>
                     </select>
-                    <button type="submit" className="w-full py-4 sm:py-5 bg-slate-900 text-white rounded-2xl font-black uppercase shadow-xl hover:bg-indigo-600 transition-colors cursor-pointer active:scale-95">Complete Recruitment</button>
+                    <button type="submit" className="w-full py-5 bg-slate-900 text-white rounded-2xl font-black uppercase shadow-xl hover:bg-indigo-600 transition-colors cursor-pointer active:scale-95">Complete Recruitment</button>
                     <button type="button" onClick={() => setShowAdd(false)} className="w-full mt-4 text-[10px] font-black text-slate-300 uppercase cursor-pointer">Cancel</button>
                 </form>
             </div>

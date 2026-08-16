@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
-import { LayoutDashboard, Trophy, ShoppingCart, ChefHat, Calendar, Users, Settings, LogOut, ShieldCheck, Lock, Loader2, Gift } from "lucide-react";
+import { LayoutDashboard, Trophy, ShoppingCart, ChefHat, Calendar, Users, Settings, LogOut, ShieldCheck, Lock, Loader2, Gift, UserCircle, RefreshCcw } from "lucide-react";
 import { useState, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLanLive } from "@/hooks/useLanLive";
@@ -31,6 +31,11 @@ export function AppShell({ children }: { children: ReactNode }) {
   const me = useQuery({ queryKey: ["me"], queryFn: () => getMe() });
   const members = useQuery({ queryKey: ["members"], queryFn: listMembers });
   
+  const usersQuery = useQuery({ 
+    queryKey: ["users"], 
+    queryFn: () => fetch('/api/auth/users').then(res => res.json()) 
+  });
+  
   // Fetch calendar events to display on the Lock Screen
   const events = useQuery({ 
     queryKey: ["events"], 
@@ -51,10 +56,14 @@ export function AppShell({ children }: { children: ReactNode }) {
     }
   });
 
+  // Multi-user Admin select states
+  const [showAdminPortal, setShowAdminPortal] = useState(false);
+  const [selectedAdmin, setSelectedAdmin] = useState<any>(null);
+
   const isAdmin = me.data?.role?.toLowerCase() === "admin";
   const idleTimerRef = useRef<any>(null);
 
-  // Global Inactivity Handler
+  // Global Inactivity Handler: 30s high-security logout for Admin, 1m auto-clock lock for Guest Kiosk
   const resetIdle = () => {
     setIsIdle(false);
     
@@ -62,12 +71,11 @@ export function AppShell({ children }: { children: ReactNode }) {
       clearTimeout(idleTimerRef.current);
     }
     
-    // Configured: 30 seconds for Admin accounts, 60 seconds (1 minute) for standard Kiosk
     const timeoutDuration = isAdmin ? 30000 : 60000;
 
     idleTimerRef.current = setTimeout(() => {
       if (isAdmin) {
-        // High-Security Action: Automatically sign out Admin sessions completely after 30s of silence
+        // High-Security Action: Completely log out and terminate Admin sessions on 30s silence
         signOut();
         toast.info("Admin session expired for security");
       } else {
@@ -107,7 +115,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     resetIdle();
   };
 
-  // Secure and seamless Sign Out Functionality (Supports Kiosk bypass for Admin login)
+  // Secure and seamless Sign Out Functionality
   async function signOut(isBypassKiosk = false) {
     await qc.cancelQueries();
     qc.clear();
@@ -170,6 +178,54 @@ export function AppShell({ children }: { children: ReactNode }) {
     navigate({ to: "/auth", replace: true });
   }
 
+  // Handle oversized keypad numerical pin entry
+  const handlePinKeyPress = (num: string) => {
+    if (pinInput.length < 6) {
+      setPinInput(prev => prev + num);
+    }
+  };
+
+  const handlePinBackspace = () => {
+    setPinInput(prev => prev.slice(0, -1));
+  };
+
+  // Submit dynamic Admin PIN validation request to backend
+  const handleVerifyAdminPin = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (pinInput.length !== 6 || !selectedAdmin) return;
+    
+    setIsSubmittingPin(true);
+    try {
+      const res = await fetch('/api/auth/verify-pin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: selectedAdmin.id, pin: pinInput })
+      });
+
+      if (res.ok) {
+        toast.success(`Admin Session Elevated: Welcome ${selectedAdmin.username}! 🛡️`, { position: "top-center" });
+        setShowAdminPortal(false);
+        setSelectedAdmin(null);
+        setPinInput("");
+        
+        // Match the admin account to their associated family member card to auto-log in as their hero!
+        const associatedHero = memberList.find(m => m.user_id === selectedAdmin.id || m.name.toLowerCase() === selectedAdmin.username.toLowerCase());
+        if (associatedHero) {
+          handleSelectHero(associatedHero);
+        }
+
+        window.location.reload();
+      } else {
+        toast.error("Invalid Admin PIN Code!");
+        setPinInput("");
+      }
+    } catch (err) {
+      toast.error("Network connection error");
+    } finally {
+      setIsSubmittingPin(false);
+    }
+  };
+
   // Resolve upcoming event for the clock lock-screen
   const upcomingEvent = useMemo(() => {
     const list = Array.isArray(events.data) ? events.data : [];
@@ -178,6 +234,12 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, [events.data, now]);
 
   const memberList = Array.isArray(members.data) ? members.data : [];
+  const userList = Array.isArray(usersQuery.data) ? usersQuery.data : [];
+
+  // Filter out system users to list ONLY Admin accounts
+  const adminUsers = useMemo(() => {
+    return userList.filter((u: any) => u.role?.toLowerCase() === 'admin');
+  }, [userList]);
 
   // Filter navigation items dynamically: Only display Settings if logged in as Admin
   const filteredNav = nav.filter(item => {
@@ -197,7 +259,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     );
   }
 
-  // --- 2. 6-DIGIT PIN GATEKEEPER ---
+  // --- 2. 6-DIGIT PIN INITIALIZATION GATEKEEPER ---
   if (me.data?.needs_pin_setup === 1) {
     return (
       <div className="fixed inset-0 z-[9999] bg-slate-900 flex items-center justify-center p-4 overflow-hidden">
@@ -256,7 +318,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             {isSubmittingPin ? "SECURING..." : "ACTIVATE ADMIN"}
           </button>
           
-          <button onClick={signOut} className="mt-6 text-[10px] font-black text-slate-300 uppercase tracking-widest hover:text-rose-500 transition-colors">
+          <button onClick={() => signOut(true)} className="mt-6 text-[10px] font-black text-slate-300 uppercase tracking-widest hover:text-rose-500 transition-colors">
             Cancel & Sign Out
           </button>
         </div>
@@ -290,9 +352,118 @@ export function AppShell({ children }: { children: ReactNode }) {
     );
   }
 
-  // --- 4. GLOBAL CHARACTER SELECT ("Which Hero Are You?" - Scrollable & Mobile Optimized) ---
-  if (!kioskMember) {
-    const memberList = Array.isArray(members.data) ? members.data : [];
+  // --- 4. NEW: DYNAMIC ADMIN QUICK-PIN GATEKEEPER PORTAL (Bypasses Passwords completely) ---
+  if (showAdminPortal) {
+    return (
+      <div className="fixed inset-0 z-[9999] bg-slate-900/90 backdrop-blur-md flex items-center justify-center p-4">
+        <div className="w-full max-w-md bg-white rounded-[3rem] sm:rounded-[4rem] border-[12px] border-slate-50 p-6 sm:p-8 shadow-2xl animate-in zoom-in-95 duration-200 relative">
+          
+          {/* Close Portal Button */}
+          <button 
+            onClick={() => { setShowAdminPortal(false); setSelectedAdmin(null); setPinInput(""); }} 
+            className="absolute top-6 right-6 p-2 bg-slate-100 hover:bg-rose-50 hover:text-rose-600 rounded-full transition-all cursor-pointer"
+          >
+            <X size={16} />
+          </button>
+
+          {/* Sub-Screen 1: Select Administrator */}
+          {!selectedAdmin ? (
+            <div className="space-y-6 text-center py-4">
+              <ShieldCheck className="size-16 text-indigo-500 animate-bounce mx-auto" />
+              <h3 className="text-3xl font-black uppercase italic tracking-tighter text-slate-900">Select Administrator</h3>
+              <p className="text-slate-400 font-bold text-[10px] uppercase tracking-widest mb-6">Choose account to elevate session</p>
+              
+              <div className="grid grid-cols-2 gap-4">
+                {adminUsers.map((u: any) => {
+                  const associatedHero = memberList.find(m => m.user_id === u.id || m.name.toLowerCase() === u.username.toLowerCase());
+                  return (
+                    <button
+                      key={u.id}
+                      onClick={() => setSelectedAdmin(u)}
+                      className="group p-5 bg-slate-50 hover:bg-indigo-50 border-2 border-slate-100 hover:border-indigo-200 rounded-3xl flex flex-col items-center gap-3 transition-all cursor-pointer focus:outline-none"
+                    >
+                      <div 
+                        className="size-16 rounded-2xl flex items-center justify-center text-white text-3xl font-black uppercase shadow-md group-hover:scale-105 transition-transform"
+                        style={{ backgroundColor: associatedHero?.avatar_color || '#334155' }}
+                      >
+                        {u.username[0]}
+                      </div>
+                      <span className="text-sm font-black text-slate-800 uppercase tracking-wider truncate max-w-full">{u.username}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            /* Sub-Screen 2: Tablet-Optimized Large PIN Keypad */
+            <div className="space-y-6 text-center">
+              <div className="flex items-center justify-center gap-2">
+                <button onClick={() => { setSelectedAdmin(null); setPinInput(""); }} className="p-2 bg-slate-100 hover:bg-slate-200 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-1 cursor-pointer">
+                  <RefreshCcw size={10} /> Back
+                </button>
+              </div>
+
+              <h3 className="text-2xl sm:text-3xl font-black uppercase italic tracking-tighter text-slate-900 leading-none">
+                Enter PIN for {selectedAdmin.username}
+              </h3>
+              <p className="text-slate-400 font-bold text-[9px] uppercase tracking-widest">Type your 6-digit access code</p>
+
+              {/* Pin dots indicator */}
+              <div className="flex justify-center gap-3 py-2">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div 
+                    key={i} 
+                    className={`size-4 rounded-full border-2 transition-all ${
+                      pinInput.length > i ? 'bg-indigo-600 border-indigo-500 scale-110 shadow-sm' : 'bg-slate-100 border-slate-200'
+                    }`}
+                  />
+                ))}
+              </div>
+
+              {/* Giant Touch-Friendly Keypad (Minimum 48px targets) */}
+              <div className="grid grid-cols-3 gap-3 max-w-[280px] mx-auto">
+                {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((num) => (
+                  <button
+                    key={num}
+                    type="button"
+                    onClick={() => handlePinKeyPress(num)}
+                    className="size-16 bg-slate-50 hover:bg-slate-100 text-slate-800 rounded-2xl font-black text-xl flex items-center justify-center cursor-pointer transition-all active:scale-90"
+                  >
+                    {num}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={handlePinBackspace}
+                  className="size-16 bg-slate-50 hover:bg-rose-50 text-rose-500 rounded-2xl font-black text-xs flex items-center justify-center cursor-pointer transition-all active:scale-90"
+                >
+                  DEL
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handlePinKeyPress("0")}
+                  className="size-16 bg-slate-50 hover:bg-slate-100 text-slate-800 rounded-2xl font-black text-xl flex items-center justify-center cursor-pointer transition-all active:scale-90"
+                >
+                  0
+                </button>
+                <button
+                  type="button"
+                  disabled={pinInput.length !== 6 || isSubmittingPin}
+                  onClick={() => handleVerifyAdminPin()}
+                  className="size-16 bg-green-500 hover:bg-green-600 text-white rounded-2xl font-black text-xs flex items-center justify-center cursor-pointer transition-all active:scale-90 disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  OK
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // --- 5. GLOBAL CHARACTER SELECT ("Which Hero Are You?") ---
+  if (!kioskMember && memberList.length > 0) {
     return (
       <div className="fixed inset-0 z-[9998] bg-slate-900 flex flex-col items-center justify-start p-6 overflow-y-auto scrollbar-thin py-16">
         <div className="absolute inset-0 opacity-10 pointer-events-none">
@@ -300,9 +471,9 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-rose-500 rounded-full blur-[120px]" />
         </div>
 
-        {/* Admin Login Button - Bypasses Kiosk silently on click */}
+        {/* Admin Login Button - Launches the new quick-PIN Portal on click */}
         <button 
-          onClick={() => signOut(true)}
+          onClick={() => setShowAdminPortal(true)}
           className="absolute top-4 right-4 bg-white/5 border-2 border-white/10 hover:bg-white/10 text-white px-5 py-3 rounded-2xl font-black text-xs uppercase tracking-wider flex items-center gap-2 cursor-pointer transition-all z-50 min-h-[44px]"
         >
           <ShieldCheck size={16} /> Admin Login
@@ -338,7 +509,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     );
   }
 
-  // --- 5. STANDARD APP LAYOUT (With Persistent Kiosk Sidebar Card) ---
+  // --- 6. STANDARD APP LAYOUT (With Persistent Kiosk Sidebar Card) ---
   return (
     <div className="min-h-screen bg-canvas">
       
@@ -372,30 +543,32 @@ export function AppShell({ children }: { children: ReactNode }) {
         </nav>
         
         {/* Dynamic Active Kiosk Hero Widget */}
-        <div className="p-4 mx-3 mb-2 bg-slate-50 border-2 border-slate-100 rounded-3xl flex items-center gap-3 shrink-0">
-          <div 
-            className="size-10 rounded-xl flex items-center justify-center text-white text-lg font-black uppercase shadow-inner shrink-0"
-            style={{ backgroundColor: kioskMember.avatar_color || '#ccc' }}
-          >
-            {kioskMember.name[0]}
-          </div>
-          <div className="min-w-0">
-            <p className="text-xs font-black uppercase text-slate-800 truncate">{kioskMember.name}</p>
-            <button 
-              onClick={() => {
-                setKioskMember(null);
-                localStorage.removeItem("kiosk_active_member");
-              }}
-              className="text-[9px] font-black text-indigo-500 uppercase tracking-widest hover:text-indigo-600 leading-none cursor-pointer block mt-0.5"
+        {kioskMember && (
+          <div className="p-4 mx-3 mb-2 bg-slate-50 border-2 border-slate-100 rounded-3xl flex items-center gap-3 shrink-0">
+            <div 
+              className="size-10 rounded-xl flex items-center justify-center text-white text-lg font-black uppercase shadow-inner shrink-0"
+              style={{ backgroundColor: kioskMember.avatar_color || '#ccc' }}
             >
-              Switch Hero
-            </button>
+              {kioskMember.name[0]}
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-black uppercase text-slate-800 truncate">{kioskMember.name}</p>
+              <button 
+                onClick={() => {
+                  setKioskMember(null);
+                  localStorage.removeItem("kiosk_active_member");
+                }}
+                className="text-[9px] font-black text-indigo-500 uppercase tracking-widest hover:text-indigo-600 leading-none cursor-pointer block mt-0.5"
+              >
+                Switch Hero
+              </button>
+            </div>
           </div>
-        </div>
+        )}
 
         <div className="p-3 shrink-0 mb-2">
           <button
-            onClick={signOut}
+            onClick={() => signOut(true)} // Explicitly bypasses kiosk on manual signout
             className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-black uppercase tracking-wider text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer"
           >
             <LogOut className="size-4 shrink-0" />
@@ -404,7 +577,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       </aside>
 
-      {/* Mobile Bottom Navigation Bar */}
+      {/* Mobile Bottom Navigation Bar (Filters Settings as well) */}
       <nav className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 flex items-center gap-1 rounded-2xl border border-border bg-panel/95 backdrop-blur px-3 py-2 shadow-xl md:hidden w-[90%] max-w-sm justify-between">
         {filteredNav.map((item) => {
           const active = pathname === item.to || (item.to !== "/dashboard" && pathname.startsWith(item.to));

@@ -1,7 +1,48 @@
 import { randomUUID } from "node:crypto";
 import { db } from "../db.js";
 
-// Automated Web-Scraper & Recipe Parser (Extracts Schema.org JSON-LD)
+// RECURSIVE INSTRUCTION EXTRACTOR: Unpacks any nested HTML/JSON-LD structure safely
+function extractInstructions(obj: any): string {
+  if (!obj) return "";
+  if (typeof obj === "string") return obj;
+  
+  if (Array.isArray(obj)) {
+    return obj.map(item => extractInstructions(item)).filter(Boolean).join("\n\n");
+  }
+  
+  if (typeof obj === "object") {
+    // If it's a direct step, extract the 'text' property
+    if (obj.text && typeof obj.text === "string") {
+      return obj.text;
+    }
+    // If it's a section, recurse over its 'itemListElement' steps array
+    if (obj.itemListElement && Array.isArray(obj.itemListElement)) {
+      return extractInstructions(obj.itemListElement);
+    }
+    // Deep fallback
+    if (obj.text) {
+      return extractInstructions(obj.text);
+    }
+  }
+  return "";
+}
+
+// RECURSIVE INGREDIENT EXTRACTOR: Unpacks ingredient formats safely
+function extractIngredients(obj: any): string {
+  if (!obj) return "";
+  if (typeof obj === "string") return obj;
+  
+  if (Array.isArray(obj)) {
+    return obj.map(item => extractIngredients(item)).filter(Boolean).join("\n");
+  }
+  
+  if (typeof obj === "object" && obj.name) {
+    return obj.name;
+  }
+  return "";
+}
+
+// Automated Web-Scraper & Recipe Parser (Extracts Schema.org JSON-LD recursively)
 async function parseRecipeFromUrl(url: string) {
   try {
     const response = await fetch(url, {
@@ -10,6 +51,7 @@ async function parseRecipeFromUrl(url: string) {
     if (!response.ok) throw new Error("Failed to fetch recipe page");
     const html = await response.text();
 
+    // Regex to extract JSON-LD script blocks
     const regex = /<script\s+type="application\/ld\+json">([\s\S]*?)<\/script>/gi;
     let match;
     let recipeData: any = null;
@@ -18,6 +60,7 @@ async function parseRecipeFromUrl(url: string) {
       try {
         const json = JSON.parse(match[1].trim());
         
+        // Recursive search for a Recipe schema type in graphs or lists
         const findRecipe = (obj: any): any => {
           if (!obj) return null;
           if (obj["@type"] === "Recipe" || (Array.isArray(obj["@type"]) && obj["@type"].includes("Recipe"))) return obj;
@@ -41,6 +84,7 @@ async function parseRecipeFromUrl(url: string) {
     }
 
     if (!recipeData) {
+      // Fallback: Extract Title from HTML if metadata is missing
       const titleMatch = html.match(/<title>([\s\S]*?)<\/title>/i);
       const name = titleMatch ? titleMatch[1].replace(/ - [^-]+$/g, "").trim() : "Imported Web Recipe";
       return {
@@ -51,28 +95,13 @@ async function parseRecipeFromUrl(url: string) {
       };
     }
 
-    const ingredientsArray = Array.isArray(recipeData.recipeIngredient) 
-      ? recipeData.recipeIngredient 
-      : [];
-    const ingredients = ingredientsArray.join("\n");
+    // Process ingredients using recursive helper
+    const ingredients = extractIngredients(recipeData.recipeIngredient);
 
-    let instructions = "";
-    if (Array.isArray(recipeData.recipeInstructions)) {
-      instructions = recipeData.recipeInstructions
-        .map((step: any) => {
-          if (typeof step === "string") return step;
-          if (step.text) return step.text;
-          if (step.itemListElement && Array.isArray(step.itemListElement)) {
-            return step.itemListElement.map((subStep: any) => subStep.text || "").join("\n");
-          }
-          return "";
-        })
-        .filter(Boolean)
-        .join("\n\n");
-    } else if (typeof recipeData.recipeInstructions === "string") {
-      instructions = recipeData.recipeInstructions;
-    }
+    // Process instructions using recursive helper
+    const instructions = extractInstructions(recipeData.recipeInstructions);
 
+    // Process image url
     let image_url = "";
     if (typeof recipeData.image === "string") {
       image_url = recipeData.image;
@@ -84,8 +113,8 @@ async function parseRecipeFromUrl(url: string) {
 
     return {
       name: recipeData.name || "Imported Web Recipe",
-      ingredients,
-      instructions,
+      ingredients: ingredients || "No ingredients found.",
+      instructions: instructions || "No instructions found.",
       image_url
     };
   } catch (error) {
@@ -261,7 +290,7 @@ export default async function mealRoutes(app: any, opts: any) {
     }
   });
 
-  // 10. IMPORT RECIPE AUTOMATICALLY FROM URL
+  // 10. IMPORT RECIPE AUTOMATICALLY FROM URL (With recursive parser!)
   app.post("/recipes/import-url", async (req: any, reply: any) => {
     try {
       if (req.user?.role !== 'admin') {
