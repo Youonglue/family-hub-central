@@ -1,10 +1,10 @@
+// server/routes/chores.ts
 import { randomUUID } from "node:crypto";
 import { db } from "../db.js";
 
 export default async function choreRoutes(app: any, opts: any) {
   const { broadcast } = opts;
 
-  // Self-heal utility to ensure all tables exist before querying
   const ensureTablesExist = () => {
     try {
       db.prepare(`
@@ -12,7 +12,10 @@ export default async function choreRoutes(app: any, opts: any) {
           id TEXT PRIMARY KEY,
           title TEXT,
           points INTEGER,
-          active INTEGER,
+          xp INTEGER,
+          active INTEGER DEFAULT 1,
+          is_boss INTEGER DEFAULT 0,
+          is_coop INTEGER DEFAULT 0,
           created_at TEXT
         )
       `).run();
@@ -25,6 +28,7 @@ export default async function choreRoutes(app: any, opts: any) {
           chore_id TEXT,
           member_id TEXT,
           points_awarded INTEGER,
+          xp_awarded INTEGER,
           status TEXT,
           completed_at TEXT,
           approved_at TEXT
@@ -44,20 +48,26 @@ export default async function choreRoutes(app: any, opts: any) {
       `).run();
     } catch (e) {}
 
-    // Self-Heal: Ensure 'show_on_leaderboard' column exists in family_members table
+    const injectChore = (col: string, type: string) => {
+      try {
+        db.prepare(`ALTER TABLE chores ADD COLUMN ${col} ${type}`).run();
+      } catch (e) {}
+    };
+
+    injectChore("xp", "INTEGER");
+    injectChore("is_boss", "INTEGER DEFAULT 0");
+    injectChore("is_coop", "INTEGER DEFAULT 0");
+
+    const injectComp = (col: string, type: string) => {
+      try {
+        db.prepare(`ALTER TABLE chore_completions ADD COLUMN ${col} ${type}`).run();
+      } catch (e) {}
+    };
+    injectComp("xp_awarded", "INTEGER");
+
     try {
       db.prepare("ALTER TABLE family_members ADD COLUMN show_on_leaderboard INTEGER DEFAULT 1").run();
     } catch (e) {}
-
-    // Self-Heal: Ensure 'is_boss' and 'is_coop' exist in chores table
-    try {
-      db.prepare("ALTER TABLE chores ADD COLUMN is_boss INTEGER DEFAULT 0").run();
-    } catch (e) {}
-    try {
-      db.prepare("ALTER TABLE chores ADD COLUMN is_coop INTEGER DEFAULT 0").run();
-    } catch (e) {}
-
-    // Self-Heal: Ensure streak columns exist on family_members table
     try {
       db.prepare("ALTER TABLE family_members ADD COLUMN streak_count INTEGER DEFAULT 0").run();
     } catch (e) {}
@@ -65,7 +75,6 @@ export default async function choreRoutes(app: any, opts: any) {
       db.prepare("ALTER TABLE family_members ADD COLUMN last_completion_date TEXT").run();
     } catch (e) {}
 
-    // Self-Heal: Ensure notifications table exists
     try {
       db.prepare(`
         CREATE TABLE IF NOT EXISTS notifications (
@@ -80,7 +89,6 @@ export default async function choreRoutes(app: any, opts: any) {
     } catch (e) {}
   };
 
-  // Helper to write live notifications directly to the Adventure database log
   const logNotification = (memberId: string | null, title: string, message: string, type: string) => {
     try {
       db.prepare(`
@@ -106,14 +114,18 @@ export default async function choreRoutes(app: any, opts: any) {
   // 2. ADD NEW CHORE
   app.post("/", async (req: any) => {
     ensureTablesExist();
-    const { title, points, is_boss, is_coop } = req.body;
+    const { title, points, xp, is_boss, is_coop } = req.body;
+    const finalPoints = parseInt(points) || 10;
+    const finalXp = xp !== undefined && xp !== "" ? (parseInt(xp) || 0) : finalPoints;
+
     db.prepare(`
-      INSERT INTO chores (id, title, points, active, is_boss, is_coop, created_at) 
-      VALUES (?, ?, ?, 1, ?, ?, datetime('now'))
+      INSERT INTO chores (id, title, points, xp, active, is_boss, is_coop, created_at) 
+      VALUES (?, ?, ?, ?, 1, ?, ?, datetime('now'))
     `).run(
       randomUUID(), 
-      title, 
-      points, 
+      title.trim(), 
+      finalPoints, 
+      finalXp, 
       is_boss ? 1 : 0, 
       is_coop ? 1 : 0
     );
@@ -130,14 +142,17 @@ export default async function choreRoutes(app: any, opts: any) {
     return { success: true };
   });
 
-  // 4. COMPLETE CHORE (Kid side)
+  // 4. COMPLETE CHORE
   app.post("/:id/complete", async (req: any) => {
     ensureTablesExist();
-    const chore = db.prepare("SELECT points FROM chores WHERE id = ?").get(req.params.id) as any;
+    const chore = db.prepare("SELECT points, xp, is_boss, is_coop FROM chores WHERE id = ?").get(req.params.id) as any;
+    const basePoints = chore.points || 0;
+    const baseXp = chore.xp !== null && chore.xp !== undefined ? chore.xp : basePoints;
+
     db.prepare(`
-      INSERT INTO chore_completions (id, chore_id, member_id, points_awarded, status, completed_at) 
-      VALUES (?, ?, ?, ?, 'pending', datetime('now'))
-    `).run(randomUUID(), req.params.id, req.body.member_id, chore.points);
+      INSERT INTO chore_completions (id, chore_id, member_id, points_awarded, xp_awarded, status, completed_at) 
+      VALUES (?, ?, ?, ?, ?, 'pending', datetime('now'))
+    `).run(randomUUID(), req.params.id, req.body.member_id, basePoints, baseXp);
     
     broadcast("completions"); 
     return { success: true };
@@ -147,7 +162,7 @@ export default async function choreRoutes(app: any, opts: any) {
   app.get("/completions/pending", async () => {
     ensureTablesExist();
     return db.prepare(`
-      SELECT cc.*, c.title as chore_title, c.is_boss, c.is_coop, m.name as member_name 
+      SELECT cc.*, c.title as chore_title, c.is_boss, c.is_coop, c.points as base_points, c.xp as base_xp, m.name as member_name 
       FROM chore_completions cc 
       JOIN chores c ON cc.chore_id = c.id 
       JOIN family_members m ON cc.member_id = m.id 
@@ -155,13 +170,13 @@ export default async function choreRoutes(app: any, opts: any) {
     `).all();
   });
 
-  // 6. APPROVE CHORE (Award XP, process Boss multipliers, Co-op Synergy, and Streak bonuses)
+  // 6. APPROVE CHORE (Boss: x3 Points & 1x XP; Co-Op: x2 Points & x2 XP)
   app.post("/completions/:id/approve", async (req: any, reply: any) => {
     ensureTablesExist();
     const completionId = req.params.id;
     
     const comp = db.prepare(`
-      SELECT cc.*, c.title as chore_title, c.is_boss, c.is_coop 
+      SELECT cc.*, c.title as chore_title, c.is_boss, c.is_coop, c.points as base_points, c.xp as base_xp 
       FROM chore_completions cc
       JOIN chores c ON cc.chore_id = c.id
       WHERE cc.id = ?
@@ -172,21 +187,27 @@ export default async function choreRoutes(app: any, opts: any) {
     const today = new Date().toLocaleDateString('en-CA');
     const yesterday = new Date(Date.now() - 86400000).toLocaleDateString('en-CA');
 
-    let pointsAwarded = comp.points_awarded;
-    let xpAwarded = comp.points_awarded;
+    let basePoints = comp.base_points !== undefined ? comp.base_points : comp.points_awarded;
+    let baseXp = comp.base_xp !== null && comp.base_xp !== undefined ? comp.base_xp : basePoints;
 
+    let pointsAwarded = basePoints;
+    let xpAwarded = baseXp;
+
+    // Boss Battle: x3 Reward Points (XP remains 1x standard base XP)
     if (comp.is_boss === 1) {
-      pointsAwarded *= 2;
-      xpAwarded *= 2;
+      pointsAwarded = basePoints * 3;
+      xpAwarded = baseXp;
     }
 
+    // Co-Op Quest: x2 Reward Points and x2 Double XP
     if (comp.is_coop === 1) {
-      xpAwarded += 15;
+      pointsAwarded = basePoints * 2;
+      xpAwarded = baseXp * 2;
     }
 
     db.transaction(() => {
-      db.prepare("UPDATE chore_completions SET status = 'approved', points_awarded = ?, approved_at = datetime('now') WHERE id = ?")
-        .run(pointsAwarded, completionId);
+      db.prepare("UPDATE chore_completions SET status = 'approved', points_awarded = ?, xp_awarded = ?, approved_at = datetime('now') WHERE id = ?")
+        .run(pointsAwarded, xpAwarded, completionId);
       
       const member = db.prepare("SELECT name, streak_count, last_completion_date FROM family_members WHERE id = ?").get(comp.member_id) as any;
       
@@ -207,7 +228,6 @@ export default async function choreRoutes(app: any, opts: any) {
 
         const totalXp = xpAwarded + streakBonusXp;
 
-        // Update Member
         db.prepare(`
           UPDATE family_members 
           SET xp = xp + ?, 
@@ -217,15 +237,13 @@ export default async function choreRoutes(app: any, opts: any) {
           WHERE id = ?
         `).run(totalXp, totalXp, newStreak, today, comp.member_id);
 
-        // A. Log Chore Completion Quest Milestone
         logNotification(
           comp.member_id, 
           "Quest Approved! ⚔️", 
-          `"${member.name}" completed "${comp.chore_title}" and earned ${pointsAwarded} pts!`, 
+          `"${member.name}" completed "${comp.chore_title}" (+${pointsAwarded} pts, +${totalXp} XP)!`, 
           "chore"
         );
 
-        // B. Log Streak Milestones
         if (streakBonusXp > 0) {
           logNotification(
             comp.member_id,
@@ -241,17 +259,17 @@ export default async function choreRoutes(app: any, opts: any) {
     broadcast("completions"); 
     broadcast("members"); 
     broadcast("notifications");
-    return { success: true };
+    return { success: true, pointsAwarded, xpAwarded };
   });
 
-  // 7. POINTS LEADERBOARD (Safely Clamped to Prevent Negative Balances)
+  // 7. POINTS LEADERBOARD
   app.get("/points", async (req: any, reply: any) => {
     try {
       ensureTablesExist();
-      // SQL Case Clamp prevents calculations from returning values below 0
       return db.prepare(`
           SELECT 
             m.id as member_id, m.name, m.avatar_color, m.avatar_icon, m.xp, m.level, m.is_kid, m.is_parent, m.streak_count, m.last_completion_date,
+            m.show_on_dashboard, m.show_on_chores, m.show_on_rewards, m.show_on_kiosk,
             CASE 
               WHEN (
                 COALESCE((SELECT SUM(points_awarded) FROM chore_completions WHERE member_id = m.id AND status = 'approved'), 0) - 
@@ -268,21 +286,11 @@ export default async function choreRoutes(app: any, opts: any) {
       `).all();
     } catch (error) {
       console.error("❌ CHORES LEADERBOARD ERROR:", error);
-      
-      try {
-        return db.prepare(`
-          SELECT id as member_id, name, avatar_color, avatar_icon, xp, level, is_kid, is_parent, 0 as balance, 0 as streak_count
-          FROM family_members
-          WHERE show_on_leaderboard = 1 OR show_on_leaderboard IS NULL
-          ORDER BY xp DESC
-        `).all();
-      } catch (err) {
-        return [];
-      }
+      return [];
     }
   });
 
-  // 8. DEDUCT POINTS (With dynamic log writing and Math.min clamp safeguard)
+  // 8. DEDUCT POINTS
   app.post("/deduct-points", async (req: any, reply: any) => {
     try {
       ensureTablesExist();
@@ -302,7 +310,6 @@ export default async function choreRoutes(app: any, opts: any) {
         return reply.code(404).send({ error: "Family member not found" });
       }
 
-      // Fetch member's current approved points balance
       const balanceRecord = db.prepare(`
         SELECT 
           CASE 
@@ -319,8 +326,6 @@ export default async function choreRoutes(app: any, opts: any) {
       `).get(memberId) as any;
 
       const currentBalance = balanceRecord ? balanceRecord.balance : 0;
-
-      // Anti-Exploit Safeguard: Cap the deduction to their exact remaining balance so they hit 0 instead of a negative number
       const pointsToDeduct = Math.min(currentBalance, parsedPoints);
 
       if (pointsToDeduct <= 0) {
@@ -332,7 +337,6 @@ export default async function choreRoutes(app: any, opts: any) {
         VALUES (?, 'admin_deduction', ?, ?, 'approved', datetime('now'))
       `).run(randomUUID(), memberId, pointsToDeduct);
 
-      // Log points correction to the Adventure Log
       logNotification(
         memberId, 
         "Points Adjusted! ⚖️", 
@@ -350,8 +354,7 @@ export default async function choreRoutes(app: any, opts: any) {
     }
   });
 
-  // 9. REJECT/DECLINE CHORE COMPLETION (Admin Only - Un-nested to the correct outer level)
-  // Final Path: POST /api/chores/completions/:id/reject
+  // 9. REJECT/DECLINE CHORE COMPLETION
   app.post("/completions/:id/reject", async (req: any, reply: any) => {
     try {
       ensureTablesExist();
@@ -360,8 +363,6 @@ export default async function choreRoutes(app: any, opts: any) {
       }
 
       const completionId = req.params.id;
-
-      // Fetch details before deleting to write a nice log entry
       let memberId = null;
       let memberName = "Hero";
       let choreTitle = "Quest";
@@ -380,22 +381,16 @@ export default async function choreRoutes(app: any, opts: any) {
           memberName = comp.member_name;
           choreTitle = comp.chore_title;
         }
-      } catch (e) {
-        // Safe fallback
-      }
+      } catch (e) {}
 
-      // Delete the pending completion first
       db.prepare("DELETE FROM chore_completions WHERE id = ?").run(completionId);
 
-      // Log the decline action directly to the Adventure log
       try {
         db.prepare(`
           INSERT INTO notifications (id, member_id, title, message, type, created_at)
           VALUES (?, ?, ?, ?, 'chore', datetime('now'))
         `).run(randomUUID(), memberId, "Quest Declined ❌", `"${memberName}"'s quest "${choreTitle}" was declined by parent.`, "chore");
-      } catch (e) {
-        console.error("❌ LOG DECLINE NOTIFICATION ERROR:", e);
-      }
+      } catch (e) {}
 
       broadcast("points");
       broadcast("completions");

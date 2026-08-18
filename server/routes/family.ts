@@ -160,7 +160,7 @@ export default async function familyRoutes(app: any, opts: any) {
   });
 
   // 6. DELETE HERO
-  app.delete("/:id", async (req: any, reply: any) => {
+  app.delete("/:id", async (req: any) => {
     ensureTablesExist();
     if (!req.user || req.user.role !== 'admin') {
       return reply.code(403).send({ error: "Only administrators can delete heroes" });

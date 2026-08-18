@@ -1,13 +1,12 @@
+// src/routes/_authenticated/family.tsx
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { listMembers, updateMember } from "@/lib/hub-api";
-import { UserPlus, X, Check, Shield, Sparkles } from "lucide-react";
+import { UserPlus, X, Check, Shield, Sparkles, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { getMe } from "@/lib/auth-client";
-
-// Offline Avatar Renderer & Customizer Imports
 import { Avatar, parseAvatarConfig } from "@/components/avatar/Avatar";
 import { AvatarCustomizer } from "@/components/avatar/AvatarCustomizer";
 
@@ -18,7 +17,6 @@ function FamilyPage() {
   const me = useQuery({ queryKey: ["me"], queryFn: () => getMe() });
   const members = useQuery({ queryKey: ["members"], queryFn: () => listMembers() });
   
-  // New query: Fetch the list of system users from `/api/auth/users` to get true admin status
   const usersQuery = useQuery({ 
     queryKey: ["users"], 
     queryFn: () => fetch('/api/auth/users').then(res => res.json()) 
@@ -28,11 +26,9 @@ function FamilyPage() {
   const [edit, setEdit] = useState<any>(null);
   const [showCustomizer, setShowCustomizer] = useState(false);
 
-  // Admin Detection for UI Unlocking
   const isAdmin = me.data?.role?.toLowerCase() === "admin";
 
   const addHero = useMutation({
-    // Checked: Checks res.ok to trigger true error toast messages on failure (Solves the false success bug!)
     mutationFn: async (data: any) => {
       const res = await fetch('/api/members', { 
           method: 'POST', 
@@ -57,7 +53,6 @@ function FamilyPage() {
     }
   });
 
-  // Update Profile Mutation
   const saveHero = useMutation({
     mutationFn: (data: any) => updateMember({ data }),
     onSuccess: () => {
@@ -68,7 +63,6 @@ function FamilyPage() {
     }
   });
 
-  // Offline Customizer Save Mutation (Saves instantly to SQLite)
   const saveAvatar = useMutation({
     mutationFn: (config: any) => fetch(`/api/members/${edit.id}/avatar`, {
       method: "POST",
@@ -76,7 +70,7 @@ function FamilyPage() {
       body: JSON.stringify({ avatar_config: JSON.stringify(config) })
     }).then(res => res.json()),
     onSuccess: () => {
-      toast.success("Appearance Locked Offline!");
+      toast.success("Appearance Locked Offline! ✨");
       qc.invalidateQueries({ queryKey: ["members"] });
       qc.invalidateQueries({ queryKey: ["points"] });
     },
@@ -85,7 +79,6 @@ function FamilyPage() {
     }
   });
 
-  // Demote Mutation with Fail-safe handling
   const demoteHero = useMutation({
     mutationFn: async (userId: string) => {
       const res = await fetch('/api/auth/demote', {
@@ -110,7 +103,6 @@ function FamilyPage() {
     }
   });
 
-  // Promote Mutation
   const promoteHero = useMutation({
     mutationFn: async (userId: string) => {
       const res = await fetch('/api/auth/promote', {
@@ -141,55 +133,82 @@ function FamilyPage() {
     (u: any) => u.role?.toLowerCase() === "admin"
   ).length;
 
+  if (me.isLoading || members.isLoading) {
+    return (
+      <AppShell>
+        <div className="flex flex-col items-center justify-center min-h-[75vh] p-6 text-center">
+          <Loader2 className="size-10 text-indigo-500 animate-spin mb-4" />
+          <p className="font-black text-slate-400 uppercase tracking-widest text-[10px]">
+            Synchronizing Heroes...
+          </p>
+        </div>
+      </AppShell>
+    );
+  }
+
   return (
     <AppShell>
-      <div className="px-4 py-6 md:p-8 max-w-5xl mx-auto space-y-6 sm:space-y-8 animate-in fade-in duration-300">
-        <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div className="px-3 py-4 sm:px-6 sm:py-6 md:p-8 max-w-5xl mx-auto space-y-6 sm:space-y-8 animate-in fade-in duration-300">
+        
+        <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-2 border-b border-slate-100">
           <div>
-            <p className="font-mono text-[10px] sm:text-xs uppercase tracking-[0.2em] text-indigo-500 font-black">Fortress Roster</p>
-            <h1 className="text-3xl sm:text-4xl font-black uppercase italic tracking-tighter text-slate-900">Family Heroes</h1>
+            <p className="font-mono text-[10px] sm:text-xs uppercase tracking-[0.2em] text-indigo-500 font-black">
+              Fortress Roster
+            </p>
+            <h1 className="font-display text-3xl sm:text-4xl font-black uppercase italic tracking-tighter text-slate-900">
+              Family Heroes
+            </h1>
           </div>
-          <button onClick={() => setShowAdd(true)} className="bg-slate-900 text-white px-5 py-3.5 rounded-2xl font-black text-xs uppercase flex items-center justify-center gap-2 shadow-xl hover:bg-indigo-600 transition-all self-start sm:self-auto active:scale-95 cursor-pointer">
+          
+          <button 
+            onClick={() => setShowAdd(true)} 
+            className="bg-slate-900 text-white px-5 py-3 rounded-2xl font-black text-xs uppercase flex items-center justify-center gap-2 shadow-md hover:bg-indigo-600 transition-all self-start sm:self-auto active:scale-95 cursor-pointer min-h-[44px]"
+          >
             <UserPlus size={16} /> Recruit Hero
           </button>
         </header>
 
         {memberList.length === 0 ? (
-            <div className="bg-white border-4 sm:border-8 border-dashed border-slate-100 rounded-[2.5rem] sm:rounded-[4rem] p-10 sm:p-20 text-center">
-                <h2 className="text-xl sm:text-2xl font-black uppercase italic mb-4">No Heroes Found</h2>
-                <button onClick={() => setShowAdd(true)} className="bg-indigo-600 text-white px-10 py-5 rounded-3xl font-black uppercase shadow-lg hover:scale-105 transition-all active:scale-95 cursor-pointer">
-                    Create First Hero
-                </button>
-            </div>
+          <div className="bg-white border-4 sm:border-8 border-dashed border-slate-100 rounded-3xl sm:rounded-[3rem] p-8 sm:p-16 text-center">
+            <h2 className="text-xl sm:text-2xl font-black uppercase italic mb-3">No Heroes Found</h2>
+            <button 
+              onClick={() => setShowAdd(true)} 
+              className="bg-indigo-600 text-white px-8 py-4 rounded-2xl font-black uppercase shadow-lg hover:scale-105 transition-all active:scale-95 cursor-pointer min-h-[44px]"
+            >
+              Create First Hero
+            </button>
+          </div>
         ) : (
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6">
-                {memberList.map((m: any) => {
-                    const associatedUser = userList.find(
-                      (u: any) => u.id === m.user_id || u.username?.toLowerCase() === m.name?.toLowerCase()
-                    );
-                    const mIsAdmin = associatedUser?.role?.toLowerCase() === "admin";
-                    const avatarConfig = parseAvatarConfig(m.avatar_config);
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 sm:gap-6">
+            {memberList.map((m: any) => {
+              const associatedUser = userList.find(
+                (u: any) => u.id === m.user_id || u.username?.toLowerCase() === m.name?.toLowerCase()
+              );
+              const mIsAdmin = associatedUser?.role?.toLowerCase() === "admin";
+              const avatarConfig = parseAvatarConfig(m.avatar_config);
 
-                    return (
-                        <button 
-                          key={m.id} 
-                          onClick={() => setEdit(m)} 
-                          className="bg-white p-5 sm:p-8 rounded-[2rem] sm:rounded-[3rem] border-4 border-slate-50 shadow-xl flex flex-col items-center gap-3 sm:gap-4 cursor-pointer hover:scale-105 transition-all text-center focus:outline-none active:scale-95 animate-in zoom-in-95 duration-200"
-                        >
-                            <Avatar 
-                              config={avatarConfig} 
-                              className="size-20 sm:size-24 rounded-[1.5rem] sm:rounded-[2rem] border-2 border-white shadow-md" 
-                            />
-                            <div>
-                              <p className="text-xl sm:text-2xl font-black uppercase italic text-slate-800 leading-none mb-1.5 truncate">{m.name}</p>
-                              <p className="text-[9px] sm:text-[10px] font-black text-slate-400 uppercase tracking-wider">
-                                Level {m.level || 1} Adventurer {mIsAdmin && '🛡️'}
-                              </p>
-                            </div>
-                        </button>
-                    );
-                })}
-            </div>
+              return (
+                <button 
+                  key={m.id} 
+                  onClick={() => setEdit(m)} 
+                  className="bg-white p-4 sm:p-7 rounded-3xl sm:rounded-[2.5rem] border-2 sm:border-4 border-slate-50 shadow-md hover:shadow-xl flex flex-col items-center gap-2.5 sm:gap-4 cursor-pointer hover:scale-105 transition-all text-center focus:outline-none active:scale-95"
+                >
+                  <Avatar 
+                    config={avatarConfig} 
+                    className="size-24 sm:size-28 md:size-32 rounded-2xl sm:rounded-[2rem] border-2 border-white shadow-md" 
+                  />
+                  <div>
+                    <p className="text-lg sm:text-2xl font-black uppercase italic text-slate-800 leading-tight mb-1 truncate max-w-full">
+                      {m.name}
+                    </p>
+                    <p className="text-[9px] sm:text-[10px] font-black text-slate-400 uppercase tracking-wider">
+                      Level {m.level || 1} Adventurer {mIsAdmin && '🛡️'}
+                    </p>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
         )}
 
         {/* --- HERO PROFILE MODAL --- */}
@@ -202,11 +221,12 @@ function FamilyPage() {
           const editAvatarConfig = parseAvatarConfig(edit.avatar_config);
 
           return (
-            <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto" onClick={() => setEdit(null)}>
-              
-              {/* Conditional Nested Customizer view overlay */}
+            <div 
+              className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 overflow-y-auto" 
+              onClick={() => setEdit(null)}
+            >
               {showCustomizer ? (
-                <div className="w-full max-w-2xl animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+                <div className="w-full max-w-3xl animate-in zoom-in-95 duration-200 my-auto" onClick={e => e.stopPropagation()}>
                   <AvatarCustomizer
                     initialConfig={editAvatarConfig}
                     onClose={() => setShowCustomizer(false)}
@@ -218,52 +238,58 @@ function FamilyPage() {
                   />
                 </div>
               ) : (
-                <div className="bg-white w-full max-w-xl rounded-[2.5rem] sm:rounded-[4rem] border-4 sm:border-[12px] border-slate-50 p-5 sm:p-10 shadow-2xl animate-in zoom-in-95 max-h-[92vh] overflow-y-auto scrollbar-none" onClick={e => e.stopPropagation()}>
-                  
-                  <div className="flex justify-between items-center mb-6">
-                    <h2 className="text-2xl sm:text-3xl font-black uppercase italic tracking-tight text-slate-900">Hero Profile</h2>
-                    <button onClick={() => setEdit(null)} className="p-2 sm:p-3 bg-slate-100 rounded-full hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer"><X size={18} /></button>
+                <div 
+                  className="bg-white w-full max-w-xl rounded-3xl sm:rounded-[3.5rem] border-4 sm:border-8 border-slate-50 p-5 sm:p-8 shadow-2xl animate-in zoom-in-95 max-h-[92vh] overflow-y-auto my-auto scrollbar-none" 
+                  onClick={e => e.stopPropagation()}
+                >
+                  <div className="flex justify-between items-center mb-4 sm:mb-6">
+                    <h2 className="text-xl sm:text-2xl font-black uppercase italic tracking-tight text-slate-900">Hero Profile</h2>
+                    <button 
+                      onClick={() => setEdit(null)} 
+                      className="p-2 bg-slate-100 rounded-full hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer min-h-[40px] min-w-[40px] flex items-center justify-center"
+                    >
+                      <X size={18} />
+                    </button>
                   </div>
 
-                  <div className="space-y-6 sm:space-y-8">
-                    
-                    {/* customizable Vector Avatar Display & Launch Action */}
-                    <div className="flex flex-col items-center justify-center bg-slate-50 p-5 rounded-[2rem] border-2 border-slate-100 relative group">
+                  <div className="space-y-5 sm:space-y-6">
+                    {/* Customizable Avatar Preview */}
+                    <div className="flex flex-col items-center justify-center bg-slate-50 p-4 sm:p-6 rounded-2xl sm:rounded-3xl border border-slate-100">
                       <Avatar 
                         config={editAvatarConfig} 
-                        className="size-28 sm:size-32 rounded-[1.5rem] sm:rounded-[2rem] shadow-xl border-4 border-white" 
+                        className="size-28 sm:size-36 rounded-2xl sm:rounded-[2rem] shadow-xl border-4 border-white" 
                       />
                       <button 
                         type="button"
                         onClick={() => setShowCustomizer(true)}
-                        className="mt-4 px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5 shadow-md transition-all active:scale-95 cursor-pointer"
+                        className="mt-3.5 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5 shadow-md transition-all active:scale-95 cursor-pointer min-h-[44px]"
                       >
-                        <Sparkles size={12} /> Customize Appearance
+                        <Sparkles size={14} /> Customize Appearance & Backdrops
                       </button>
                     </div>
 
                     {/* NAME FIELD */}
                     <div>
-                      <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-4">
-                        Hero Name {isAdmin ? "(Admin Editing Enabled)" : "(Locked)"}
+                      <label className="text-[9px] font-black uppercase text-slate-400 tracking-widest ml-3 block mb-1">
+                        Hero Name {isAdmin ? "(Admin Editing)" : "(Locked)"}
                       </label>
                       <input 
                         value={edit.name} 
                         disabled={!isAdmin} 
                         onChange={(e) => setEdit({...edit, name: e.target.value})}
-                        className={`w-full p-4 mt-1 rounded-xl sm:rounded-2xl font-black text-lg border-4 transition-all ${
+                        className={`w-full p-3.5 rounded-xl sm:rounded-2xl font-black text-base sm:text-lg border-2 transition-all min-h-[48px] ${
                           isAdmin 
                             ? 'bg-white border-indigo-500 text-slate-900 shadow-inner' 
                             : 'bg-slate-100 border-transparent text-slate-400 cursor-not-allowed'
                         }`} 
                       />
-                      {!isAdmin && <p className="text-[9px] font-bold text-slate-300 uppercase mt-2 ml-4">Ask a Parent to change your name</p>}
+                      {!isAdmin && <p className="text-[8px] font-bold text-slate-400 uppercase mt-1 ml-3">Ask a Parent to change your name</p>}
                     </div>
 
-                    {/* --- LINK LOGIN ACCOUNT SETTING (Always visible, editable for Admins) --- */}
-                    <div className="border-t border-slate-100 pt-5">
-                      <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-4 block mb-2">
-                        Linked Login Account {!isAdmin && "(Admin Privilege Required)"}
+                    {/* LINKED ACCOUNT */}
+                    <div className="border-t border-slate-100 pt-4">
+                      <label className="text-[9px] font-black uppercase text-slate-400 tracking-widest ml-3 block mb-1">
+                        Linked Login Account {!isAdmin && "(Admin Only)"}
                       </label>
                       <select
                         value={edit.user_id || ""}
@@ -278,7 +304,7 @@ function FamilyPage() {
                               body: JSON.stringify({ memberId: edit.id, userId: val })
                             });
                             if (res.ok) {
-                              toast.success("Account link synchronized!");
+                              toast.success("Account link updated!");
                               qc.invalidateQueries({ queryKey: ["members"] });
                               qc.invalidateQueries({ queryKey: ["users"] });
                             } else {
@@ -288,7 +314,7 @@ function FamilyPage() {
                             toast.error("Network error linking account");
                           }
                         }}
-                        className="w-full p-4 bg-slate-50 border-4 border-slate-100 rounded-2xl font-black text-sm uppercase outline-none focus:border-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="w-full p-3.5 bg-slate-50 border-2 border-slate-100 rounded-xl sm:rounded-2xl font-black text-xs uppercase outline-none focus:border-indigo-500 disabled:opacity-50 min-h-[48px]"
                       >
                         <option value="">-- No Account Linked --</option>
                         {userList.map((u: any) => (
@@ -299,10 +325,10 @@ function FamilyPage() {
                       </select>
                     </div>
 
-                    {/* --- PROMOTIONAL / DEMOTIONAL PANEL (True database integration) --- */}
+                    {/* ADMIN PRIVILEGE TOGGLES */}
                     {isAdmin && associatedUser && !isSelf && (
-                      <div className="border-t border-slate-100 pt-5">
-                        <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-4 block mb-2">
+                      <div className="border-t border-slate-100 pt-4">
+                        <label className="text-[9px] font-black uppercase text-slate-400 tracking-widest ml-3 block mb-1.5">
                           Admin Security Controls
                         </label>
                         {isTargetAdmin ? (
@@ -311,35 +337,33 @@ function FamilyPage() {
                               type="button"
                               onClick={() => demoteHero.mutate(edit.id)}
                               disabled={demoteHero.isPending}
-                              className="w-full py-3.5 bg-rose-50 text-rose-600 rounded-2xl font-black text-sm uppercase shadow-sm hover:bg-rose-100 transition-all flex items-center justify-center gap-2 border-2 border-rose-200 cursor-pointer active:scale-95"
+                              className="w-full py-3 bg-rose-50 text-rose-600 rounded-xl font-black text-xs uppercase shadow-sm hover:bg-rose-100 transition-all flex items-center justify-center gap-2 border border-rose-200 cursor-pointer active:scale-95 min-h-[44px]"
                             >
-                              <Shield size={16} /> {demoteHero.isPending ? "Demoting..." : "DEMOTE FROM ADMIN"}
+                              <Shield size={14} /> {demoteHero.isPending ? "Demoting..." : "DEMOTE FROM ADMIN"}
                             </button>
                           ) : (
-                            <div className="p-4 bg-slate-50 rounded-2xl border-2 border-slate-100 text-center">
-                              <p className="text-[10px] font-black text-slate-400 uppercase italic">
-                                Demotion locked (Only Admin Active)
-                              </p>
-                            </div>
+                            <p className="text-[9px] font-bold text-slate-400 uppercase italic text-center p-2 bg-slate-50 rounded-xl">
+                              Sole Admin (Demotion Locked)
+                            </p>
                           )
                         ) : (
                           <button
                             type="button"
                             onClick={() => promoteHero.mutate(edit.id)}
                             disabled={promoteHero.isPending}
-                            className="w-full py-3.5 bg-indigo-50 text-indigo-600 rounded-2xl font-black text-sm uppercase shadow-sm hover:bg-indigo-100 transition-all flex items-center justify-center gap-2 border-2 border-indigo-200 cursor-pointer active:scale-95"
+                            className="w-full py-3 bg-indigo-50 text-indigo-600 rounded-xl font-black text-xs uppercase shadow-sm hover:bg-indigo-100 transition-all flex items-center justify-center gap-2 border border-indigo-200 cursor-pointer active:scale-95 min-h-[44px]"
                           >
-                            <Shield size={16} /> {promoteHero.isPending ? "Promoting..." : "PROMOTE TO ADMIN"}
+                            <Shield size={14} /> {promoteHero.isPending ? "Promoting..." : "PROMOTE TO ADMIN"}
                           </button>
                         )}
                       </div>
                     )}
 
                     <button 
-                        onClick={() => saveHero.mutate(edit)}
-                        className="w-full py-4 sm:py-5 bg-slate-900 text-white rounded-[2rem] font-black text-lg sm:text-xl shadow-2xl hover:bg-indigo-600 transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95"
+                      onClick={() => saveHero.mutate(edit)}
+                      className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black text-sm uppercase tracking-wider shadow-xl hover:bg-indigo-600 transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95 min-h-[48px]"
                     >
-                        <Check size={20} /> SAVE CHANGES
+                      <Check size={18} /> SAVE PROFILE CHANGES
                     </button>
                   </div>
                 </div>
@@ -348,24 +372,47 @@ function FamilyPage() {
           );
         })()}
 
-        {/* RECRUIT MODAL */}
+        {/* RECRUIT HERO MODAL */}
         {showAdd && (
-            <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4">
-                <form className="bg-white p-10 rounded-[3rem] w-full max-w-md shadow-2xl" onSubmit={(e) => {
-                    e.preventDefault();
-                    const fd = new FormData(e.currentTarget);
-                    addHero.mutate({ name: fd.get('name'), is_kid: fd.get('type') === 'kid' });
-                }}>
-                    <h2 className="text-3xl font-black uppercase italic mb-6">Recruit Hero</h2>
-                    <input name="name" placeholder="Hero Name" className="w-full p-5 bg-slate-50 rounded-2xl mb-4 font-black outline-none border-4 border-transparent focus:border-indigo-500 text-lg" required />
-                    <select name="type" className="w-full p-5 bg-slate-50 rounded-2xl mb-6 font-black uppercase text-sm">
-                        <option value="kid">Kid (Adventurer)</option>
-                        <option value="parent">Adult (Master)</option>
-                    </select>
-                    <button type="submit" className="w-full py-5 bg-slate-900 text-white rounded-2xl font-black uppercase shadow-xl hover:bg-indigo-600 transition-colors cursor-pointer active:scale-95">Complete Recruitment</button>
-                    <button type="button" onClick={() => setShowAdd(false)} className="w-full mt-4 text-[10px] font-black text-slate-300 uppercase cursor-pointer">Cancel</button>
-                </form>
-            </div>
+          <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4">
+            <form 
+              className="bg-white p-6 sm:p-8 rounded-3xl sm:rounded-[3rem] w-full max-w-md shadow-2xl border-4 border-slate-50 space-y-4 my-auto" 
+              onSubmit={(e) => {
+                e.preventDefault();
+                const fd = new FormData(e.currentTarget);
+                addHero.mutate({ name: fd.get('name'), is_kid: fd.get('type') === 'kid' });
+              }}
+            >
+              <h2 className="text-2xl font-black uppercase italic tracking-tight">Recruit Hero</h2>
+              <input 
+                name="name" 
+                placeholder="Hero Name" 
+                className="w-full p-4 bg-slate-50 rounded-2xl font-black outline-none border-2 border-transparent focus:border-indigo-500 text-base min-h-[48px]" 
+                required 
+              />
+              <select 
+                name="type" 
+                className="w-full p-4 bg-slate-50 rounded-2xl font-black uppercase text-xs min-h-[48px]"
+              >
+                <option value="kid">Kid (Adventurer)</option>
+                <option value="parent">Adult (Master)</option>
+              </select>
+              
+              <button 
+                type="submit" 
+                className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black text-xs uppercase tracking-wider shadow-xl hover:bg-indigo-600 transition-colors cursor-pointer active:scale-95 min-h-[48px]"
+              >
+                Complete Recruitment
+              </button>
+              <button 
+                type="button" 
+                onClick={() => setShowAdd(false)} 
+                className="w-full text-[10px] font-black text-slate-400 uppercase tracking-widest cursor-pointer p-2"
+              >
+                Cancel
+              </button>
+            </form>
+          </div>
         )}
       </div>
     </AppShell>

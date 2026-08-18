@@ -77,7 +77,7 @@ export default async function authRoutes(app: any) {
     return { success: true };
   });
 
-  // PIN Verification
+  // PIN Verification: Elevates session and returns linked hero
   app.post("/verify-pin", async (req: any, reply: any) => {
     const { userId, pin } = req.body;
     const activeUser = getSessionUser(req);
@@ -121,7 +121,6 @@ export default async function authRoutes(app: any) {
         return reply.code(403).send({ error: "Only administrators can generate recovery keys" });
       }
 
-      // Generate a formatted 24-character master emergency key: e.g. FHUB-7A9B-8C4D-2E1F-99AA
       const rawKey = randomBytes(10).toString("hex").toUpperCase();
       const formattedKey = `FHUB-${rawKey.slice(0, 4)}-${rawKey.slice(4, 8)}-${rawKey.slice(8, 12)}-${rawKey.slice(12, 16)}-${rawKey.slice(16, 20)}`;
 
@@ -158,11 +157,9 @@ export default async function authRoutes(app: any) {
         return reply.code(401).send({ error: "Invalid Recovery Key" });
       }
 
-      // RESET PASSWORD
       const newSalt = randomBytes(16).toString("hex");
       const newPassHash = scryptSync(newPassword, newSalt, 64).toString("hex");
 
-      // OPTIONALLY RESET PIN
       let newPinHash = null;
       if (newPin && newPin.length === 6) {
         const pinSalt = randomBytes(16).toString("hex");
@@ -175,7 +172,6 @@ export default async function authRoutes(app: any) {
         WHERE id = ?
       `).run(`scrypt$${newSalt}$${newPassHash}`, newPinHash, newPinHash ? 0 : 1, user.id);
 
-      // Create valid session
       const token = randomBytes(32).toString("hex");
       db.prepare("INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, datetime('now', '+30 days'))").run(token, user.id);
       reply.header("Set-Cookie", `fh_sid=${token}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax`);
@@ -205,7 +201,6 @@ export default async function authRoutes(app: any) {
         copyFileSync(currentDbPath, backupPath);
       }
 
-      // Rotate: keep newest 7 backups
       const files = readdirSync(backupDir).filter(f => f.endsWith(".db")).sort();
       while (files.length > 7) {
         const oldest = files.shift();
@@ -246,6 +241,7 @@ export default async function authRoutes(app: any) {
 
       return { success: true, message: "Password updated successfully" };
     } catch (error) {
+      console.error("Change Password Error:", error);
       return reply.code(500).send({ error: (error as Error).message });
     }
   });
@@ -276,6 +272,7 @@ export default async function authRoutes(app: any) {
 
       return { success: true, message: "Username updated successfully" };
     } catch (error) {
+      console.error("Change Username Error:", error);
       return reply.code(500).send({ error: (error as Error).message });
     }
   });
@@ -338,7 +335,6 @@ export default async function authRoutes(app: any) {
     }
   });
 
-  // --- SAVE MOBILE PUSH TOPIC (Admin Only) ---
   app.post("/set-ntfy-topic", async (req: any, reply: any) => {
     try {
       const user = getSessionUser(req);
@@ -359,7 +355,6 @@ export default async function authRoutes(app: any) {
     }
   });
 
-  // link-member route
   app.post("/link-member", async (req: any, reply: any) => {
     try {
       const user = getSessionUser(req);
