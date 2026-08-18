@@ -1,3 +1,4 @@
+// server/routes/meals.ts
 import { randomUUID } from "node:crypto";
 import { db } from "../db.js";
 
@@ -11,15 +12,12 @@ function extractInstructions(obj: any): string {
   }
   
   if (typeof obj === "object") {
-    // If it's a direct step, extract the 'text' property
     if (obj.text && typeof obj.text === "string") {
       return obj.text;
     }
-    // If it's a section, recurse over its 'itemListElement' steps array
     if (obj.itemListElement && Array.isArray(obj.itemListElement)) {
       return extractInstructions(obj.itemListElement);
     }
-    // Deep fallback
     if (obj.text) {
       return extractInstructions(obj.text);
     }
@@ -42,7 +40,7 @@ function extractIngredients(obj: any): string {
   return "";
 }
 
-// Automated Web-Scraper & Recipe Parser (Extracts Schema.org JSON-LD recursively)
+// Automated Web-Scraper & Recipe Parser
 async function parseRecipeFromUrl(url: string) {
   try {
     const response = await fetch(url, {
@@ -51,7 +49,6 @@ async function parseRecipeFromUrl(url: string) {
     if (!response.ok) throw new Error("Failed to fetch recipe page");
     const html = await response.text();
 
-    // Regex to extract JSON-LD script blocks
     const regex = /<script\s+type="application\/ld\+json">([\s\S]*?)<\/script>/gi;
     let match;
     let recipeData: any = null;
@@ -60,7 +57,6 @@ async function parseRecipeFromUrl(url: string) {
       try {
         const json = JSON.parse(match[1].trim());
         
-        // Recursive search for a Recipe schema type in graphs or lists
         const findRecipe = (obj: any): any => {
           if (!obj) return null;
           if (obj["@type"] === "Recipe" || (Array.isArray(obj["@type"]) && obj["@type"].includes("Recipe"))) return obj;
@@ -84,7 +80,6 @@ async function parseRecipeFromUrl(url: string) {
     }
 
     if (!recipeData) {
-      // Fallback: Extract Title from HTML if metadata is missing
       const titleMatch = html.match(/<title>([\s\S]*?)<\/title>/i);
       const name = titleMatch ? titleMatch[1].replace(/ - [^-]+$/g, "").trim() : "Imported Web Recipe";
       return {
@@ -95,13 +90,9 @@ async function parseRecipeFromUrl(url: string) {
       };
     }
 
-    // Process ingredients using recursive helper
     const ingredients = extractIngredients(recipeData.recipeIngredient);
-
-    // Process instructions using recursive helper
     const instructions = extractInstructions(recipeData.recipeInstructions);
 
-    // Process image url
     let image_url = "";
     if (typeof recipeData.image === "string") {
       image_url = recipeData.image;
@@ -126,13 +117,26 @@ async function parseRecipeFromUrl(url: string) {
 export default async function mealRoutes(app: any, opts: any) {
   const { broadcast } = opts;
 
-  const ensureSuggestionsExist = () => {
+  const ensureTablesExist = () => {
     try {
       db.prepare(`
         CREATE TABLE IF NOT EXISTS meal_suggestions (
           id TEXT PRIMARY KEY,
           recipe_name TEXT,
           suggested_by TEXT,
+          created_at TEXT
+        )
+      `).run();
+    } catch (e) {}
+
+    try {
+      db.prepare(`
+        CREATE TABLE IF NOT EXISTS shopping_items (
+          id TEXT PRIMARY KEY,
+          name TEXT,
+          checked INTEGER DEFAULT 0,
+          quantity TEXT,
+          category TEXT,
           created_at TEXT
         )
       `).run();
@@ -188,37 +192,48 @@ export default async function mealRoutes(app: any, opts: any) {
     return { success: true };
   });
 
-  // 5. BUILD SHOPPING LIST
-  app.post("/build-shopping", async (req: any) => {
-    const { from, to } = req.body;
-    const f = from.split('T')[0];
-    const t = to.split('T')[0];
+  // 5. BUILD SHOPPING LIST (Fixed: Parses all ingredients reliably & never alters/deletes meal plans)
+  app.post("/build-shopping", async (req: any, reply: any) => {
+    try {
+      ensureTablesExist();
+      const { from, to } = req.body;
+      const f = from ? from.split('T')[0] : "";
+      const t = to ? to.split('T')[0] : "";
 
-    const rows = db.prepare(`
-      SELECT r.ingredients FROM meal_plan mp 
-      JOIN recipes r ON mp.recipe_id = r.id 
-      WHERE mp.plan_date BETWEEN ? AND ?
-    `).all(f, t) as any[];
-    
-    let addedCount = 0;
-    db.transaction(() => {
-      for (const row of rows) {
-        if (row.ingredients) {
-          const items = row.ingredients.split(/[,\n]+/);
-          for (const item of items) {
-            const trimmed = item.trim();
-            if (trimmed) {
-              db.prepare("INSERT INTO shopping_items (id, name, checked, created_at) VALUES (?, ?, 0, datetime('now'))")
-                .run(randomUUID(), trimmed);
-              addedCount++;
+      const rows = db.prepare(`
+        SELECT r.name as recipe_name, r.ingredients 
+        FROM meal_plan mp 
+        JOIN recipes r ON mp.recipe_id = r.id 
+        WHERE mp.plan_date BETWEEN ? AND ?
+      `).all(f, t) as any[];
+      
+      let addedCount = 0;
+      
+      db.transaction(() => {
+        for (const row of rows) {
+          if (row.ingredients && typeof row.ingredients === "string") {
+            // Split ingredients across lines, commas, or bullet points safely
+            const rawItems = row.ingredients.split(/[\n,]+/);
+            for (const item of rawItems) {
+              const cleaned = item.replace(/^[•\-\*]\s*/, "").trim();
+              if (cleaned.length > 0 && !cleaned.toLowerCase().includes("could not parse ingredients")) {
+                db.prepare(`
+                  INSERT INTO shopping_items (id, name, checked, quantity, category, created_at) 
+                  VALUES (?, ?, 0, '', 'pantry', datetime('now'))
+                `).run(randomUUID(), cleaned);
+                addedCount++;
+              }
             }
           }
         }
-      }
-    })();
+      })();
 
-    broadcast("shopping"); 
-    return { success: true, added: addedCount };
+      broadcast("shopping"); 
+      return { success: true, added: addedCount };
+    } catch (error) {
+      console.error("Build Shopping List Error:", error);
+      return reply.code(500).send({ error: (error as Error).message });
+    }
   });
 
   // --- FAMILY MEAL SUGGESTIONS ROUTES ---
@@ -226,17 +241,17 @@ export default async function mealRoutes(app: any, opts: any) {
   // 6. GET ALL MEAL SUGGESTIONS
   app.get("/suggestions", async (req: any, reply: any) => {
     try {
-      ensureSuggestionsExist();
+      ensureTablesExist();
       return db.prepare("SELECT * FROM meal_suggestions ORDER BY created_at DESC").all();
     } catch (error) {
       return reply.code(500).send({ error: (error as Error).message });
     }
   });
 
-  // 7. POST NEW MEAL SUGGESTION (Open to all family members)
+  // 7. POST NEW MEAL SUGGESTION
   app.post("/suggestions", async (req: any, reply: any) => {
     try {
-      ensureSuggestionsExist();
+      ensureTablesExist();
       const { recipe_name, suggested_by } = req.body;
 
       db.prepare(`
@@ -254,7 +269,7 @@ export default async function mealRoutes(app: any, opts: any) {
   // 8. DISMISS MEAL SUGGESTION (Admin Only)
   app.delete("/suggestions/:id", async (req: any, reply: any) => {
     try {
-      ensureSuggestionsExist();
+      ensureTablesExist();
       if (req.user?.role !== 'admin') {
         return reply.code(403).send({ error: "Only administrators can dismiss meal suggestions" });
       }
@@ -290,7 +305,7 @@ export default async function mealRoutes(app: any, opts: any) {
     }
   });
 
-  // 10. IMPORT RECIPE AUTOMATICALLY FROM URL (With recursive parser!)
+  // 10. IMPORT RECIPE AUTOMATICALLY FROM URL
   app.post("/recipes/import-url", async (req: any, reply: any) => {
     try {
       if (req.user?.role !== 'admin') {
@@ -312,7 +327,36 @@ export default async function mealRoutes(app: any, opts: any) {
     }
   });
 
-  // 11. REMOVE RECIPE FROM COOKBOOK
+  // 11. BULK REMOVE RECIPES FROM COOKBOOK (Admin Only)
+  app.post("/recipes/bulk-delete", async (req: any, reply: any) => {
+    try {
+      if (req.user?.role !== 'admin') {
+        return reply.code(403).send({ error: "Only administrators can remove recipes" });
+      }
+
+      const { ids } = req.body;
+      if (!Array.isArray(ids) || ids.length === 0) {
+        return reply.code(400).send({ error: "No recipe IDs provided" });
+      }
+
+      const deleteStmt = db.prepare("DELETE FROM recipes WHERE id = ?");
+      const unassignPlanStmt = db.prepare("UPDATE meal_plan SET recipe_id = NULL WHERE recipe_id = ?");
+
+      db.transaction(() => {
+        for (const id of ids) {
+          unassignPlanStmt.run(id);
+          deleteStmt.run(id);
+        }
+      })();
+
+      broadcast("meal-plan");
+      return { success: true, count: ids.length };
+    } catch (error) {
+      return reply.code(500).send({ error: (error as Error).message });
+    }
+  });
+
+  // 12. REMOVE RECIPE FROM COOKBOOK
   app.delete("/recipes/:id", async (req: any, reply: any) => {
     try {
       if (req.user?.role !== 'admin') {
@@ -328,7 +372,7 @@ export default async function mealRoutes(app: any, opts: any) {
     }
   });
 
-  // 12. UPDATE RECIPE IN COOKBOOK (Admin Only)
+  // 13. UPDATE RECIPE IN COOKBOOK (Admin Only)
   app.patch("/recipes/:id", async (req: any, reply: any) => {
     try {
       if (req.user?.role !== 'admin') {

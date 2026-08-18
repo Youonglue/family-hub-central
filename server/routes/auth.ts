@@ -1,14 +1,29 @@
+// server/routes/auth.ts
 import { randomBytes, scryptSync, timingSafeEqual, randomUUID } from "node:crypto";
+import { copyFileSync, mkdirSync, readdirSync, unlinkSync, existsSync } from "node:fs";
+import path from "node:path";
 import { db } from "../db.js";
 
 export default async function authRoutes(app: any) {
   const getSessionUser = (req: any) => {
+    if (req.user) return req.user;
     const token = req.headers.cookie?.match(/fh_sid=([^;]+)/)?.[1];
     if (!token) return null;
-    return db.prepare(`SELECT u.* FROM sessions s JOIN users u ON s.user_id = u.id WHERE s.token = ? AND s.expires_at > datetime('now')`).get(token) as any;
+    return db.prepare(`
+      SELECT u.* FROM sessions s 
+      JOIN users u ON s.user_id = u.id 
+      WHERE s.token = ? AND s.expires_at > datetime('now')
+    `).get(token) as any;
+  };
+
+  const ensureRecoverySchema = () => {
+    try {
+      db.prepare("ALTER TABLE users ADD COLUMN recovery_key_hash TEXT").run();
+    } catch (e) {}
   };
 
   app.get("/me", async (req: any) => {
+    ensureRecoverySchema();
     const user = getSessionUser(req);
     const userCount = (db.prepare("SELECT COUNT(*) as n FROM users").get() as any).n;
     if (!user) return { id: null, role: 'guest', first_run: userCount === 0 };
@@ -16,6 +31,7 @@ export default async function authRoutes(app: any) {
       ...user, 
       role: user.role || 'user', 
       has_pin: !!user.pin_hash,
+      has_recovery_key: !!user.recovery_key_hash,
       ntfy_topic: user.ntfy_topic || ""
     };
   });
@@ -52,7 +68,6 @@ export default async function authRoutes(app: any) {
     return reply.code(401).send({ error: "Invalid credentials" });
   });
 
-  // Secure sign-out endpoint to delete session and clear browser cookie
   app.post("/logout", async (req: any, reply: any) => {
     const token = req.headers.cookie?.match(/fh_sid=([^;]+)/)?.[1];
     if (token) {
@@ -62,12 +77,17 @@ export default async function authRoutes(app: any) {
     return { success: true };
   });
 
-  // Updated verify-pin route to support multi-user Admin PIN validations and temporary 30s sessions
+  // PIN Verification
   app.post("/verify-pin", async (req: any, reply: any) => {
     const { userId, pin } = req.body;
+    const activeUser = getSessionUser(req);
+    const targetUserId = userId || activeUser?.id;
+
+    if (!targetUserId) {
+      return reply.code(400).send({ error: "No user specified" });
+    }
     
-    // Find the specific Admin account being unlocked
-    const user = db.prepare("SELECT * FROM users WHERE id = ?").get(userId) as any;
+    const user = db.prepare("SELECT * FROM users WHERE id = ?").get(targetUserId) as any;
     if (!user || !user.pin_hash) {
       return reply.code(400).send({ error: "Selected account has no Admin PIN set" });
     }
@@ -76,27 +96,228 @@ export default async function authRoutes(app: any) {
     const attempt = scryptSync(pin, salt, 64).toString("hex");
     
     if (timingSafeEqual(Buffer.from(hash, "hex"), Buffer.from(attempt, "hex"))) {
-      // SUCCESS! Create a temporary 30-second Admin session token
       const token = randomBytes(32).toString("hex");
-      db.prepare("INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, datetime('now', '+30 seconds'))").run(token, user.id);
+      db.prepare("INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, datetime('now', '+30 minutes'))").run(token, user.id);
       
-      // Set high-security cookie (Max-Age=30 seconds)
-      reply.header("Set-Cookie", `fh_sid=${token}; Path=/; Max-Age=30; HttpOnly; SameSite=Lax`);
-      return { success: true };
+      const linkedHero = db.prepare("SELECT * FROM family_members WHERE user_id = ? OR LOWER(name) = LOWER(?)").get(user.id, user.username) as any;
+
+      reply.header("Set-Cookie", `fh_sid=${token}; Path=/; Max-Age=1800; HttpOnly; SameSite=Lax`);
+      return { 
+        success: true, 
+        user: { id: user.id, username: user.username, role: user.role },
+        member: linkedHero || null 
+      };
     }
     
     return reply.code(401).send({ error: "Wrong PIN" });
   });
 
-  app.post("/set-pin", async (req: any) => {
-    // Self-Heal: Ensure 'needs_pin_setup' column exists in the users table
+  // --- RECOVERY SYSTEM: GENERATE MASTER RECOVERY KEY ---
+  app.post("/generate-recovery-key", async (req: any, reply: any) => {
+    try {
+      ensureRecoverySchema();
+      const user = getSessionUser(req);
+      if (!user || user.role !== 'admin') {
+        return reply.code(403).send({ error: "Only administrators can generate recovery keys" });
+      }
+
+      // Generate a formatted 24-character master emergency key: e.g. FHUB-7A9B-8C4D-2E1F-99AA
+      const rawKey = randomBytes(10).toString("hex").toUpperCase();
+      const formattedKey = `FHUB-${rawKey.slice(0, 4)}-${rawKey.slice(4, 8)}-${rawKey.slice(8, 12)}-${rawKey.slice(12, 16)}-${rawKey.slice(16, 20)}`;
+
+      const salt = randomBytes(16).toString("hex");
+      const hash = scryptSync(formattedKey.replace(/-/g, ""), salt, 64).toString("hex");
+      
+      db.prepare("UPDATE users SET recovery_key_hash = ? WHERE id = ?").run(`scrypt$${salt}$${hash}`, user.id);
+
+      return { success: true, key: formattedKey };
+    } catch (error) {
+      return reply.code(500).send({ error: (error as Error).message });
+    }
+  });
+
+  // --- RECOVERY SYSTEM: EMERGENCY RESET USING MASTER KEY ---
+  app.post("/emergency-recover", async (req: any, reply: any) => {
+    try {
+      ensureRecoverySchema();
+      const { username, recoveryKey, newPassword, newPin } = req.body;
+      if (!username || !recoveryKey || !newPassword) {
+        return reply.code(400).send({ error: "Username, Recovery Key, and New Password are required" });
+      }
+
+      const user = db.prepare("SELECT * FROM users WHERE username = ?").get(username.trim()) as any;
+      if (!user || !user.recovery_key_hash) {
+        return reply.code(400).send({ error: "No recovery key active for this account" });
+      }
+
+      const cleanInputKey = recoveryKey.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+      const [schema, salt, hash] = user.recovery_key_hash.split("$");
+      const attempt = scryptSync(cleanInputKey, salt, 64).toString("hex");
+
+      if (!timingSafeEqual(Buffer.from(hash, "hex"), Buffer.from(attempt, "hex"))) {
+        return reply.code(401).send({ error: "Invalid Recovery Key" });
+      }
+
+      // RESET PASSWORD
+      const newSalt = randomBytes(16).toString("hex");
+      const newPassHash = scryptSync(newPassword, newSalt, 64).toString("hex");
+
+      // OPTIONALLY RESET PIN
+      let newPinHash = null;
+      if (newPin && newPin.length === 6) {
+        const pinSalt = randomBytes(16).toString("hex");
+        newPinHash = `scrypt$${pinSalt}$${scryptSync(newPin, pinSalt, 64).toString("hex")}`;
+      }
+
+      db.prepare(`
+        UPDATE users 
+        SET password_hash = ?, pin_hash = ?, needs_pin_setup = ? 
+        WHERE id = ?
+      `).run(`scrypt$${newSalt}$${newPassHash}`, newPinHash, newPinHash ? 0 : 1, user.id);
+
+      // Create valid session
+      const token = randomBytes(32).toString("hex");
+      db.prepare("INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, datetime('now', '+30 days'))").run(token, user.id);
+      reply.header("Set-Cookie", `fh_sid=${token}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax`);
+
+      return { success: true, message: "Account recovered and elevated successfully!" };
+    } catch (error) {
+      return reply.code(500).send({ error: (error as Error).message });
+    }
+  });
+
+  // --- DATABASE SNAPSHOT ENGINE: TRIGGER MANUAL BACKUP ---
+  app.post("/create-snapshot", async (req: any, reply: any) => {
+    try {
+      const user = getSessionUser(req);
+      if (!user || user.role !== 'admin') {
+        return reply.code(403).send({ error: "Only administrators can trigger database backups" });
+      }
+
+      const backupDir = path.resolve("./data/backups");
+      mkdirSync(backupDir, { recursive: true });
+
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const backupPath = path.join(backupDir, `familyhub-${timestamp}.db`);
+      const currentDbPath = path.resolve("./data/familyhub.db");
+
+      if (existsSync(currentDbPath)) {
+        copyFileSync(currentDbPath, backupPath);
+      }
+
+      // Rotate: keep newest 7 backups
+      const files = readdirSync(backupDir).filter(f => f.endsWith(".db")).sort();
+      while (files.length > 7) {
+        const oldest = files.shift();
+        if (oldest) unlinkSync(path.join(backupDir, oldest));
+      }
+
+      return { success: true, filename: `familyhub-${timestamp}.db` };
+    } catch (error) {
+      return reply.code(500).send({ error: (error as Error).message });
+    }
+  });
+
+  // CHANGE PASSWORD ENDPOINT
+  app.post("/change-password", async (req: any, reply: any) => {
+    try {
+      const user = getSessionUser(req);
+      if (!user) {
+        return reply.code(401).send({ error: "Unauthorized session" });
+      }
+
+      const { currentPassword, newPassword } = req.body;
+      if (!newPassword || newPassword.length < 4) {
+        return reply.code(400).send({ error: "New password must be at least 4 characters long" });
+      }
+
+      if (currentPassword && user.password_hash) {
+        const [schema, salt, hash] = user.password_hash.split("$");
+        const attempt = scryptSync(currentPassword, salt, 64).toString("hex");
+        if (!timingSafeEqual(Buffer.from(hash, "hex"), Buffer.from(attempt, "hex"))) {
+          return reply.code(400).send({ error: "Current password is incorrect" });
+        }
+      }
+
+      const newSalt = randomBytes(16).toString("hex");
+      const newHash = scryptSync(newPassword, newSalt, 64).toString("hex");
+      
+      db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(`scrypt$${newSalt}$${newHash}`, user.id);
+
+      return { success: true, message: "Password updated successfully" };
+    } catch (error) {
+      return reply.code(500).send({ error: (error as Error).message });
+    }
+  });
+
+  // CHANGE USERNAME ENDPOINT
+  app.post("/change-username", async (req: any, reply: any) => {
+    try {
+      const user = getSessionUser(req);
+      if (!user) {
+        return reply.code(401).send({ error: "Unauthorized session" });
+      }
+
+      const { currentPassword, newUsername } = req.body;
+      if (!newUsername || newUsername.trim().length === 0) {
+        return reply.code(400).send({ error: "Username cannot be empty" });
+      }
+
+      if (currentPassword && user.password_hash) {
+        const [schema, salt, hash] = user.password_hash.split("$");
+        const attempt = scryptSync(currentPassword, salt, 64).toString("hex");
+        if (!timingSafeEqual(Buffer.from(hash, "hex"), Buffer.from(attempt, "hex"))) {
+          return reply.code(400).send({ error: "Current password is incorrect" });
+        }
+      }
+
+      db.prepare("UPDATE users SET username = ? WHERE id = ?").run(newUsername.trim(), user.id);
+      db.prepare("UPDATE family_members SET name = ? WHERE user_id = ?").run(newUsername.trim(), user.id);
+
+      return { success: true, message: "Username updated successfully" };
+    } catch (error) {
+      return reply.code(500).send({ error: (error as Error).message });
+    }
+  });
+
+  // SET PIN ENDPOINT
+  app.post("/set-pin", async (req: any, reply: any) => {
+    const user = getSessionUser(req);
+    if (!user) {
+      return reply.code(401).send({ error: "Unauthorized" });
+    }
+
     try {
       db.prepare("ALTER TABLE users ADD COLUMN needs_pin_setup INTEGER DEFAULT 0").run();
     } catch (e) {}
 
+    const { pin, currentPassword } = req.body;
+    if (!pin || pin.length !== 6) {
+      return reply.code(400).send({ error: "PIN must be exactly 6 digits" });
+    }
+
+    if (currentPassword && user.password_hash) {
+      const [schema, salt, hash] = user.password_hash.split("$");
+      const attempt = scryptSync(currentPassword, salt, 64).toString("hex");
+      if (!timingSafeEqual(Buffer.from(hash, "hex"), Buffer.from(attempt, "hex"))) {
+        return reply.code(400).send({ error: "Current password is incorrect" });
+      }
+    }
+
     const salt = randomBytes(16).toString("hex");
-    const hash = scryptSync(req.body.pin, salt, 64).toString("hex");
-    db.prepare(`UPDATE users SET pin_hash = ?, needs_pin_setup = 0 WHERE id = ?`).run(`scrypt$${salt}$${hash}`, req.user.id);
+    const hash = scryptSync(pin, salt, 64).toString("hex");
+    db.prepare(`UPDATE users SET pin_hash = ?, needs_pin_setup = 0 WHERE id = ?`).run(`scrypt$${salt}$${hash}`, user.id);
+    return { success: true };
+  });
+
+  // CLEAR PIN ENDPOINT
+  app.post("/clear-pin", async (req: any, reply: any) => {
+    const user = getSessionUser(req);
+    if (!user) {
+      return reply.code(401).send({ error: "Unauthorized" });
+    }
+
+    db.prepare("UPDATE users SET pin_hash = NULL WHERE id = ?").run(user.id);
     return { success: true };
   });
 
@@ -104,7 +325,6 @@ export default async function authRoutes(app: any) {
     return db.prepare("SELECT id, username, role FROM users").all();
   });
 
-  // pin-status endpoint to support secure lock/unlock states
   app.get("/pin-status", async (req: any) => {
     try {
       const user = getSessionUser(req);
@@ -121,17 +341,17 @@ export default async function authRoutes(app: any) {
   // --- SAVE MOBILE PUSH TOPIC (Admin Only) ---
   app.post("/set-ntfy-topic", async (req: any, reply: any) => {
     try {
-      if (!req.user || req.user.role !== 'admin') {
+      const user = getSessionUser(req);
+      if (!user || user.role !== 'admin') {
         return reply.code(403).send({ error: "Only administrators can configure push settings" });
       }
 
-      // Self-Heal: Ensure 'ntfy_topic' column exists in users
       try {
         db.prepare("ALTER TABLE users ADD COLUMN ntfy_topic TEXT").run();
       } catch (e) {}
 
       const { topic } = req.body;
-      db.prepare("UPDATE users SET ntfy_topic = ? WHERE id = ?").run(topic ? topic.trim() : null, req.user.id);
+      db.prepare("UPDATE users SET ntfy_topic = ? WHERE id = ?").run(topic ? topic.trim() : null, user.id);
 
       return { success: true };
     } catch (error) {
@@ -139,10 +359,11 @@ export default async function authRoutes(app: any) {
     }
   });
 
-  // link-member route with dual self-healing checks for both 'user_id' and 'role' columns
+  // link-member route
   app.post("/link-member", async (req: any, reply: any) => {
     try {
-      if (!req.user || req.user.role !== 'admin') {
+      const user = getSessionUser(req);
+      if (!user || user.role !== 'admin') {
         return reply.code(403).send({ error: "Only administrators can link accounts" });
       }
 
@@ -161,9 +382,9 @@ export default async function authRoutes(app: any) {
       if (memberId) {
         db.prepare("UPDATE family_members SET user_id = ? WHERE id = ?").run(userId, memberId);
 
-        const user = db.prepare("SELECT role FROM users WHERE id = ?").get(userId) as any;
-        if (user) {
-          db.prepare("UPDATE family_members SET role = ? WHERE id = ?").run(user.role, memberId);
+        const targetUser = db.prepare("SELECT role FROM users WHERE id = ?").get(userId) as any;
+        if (targetUser) {
+          db.prepare("UPDATE family_members SET role = ? WHERE id = ?").run(targetUser.role, memberId);
         }
       }
 
@@ -175,13 +396,14 @@ export default async function authRoutes(app: any) {
   });
 
   app.delete("/users/:id", async (req: any, reply: any) => {
-    if (!req.user || req.user.role !== 'admin') {
+    const user = getSessionUser(req);
+    if (!user || user.role !== 'admin') {
       return reply.code(403).send({ error: "Only administrators can delete user accounts" });
     }
 
     const { id } = req.params;
 
-    if (req.user.id === id) {
+    if (user.id === id) {
       return reply.code(400).send({ error: "You cannot delete your own account" });
     }
 
@@ -192,9 +414,9 @@ export default async function authRoutes(app: any) {
     return { success: true };
   });
 
-  // Updated promote route with correct table mapping AND Admin authorization check
   app.post("/promote", async (req: any, reply: any) => {
-    if (!req.user || req.user.role !== 'admin') {
+    const user = getSessionUser(req);
+    if (!user || user.role !== 'admin') {
       return reply.code(403).send({ error: "Only administrators can promote users" });
     }
 
@@ -216,9 +438,9 @@ export default async function authRoutes(app: any) {
     return { success: true };
   });
 
-  // Updated demote route with correct table mapping and single-admin fail-safe
   app.post("/demote", async (req: any, reply: any) => {
-    if (!req.user || req.user.role !== 'admin') {
+    const user = getSessionUser(req);
+    if (!user || user.role !== 'admin') {
       return reply.code(403).send({ error: "Only administrators can demote users" });
     }
 
@@ -232,7 +454,7 @@ export default async function authRoutes(app: any) {
       }
     } catch (e) {}
 
-    if (req.user.id === targetUserId) {
+    if (user.id === targetUserId) {
       return reply.code(400).send({ error: "You cannot demote yourself" });
     }
 
@@ -250,26 +472,5 @@ export default async function authRoutes(app: any) {
     } catch (e) {}
     
     return { success: true };
-  });
-
-  // --- RETAINED: Your Custom Leaderboard Toggle Endpoint ---
-  app.post("/toggle-leaderboard", async (req: any, reply: any) => {
-    try {
-      if (!req.user || req.user.role !== 'admin') {
-        return reply.code(403).send({ error: "Only administrators can modify leaderboard visibility" });
-      }
-
-      const { memberId, show } = req.body;
-
-      try {
-        db.prepare("ALTER TABLE family_members ADD COLUMN show_on_leaderboard INTEGER DEFAULT 1").run();
-      } catch (e) {}
-
-      db.prepare("UPDATE family_members SET show_on_leaderboard = ? WHERE id = ?").run(show ? 1 : 0, memberId);
-
-      return { success: true };
-    } catch (error) {
-      return reply.code(500).send({ error: (error as Error).message });
-    }
   });
 }
