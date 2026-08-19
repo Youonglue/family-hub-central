@@ -69,6 +69,9 @@ export default async function choreRoutes(app: any, opts: any) {
       db.prepare("ALTER TABLE family_members ADD COLUMN show_on_leaderboard INTEGER DEFAULT 1").run();
     } catch (e) {}
     try {
+      db.prepare("ALTER TABLE family_members ADD COLUMN show_on_dashboard INTEGER DEFAULT 1").run();
+    } catch (e) {}
+    try {
       db.prepare("ALTER TABLE family_members ADD COLUMN streak_count INTEGER DEFAULT 0").run();
     } catch (e) {}
     try {
@@ -193,13 +196,11 @@ export default async function choreRoutes(app: any, opts: any) {
     let pointsAwarded = basePoints;
     let xpAwarded = baseXp;
 
-    // Boss Battle: x3 Reward Points (XP remains 1x standard base XP)
     if (comp.is_boss === 1) {
       pointsAwarded = basePoints * 3;
       xpAwarded = baseXp;
     }
 
-    // Co-Op Quest: x2 Reward Points and x2 Double XP
     if (comp.is_coop === 1) {
       pointsAwarded = basePoints * 2;
       xpAwarded = baseXp * 2;
@@ -262,14 +263,14 @@ export default async function choreRoutes(app: any, opts: any) {
     return { success: true, pointsAwarded, xpAwarded };
   });
 
-  // 7. POINTS LEADERBOARD
+  // 7. POINTS LEADERBOARD (STRICTLY FILTERS OUT HIDDEN HEROES)
   app.get("/points", async (req: any, reply: any) => {
     try {
       ensureTablesExist();
       return db.prepare(`
           SELECT 
-            m.id as member_id, m.name, m.avatar_color, m.avatar_icon, m.xp, m.level, m.is_kid, m.is_parent, m.streak_count, m.last_completion_date,
-            m.show_on_dashboard, m.show_on_chores, m.show_on_rewards, m.show_on_kiosk,
+            m.id as member_id, m.name, m.avatar_color, m.avatar_icon, m.avatar_config, m.xp, m.level, m.is_kid, m.is_parent, m.streak_count, m.last_completion_date,
+            m.show_on_dashboard, m.show_on_chores, m.show_on_rewards, m.show_on_kiosk, m.show_on_leaderboard,
             CASE 
               WHEN (
                 COALESCE((SELECT SUM(points_awarded) FROM chore_completions WHERE member_id = m.id AND status = 'approved'), 0) - 
@@ -281,7 +282,8 @@ export default async function choreRoutes(app: any, opts: any) {
               )
             END as balance
           FROM family_members m 
-          WHERE m.show_on_leaderboard = 1 OR m.show_on_leaderboard IS NULL
+          WHERE (m.show_on_dashboard != 0 OR m.show_on_dashboard IS NULL)
+            AND (m.show_on_leaderboard != 0 OR m.show_on_leaderboard IS NULL)
           ORDER BY m.xp DESC
       `).all();
     } catch (error) {

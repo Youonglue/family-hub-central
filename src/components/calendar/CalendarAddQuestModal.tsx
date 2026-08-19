@@ -1,7 +1,7 @@
+// src/components/calendar/CalendarAddQuestModal.tsx
 import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { X, Check } from "lucide-react";
+import { X, Check, Clock, Sparkles } from "lucide-react";
 
 const pad = (n: number) => String(n).padStart(2, "0");
 const ymd = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -20,31 +20,25 @@ const getQuestColor = (title: string): string => {
 };
 
 const QUEST_TEMPLATES = [
-  { title: "🧹 Clean Room", location: "Bedroom", color: getQuestColor("Clean Room"), category: "Chores" },
-  { title: "📚 Homework", location: "Study", color: getQuestColor("Homework"), category: "School" },
-  { title: "🍿 Movie Night", location: "Living Room", color: getQuestColor("Movie Night"), category: "Fun" },
-  { title: "🍽️ Family Dinner", location: "Kitchen", color: getQuestColor("Family Dinner"), category: "General" },
-  { title: "🏊 Swim Class", location: "Pool", color: getQuestColor("Swim Class"), category: "Sports" },
-  { title: "🦷 Dentist Visit", location: "Clinic", color: getQuestColor("Dentist Visit"), category: "General" },
-  { title: "🎂 Birthday Party", location: "Party Hall", color: getQuestColor("Birthday Party"), category: "Fun" },
-  { title: "🛒 Grocery Run", location: "Supermarket", color: getQuestColor("Grocery Run"), category: "General" },
+  { title: "🎒 School Run", location: "School", color: getQuestColor("School Run"), category: "School", time_from: "08:30", time_to: "15:15" },
+  { title: "📚 Homework", location: "Study Room", color: getQuestColor("Homework"), category: "School", time_from: "16:00", time_to: "17:00" },
+  { title: "⚽ Football Practice", location: "Sports Field", color: getQuestColor("Football Practice"), category: "Sports", time_from: "17:30", time_to: "18:30" },
+  { title: "🏊 Swim Class", location: "Pool", color: getQuestColor("Swim Class"), category: "Sports", time_from: "10:00", time_to: "11:00" },
+  { title: "🧹 Clean Room", location: "Bedroom", color: getQuestColor("Clean Room"), category: "Chores", time_from: "11:00", time_to: "11:30" },
+  { title: "🍿 Movie Night", location: "Living Room", color: getQuestColor("Movie Night"), category: "Fun", time_from: "19:00", time_to: "21:00" },
+  { title: "🦷 Dentist Visit", location: "Clinic", color: getQuestColor("Dentist Visit"), category: "General", time_from: "14:00", time_to: "15:00" },
+  { title: "🎂 Birthday Party", location: "Party Hall", color: getQuestColor("Birthday Party"), category: "Fun", time_from: "13:00", time_to: "16:00" },
 ];
 
 export function CalendarAddQuestModal({ anchor, selectedDates, memberList, onClose, onRefresh, onClearSelectedDates }: any) {
   const [formTitle, setFormTitle] = useState("");
   const [formLocation, setFormLocation] = useState("");
   const [formColor, setFormColor] = useState("");
-  
-  // Custom states
   const [formCategory, setFormCategory] = useState("General");
-  
-  // Changed repeats state to a flexible number state (defaults to 0 for no repeats)
   const [formRepeats, setFormRepeats] = useState<number>(0);
-  
   const [timeFrom, setTimeFrom] = useState("");
   const [timeTo, setTimeTo] = useState("");
 
-  // Get active weekday name based on currently selected date
   const activeDate = selectedDates.length > 0 ? new Date(selectedDates[0] + "T00:00:00") : anchor;
   const weekdayName = activeDate.toLocaleDateString(undefined, { weekday: "long" });
 
@@ -53,42 +47,58 @@ export function CalendarAddQuestModal({ anchor, selectedDates, memberList, onClo
     setFormLocation(tpl.location);
     setFormColor(tpl.color);
     setFormCategory(tpl.category || "General");
-    toast.success(`Loaded "${tpl.title.split(" ").slice(1).join(" ")}" template!`);
+    if (tpl.time_from) setTimeFrom(tpl.time_from);
+    if (tpl.time_to) setTimeTo(tpl.time_to);
+    toast.success(`Loaded "${tpl.title}" template!`);
   };
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-900/60 backdrop-blur-md p-4" onClick={onClose}>
-       <div className="w-full max-w-xl bg-white rounded-[2.5rem] sm:rounded-[4rem] p-6 sm:p-10 shadow-2xl border-4 sm:border-[12px] border-slate-50 animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-900/60 backdrop-blur-md p-3 sm:p-4 overflow-y-auto" onClick={onClose}>
+       <div className="w-full max-w-xl bg-white rounded-3xl sm:rounded-[3.5rem] p-5 sm:p-8 shadow-2xl border-4 sm:border-8 border-slate-50 animate-in zoom-in-95 duration-200 flex flex-col max-h-[92vh] my-auto" onClick={e => e.stopPropagation()}>
          
-         <div className="flex justify-between items-center mb-6 shrink-0">
-           <h2 className="text-3xl sm:text-4xl font-black italic uppercase tracking-tighter text-slate-900 leading-none">New Quest</h2>
-           <button onClick={onClose} className="p-3 bg-slate-100 rounded-full hover:bg-rose-50 hover:text-rose-500 transition-all cursor-pointer"><X /></button>
+         <div className="flex justify-between items-center mb-4 sm:mb-6 shrink-0">
+           <div>
+             <h2 className="text-2xl sm:text-3xl font-black italic uppercase tracking-tight text-slate-900 leading-tight">
+               Schedule Quest
+             </h2>
+             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Add routine or one-time quest</p>
+           </div>
+           <button 
+             onClick={onClose} 
+             className="p-2.5 bg-slate-100 rounded-full hover:bg-rose-50 hover:text-rose-500 transition-all cursor-pointer min-h-[44px] min-w-[44px] flex items-center justify-center"
+           >
+             <X size={18} />
+           </button>
          </div>
          
-         <div className="overflow-y-auto pr-2 space-y-6 flex-1 custom-scrollbar">
+         <div className="overflow-y-auto pr-1 space-y-4 sm:space-y-5 flex-1 scrollbar-thin">
            
-           {/* Quick-Quest Templates */}
-           <div className="p-4 bg-slate-50 rounded-3xl border-2 border-slate-100 flex flex-wrap gap-2">
-             {QUEST_TEMPLATES.map((tpl) => (
-               <button 
-                 type="button"
-                 key={tpl.title}
-                 onClick={() => handleApplyTemplate(tpl)}
-                 className="px-4 py-2.5 rounded-xl font-bold uppercase text-[10px] shadow-sm transition-all bg-white hover:scale-105 cursor-pointer text-slate-800 border border-slate-200"
-               >
-                 {tpl.title}
-               </button>
-             ))}
+           {/* Quick Routine Presets */}
+           <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 space-y-2">
+             <span className="text-[9px] font-black uppercase tracking-widest text-indigo-600 flex items-center gap-1">
+               <Sparkles size={12} /> One-Tap Presets:
+             </span>
+             <div className="flex flex-wrap gap-1.5">
+               {QUEST_TEMPLATES.map((tpl) => (
+                 <button 
+                   type="button"
+                   key={tpl.title}
+                   onClick={() => handleApplyTemplate(tpl)}
+                   className="px-3 py-1.5 rounded-xl font-black uppercase text-[9px] shadow-sm transition-all bg-white hover:scale-105 active:scale-95 cursor-pointer text-slate-800 border border-slate-200 min-h-[36px]"
+                 >
+                   {tpl.title}
+                 </button>
+               ))}
+             </div>
            </div>
 
-           <form className="space-y-4" onSubmit={async (e) => {
+           <form className="space-y-3.5 sm:space-y-4" onSubmit={async (e) => {
               e.preventDefault();
               const target = e.target as any;
               const baseDates = selectedDates.length > 0 ? selectedDates : [ymd(anchor)];
               
-              // Spawner: Calculate future weekly dates dynamically based on your custom number input
               let finalDates = [...baseDates];
-              const weeksCount = formRepeats; // E.g. 7 or 32 weeks
+              const weeksCount = formRepeats;
               
               if (weeksCount > 0) {
                 const spawnedDates: string[] = [];
@@ -102,7 +112,6 @@ export function CalendarAddQuestModal({ anchor, selectedDates, memberList, onClo
                 finalDates = [...finalDates, ...spawnedDates];
               }
 
-              // Determine final color
               const finalColor = formColor || getQuestColor(formTitle || target.title.value);
 
               await fetch('/api/events', {
@@ -113,92 +122,128 @@ export function CalendarAddQuestModal({ anchor, selectedDates, memberList, onClo
                   location: (formLocation || target.location.value).trim(),
                   member_id: target.member.value || null,
                   color: finalColor,
-                  dates: finalDates, // Passes the full array of spawned dates
+                  dates: finalDates,
                   time_from: timeFrom,
                   time_to: timeTo,
                   category: formCategory
                 })
               });
               
-              toast.success(weeksCount > 0 ? `Weekly Series Scheduled for ${weeksCount} Weeks!` : "Quest Logged!");
+              toast.success(weeksCount > 0 ? `Routine scheduled for ${weeksCount} weeks!` : "Quest Logged!");
               onClearSelectedDates(); 
               onClose(); 
               onRefresh();
            }}>
               <div className="space-y-1">
-                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-4">Quest Name</span>
-                <input name="title" required placeholder="Clean Bedroom, Soccer Practice..." className="w-full p-5 bg-slate-50 rounded-2xl border-4 border-transparent focus:border-indigo-500 outline-none font-black text-lg" value={formTitle} onChange={(e) => { setFormTitle(e.target.value); setFormColor(getQuestColor(e.target.value)); }} />
+                <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 ml-3">Quest Title</span>
+                <input 
+                  name="title" 
+                  required 
+                  placeholder="Clean Bedroom, Soccer Practice..." 
+                  className="w-full p-3.5 sm:p-4 bg-slate-50 rounded-2xl border-2 border-transparent focus:border-indigo-500 outline-none font-black text-base min-h-[48px]" 
+                  value={formTitle} 
+                  onChange={(e) => { setFormTitle(e.target.value); setFormColor(getQuestColor(e.target.value)); }} 
+                />
               </div>
 
               <div className="space-y-1">
-                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-4">Location</span>
-                <input name="location" placeholder="e.g. Backyard, School" className="w-full p-5 bg-slate-50 rounded-2xl border-4 border-transparent focus:border-indigo-500 outline-none font-bold text-sm" value={formLocation} onChange={(e) => setFormLocation(e.target.value)} />
+                <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 ml-3">Location</span>
+                <input 
+                  name="location" 
+                  placeholder="e.g. School, Sports Field, Backyard" 
+                  className="w-full p-3.5 sm:p-4 bg-slate-50 rounded-2xl border-2 border-transparent focus:border-indigo-500 outline-none font-bold text-sm min-h-[48px]" 
+                  value={formLocation} 
+                  onChange={(e) => setFormLocation(e.target.value)} 
+                />
               </div>
               
-              {/* Start and End Time Inputs */}
-              <div className="grid grid-cols-2 gap-4">
+              {/* Times */}
+              <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-4">Time From</span>
-                  <input type="time" value={timeFrom} onChange={e => setTimeFrom(e.target.value)} className="w-full p-4 bg-slate-50 rounded-2xl border-4 border-transparent focus:border-indigo-500 outline-none font-black text-sm text-slate-700 cursor-pointer" />
-                </div>
-                <div className="space-y-1">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-4">Time To</span>
-                  <input type="time" value={timeTo} onChange={e => setTimeTo(e.target.value)} className="w-full p-4 bg-slate-50 rounded-2xl border-4 border-transparent focus:border-indigo-500 outline-none font-black text-sm text-slate-700 cursor-pointer" />
-                </div>
-              </div>
-
-              {/* Dynamic Categories & Custom Number Input (Padded for mobile/tablet) */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-4">Category</span>
-                  <select value={formCategory} onChange={e => setFormCategory(e.target.value)} className="w-full p-4.5 bg-slate-50 rounded-2xl font-black uppercase text-xs cursor-pointer border-4 border-transparent outline-none">
-                    {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                </div>
-                
-                {/* Custom Number Input (Oversized touch targets) */}
-                <div className="space-y-1">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-4">
-                    Repeat on {weekdayName}s (Weeks)
+                  <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 ml-3 flex items-center gap-1">
+                    <Clock size={10} /> Time From
                   </span>
                   <input 
-                    type="number" 
-                    min={0}
-                    max={100}
-                    value={formRepeats || ""} 
-                    onChange={e => setFormRepeats(parseInt(e.target.value) || 0)} 
-                    placeholder="0 (One-Time Quest)" 
-                    className="w-full p-4 bg-slate-50 rounded-2xl border-4 border-transparent focus:border-indigo-500 outline-none font-black text-sm text-slate-700 text-center"
+                    type="time" 
+                    value={timeFrom} 
+                    onChange={e => setTimeFrom(e.target.value)} 
+                    className="w-full p-3 sm:p-3.5 bg-slate-50 rounded-2xl border-2 border-transparent focus:border-indigo-500 outline-none font-black text-sm text-slate-800 cursor-pointer min-h-[48px]" 
+                  />
+                </div>
+                <div className="space-y-1">
+                  <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 ml-3 flex items-center gap-1">
+                    <Clock size={10} /> Time To
+                  </span>
+                  <input 
+                    type="time" 
+                    value={timeTo} 
+                    onChange={e => setTimeTo(e.target.value)} 
+                    className="w-full p-3 sm:p-3.5 bg-slate-50 rounded-2xl border-2 border-transparent focus:border-indigo-500 outline-none font-black text-sm text-slate-800 cursor-pointer min-h-[48px]" 
                   />
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* Category & Recurrence */}
+              <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-4">Assignee</span>
-                  <select name="member" className="w-full p-4.5 bg-slate-50 rounded-2xl font-black uppercase text-xs cursor-pointer border-4 border-transparent outline-none">
+                  <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 ml-3">Category</span>
+                  <select 
+                    value={formCategory} 
+                    onChange={e => setFormCategory(e.target.value)} 
+                    className="w-full p-3.5 bg-slate-50 rounded-2xl font-black uppercase text-xs cursor-pointer border-2 border-transparent outline-none min-h-[48px]"
+                  >
+                    {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                
+                <div className="space-y-1">
+                  <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 ml-3 truncate block">
+                    Repeat on {weekdayName}s
+                  </span>
+                  <input 
+                    type="number" 
+                    min={0}
+                    max={52}
+                    value={formRepeats || ""} 
+                    onChange={e => setFormRepeats(parseInt(e.target.value) || 0)} 
+                    placeholder="0 (One-Time)" 
+                    className="w-full p-3.5 bg-slate-50 rounded-2xl border-2 border-transparent focus:border-indigo-500 outline-none font-black text-sm text-slate-800 text-center min-h-[48px]"
+                  />
+                </div>
+              </div>
+
+              {/* Assignee & Color */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 ml-3">Assign Hero</span>
+                  <select 
+                    name="member" 
+                    className="w-full p-3.5 bg-slate-50 rounded-2xl font-black uppercase text-xs cursor-pointer border-2 border-transparent outline-none min-h-[48px]"
+                  >
                     <option value="">Whole Family</option>
                     {memberList.map((m: any) => <option key={m.id} value={m.id}>{m.name}</option>)}
                   </select>
                 </div>
                 
-                {/* Unlocked Custom Color Selector Dropdown */}
                 <div className="space-y-1">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-4">Quest Color</span>
+                  <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 ml-3">Quest Color</span>
                   <select 
                     name="color" 
                     value={formColor} 
                     onChange={(e) => setFormColor(e.target.value)} 
-                    className="w-full p-4.5 bg-slate-50 rounded-2xl font-black uppercase text-xs border-4 border-transparent outline-none cursor-pointer"
+                    className="w-full p-3.5 bg-slate-50 rounded-2xl font-black uppercase text-xs border-2 border-transparent outline-none cursor-pointer min-h-[48px]"
                   >
-                    <option value="">-- Hashed Auto-Color --</option>
+                    <option value="">Auto-Color</option>
                     {EVENT_COLORS.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
               </div>
               
-              <button type="submit" className="w-full bg-slate-900 text-white py-5 rounded-[2rem] font-black text-xl shadow-2xl hover:bg-indigo-600 transition-all active:scale-95 flex items-center justify-center gap-3 cursor-pointer mt-4 min-h-[48px]">
-                <Check size={24} /> LOG QUESTS
+              <button 
+                type="submit" 
+                className="w-full bg-slate-900 hover:bg-indigo-600 active:scale-95 text-white py-4 rounded-2xl font-black text-sm uppercase tracking-wider shadow-xl transition-all flex items-center justify-center gap-2 cursor-pointer mt-2 min-h-[48px]"
+              >
+                <Check size={20} /> LOG QUESTS
               </button>
            </form>
          </div>

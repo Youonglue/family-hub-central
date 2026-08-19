@@ -1,6 +1,6 @@
 // server/routes/auth.ts
 import { randomBytes, scryptSync, timingSafeEqual, randomUUID } from "node:crypto";
-import { copyFileSync, mkdirSync, readdirSync, unlinkSync, existsSync } from "node:fs";
+import { copyFileSync, mkdirSync, readdirSync, unlinkSync, existsSync, statSync, createReadStream } from "node:fs";
 import path from "node:path";
 import { db } from "../db.js";
 
@@ -20,6 +20,9 @@ export default async function authRoutes(app: any) {
     try {
       db.prepare("ALTER TABLE users ADD COLUMN recovery_key_hash TEXT").run();
     } catch (e) {}
+    try {
+      db.prepare("ALTER TABLE users ADD COLUMN needs_pin_setup INTEGER DEFAULT 0").run();
+    } catch (e) {}
   };
 
   app.get("/me", async (req: any) => {
@@ -31,6 +34,7 @@ export default async function authRoutes(app: any) {
       ...user, 
       role: user.role || 'user', 
       has_pin: !!user.pin_hash,
+      needs_pin_setup: user.needs_pin_setup === 1 || !user.pin_hash,
       has_recovery_key: !!user.recovery_key_hash,
       ntfy_topic: user.ntfy_topic || ""
     };
@@ -43,7 +47,7 @@ export default async function authRoutes(app: any) {
     const hash = scryptSync(password, salt, 64).toString("hex");
     const id = randomUUID();
     
-    db.prepare(`INSERT INTO users (id, username, password_hash, is_admin, role, created_at) VALUES (?,?,?,?,?,datetime('now'))`)
+    db.prepare(`INSERT INTO users (id, username, password_hash, is_admin, role, needs_pin_setup, created_at) VALUES (?,?,?,?,?,1,datetime('now'))`)
       .run(id, username, `scrypt$${salt}$${hash}`, isFirst ? 1 : 0, isFirst ? 'admin' : 'user');
     
     const token = randomBytes(32).toString("hex");
@@ -77,9 +81,9 @@ export default async function authRoutes(app: any) {
     return { success: true };
   });
 
-  // PIN Verification: Elevates session and returns linked hero
+  // PIN Verification & Setup directly from Kiosk
   app.post("/verify-pin", async (req: any, reply: any) => {
-    const { userId, pin } = req.body;
+    const { userId, pin, isSetup } = req.body;
     const activeUser = getSessionUser(req);
     const targetUserId = userId || activeUser?.id;
 
@@ -88,8 +92,31 @@ export default async function authRoutes(app: any) {
     }
     
     const user = db.prepare("SELECT * FROM users WHERE id = ?").get(targetUserId) as any;
-    if (!user || !user.pin_hash) {
-      return reply.code(400).send({ error: "Selected account has no Admin PIN set" });
+    if (!user) {
+      return reply.code(404).send({ error: "User not found" });
+    }
+
+    if (isSetup || !user.pin_hash || user.needs_pin_setup === 1) {
+      if (!pin || pin.length !== 6) {
+        return reply.code(400).send({ error: "PIN must be 6 digits" });
+      }
+
+      const salt = randomBytes(16).toString("hex");
+      const hash = scryptSync(pin, salt, 64).toString("hex");
+      db.prepare("UPDATE users SET pin_hash = ?, needs_pin_setup = 0 WHERE id = ?").run(`scrypt$${salt}$${hash}`, user.id);
+      
+      const token = randomBytes(32).toString("hex");
+      db.prepare("INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, datetime('now', '+30 minutes'))").run(token, user.id);
+      
+      const linkedHero = db.prepare("SELECT * FROM family_members WHERE user_id = ? OR LOWER(name) = LOWER(?)").get(user.id, user.username) as any;
+
+      reply.header("Set-Cookie", `fh_sid=${token}; Path=/; Max-Age=1800; HttpOnly; SameSite=Lax`);
+      return { 
+        success: true, 
+        setupComplete: true,
+        user: { id: user.id, username: user.username, role: user.role },
+        member: linkedHero || null 
+      };
     }
 
     const [schema, salt, hash] = user.pin_hash.split("$");
@@ -112,7 +139,7 @@ export default async function authRoutes(app: any) {
     return reply.code(401).send({ error: "Wrong PIN" });
   });
 
-  // --- RECOVERY SYSTEM: GENERATE MASTER RECOVERY KEY ---
+  // Emergency Master Recovery Key Generation
   app.post("/generate-recovery-key", async (req: any, reply: any) => {
     try {
       ensureRecoverySchema();
@@ -135,7 +162,7 @@ export default async function authRoutes(app: any) {
     }
   });
 
-  // --- RECOVERY SYSTEM: EMERGENCY RESET USING MASTER KEY ---
+  // Emergency Reset using Master Key
   app.post("/emergency-recover", async (req: any, reply: any) => {
     try {
       ensureRecoverySchema();
@@ -182,7 +209,39 @@ export default async function authRoutes(app: any) {
     }
   });
 
-  // --- DATABASE SNAPSHOT ENGINE: TRIGGER MANUAL BACKUP ---
+  // --- AUTOMATED SNAPSHOT ROUTES ---
+
+  // 1. List all available snapshots on disk
+  app.get("/snapshots", async (req: any, reply: any) => {
+    try {
+      const user = getSessionUser(req);
+      if (!user || user.role !== 'admin') {
+        return reply.code(403).send({ error: "Only administrators can access snapshots" });
+      }
+
+      const backupDir = path.resolve("./data/backups");
+      mkdirSync(backupDir, { recursive: true });
+
+      const files = readdirSync(backupDir)
+        .filter(f => f.endsWith(".db"))
+        .map(f => {
+          const stats = statSync(path.join(backupDir, f));
+          return {
+            filename: f,
+            sizeBytes: stats.size,
+            sizeFormatted: (stats.size / 1024 / 1024).toFixed(2) + " MB",
+            createdAt: stats.mtime.toISOString(),
+          };
+        })
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+      return files;
+    } catch (error) {
+      return reply.code(500).send({ error: (error as Error).message });
+    }
+  });
+
+  // 2. Trigger Manual Snapshot
   app.post("/create-snapshot", async (req: any, reply: any) => {
     try {
       const user = getSessionUser(req);
@@ -193,27 +252,59 @@ export default async function authRoutes(app: any) {
       const backupDir = path.resolve("./data/backups");
       mkdirSync(backupDir, { recursive: true });
 
+      try {
+        db.pragma("wal_checkpoint(TRUNCATE)");
+      } catch (e) {}
+
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-      const backupPath = path.join(backupDir, `familyhub-${timestamp}.db`);
+      const backupFilename = `familyhub-snap-${timestamp}.db`;
+      const backupPath = path.join(backupDir, backupFilename);
       const currentDbPath = path.resolve("./data/familyhub.db");
 
       if (existsSync(currentDbPath)) {
         copyFileSync(currentDbPath, backupPath);
       }
 
-      const files = readdirSync(backupDir).filter(f => f.endsWith(".db")).sort();
-      while (files.length > 7) {
-        const oldest = files.shift();
+      const sortedBackups = readdirSync(backupDir)
+        .filter(f => f.endsWith(".db"))
+        .sort((a, b) => statSync(path.join(backupDir, b)).mtime.getTime() - statSync(path.join(backupDir, a)).mtime.getTime());
+
+      while (sortedBackups.length > 7) {
+        const oldest = sortedBackups.pop();
         if (oldest) unlinkSync(path.join(backupDir, oldest));
       }
 
-      return { success: true, filename: `familyhub-${timestamp}.db` };
+      return { success: true, filename: backupFilename };
     } catch (error) {
       return reply.code(500).send({ error: (error as Error).message });
     }
   });
 
-  // CHANGE PASSWORD ENDPOINT
+  // 3. Download a specific snapshot directly
+  app.get("/download-snapshot/:filename", async (req: any, reply: any) => {
+    try {
+      const user = getSessionUser(req);
+      if (!user || user.role !== 'admin') {
+        return reply.code(403).send({ error: "Unauthorized" });
+      }
+
+      const { filename } = req.params;
+      const safeFilename = path.basename(filename);
+      const filePath = path.resolve("./data/backups", safeFilename);
+
+      if (!existsSync(filePath)) {
+        return reply.code(404).send({ error: "Snapshot file not found" });
+      }
+
+      reply.header("Content-Disposition", `attachment; filename="${safeFilename}"`);
+      reply.header("Content-Type", "application/x-sqlite3");
+      return reply.send(createReadStream(filePath));
+    } catch (error) {
+      return reply.code(500).send({ error: (error as Error).message });
+    }
+  });
+
+  // Change Password Endpoint
   app.post("/change-password", async (req: any, reply: any) => {
     try {
       const user = getSessionUser(req);
@@ -246,7 +337,7 @@ export default async function authRoutes(app: any) {
     }
   });
 
-  // CHANGE USERNAME ENDPOINT
+  // Change Username Endpoint
   app.post("/change-username", async (req: any, reply: any) => {
     try {
       const user = getSessionUser(req);
@@ -277,7 +368,7 @@ export default async function authRoutes(app: any) {
     }
   });
 
-  // SET PIN ENDPOINT
+  // Set PIN Endpoint
   app.post("/set-pin", async (req: any, reply: any) => {
     const user = getSessionUser(req);
     if (!user) {
@@ -307,7 +398,7 @@ export default async function authRoutes(app: any) {
     return { success: true };
   });
 
-  // CLEAR PIN ENDPOINT
+  // Clear PIN Endpoint
   app.post("/clear-pin", async (req: any, reply: any) => {
     const user = getSessionUser(req);
     if (!user) {
@@ -319,7 +410,7 @@ export default async function authRoutes(app: any) {
   });
 
   app.get("/users", async () => {
-    return db.prepare("SELECT id, username, role FROM users").all();
+    return db.prepare("SELECT id, username, role, pin_hash, needs_pin_setup FROM users").all();
   });
 
   app.get("/pin-status", async (req: any) => {
@@ -328,7 +419,7 @@ export default async function authRoutes(app: any) {
       if (!user) return { has_pin: false, needs_pin_setup: false };
       return { 
         has_pin: !!user.pin_hash, 
-        needs_pin_setup: user.needs_pin_setup === 1 
+        needs_pin_setup: user.needs_pin_setup === 1 || !user.pin_hash
       };
     } catch (e) {
       return { has_pin: false, needs_pin_setup: false };
@@ -461,7 +552,7 @@ export default async function authRoutes(app: any) {
       return reply.code(400).send({ error: "Cannot demote the last remaining administrator." });
     }
 
-    db.prepare("UPDATE users SET role = 'user', is_admin = 0, pin_hash = NULL WHERE id = ?").run(targetUserId);
+    db.prepare("UPDATE users SET role = 'user', is_admin = 0, pin_hash = NULL, needs_pin_setup = 0 WHERE id = ?").run(targetUserId);
     try {
       db.prepare("UPDATE family_members SET role = 'user' WHERE id = ? OR user_id = ?").run(targetUserId, targetUserId);
     } catch (e) {}

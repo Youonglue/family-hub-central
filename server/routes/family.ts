@@ -5,7 +5,6 @@ import { db } from "../db.js";
 export default async function familyRoutes(app: any, opts: any) {
   const { broadcast } = opts;
 
-  // Self-heal utility to ensure family_members and all visibility columns exist
   const ensureTablesExist = () => {
     try {
       db.prepare(`
@@ -64,9 +63,9 @@ export default async function familyRoutes(app: any, opts: any) {
       db.prepare(`
         INSERT INTO family_members (
           id, name, is_kid, is_parent, avatar_color, avatar_icon, level, xp, 
-          show_on_dashboard, show_on_chores, show_on_rewards, show_on_kiosk, created_at
+          show_on_dashboard, show_on_leaderboard, show_on_chores, show_on_rewards, show_on_kiosk, created_at
         ) 
-        VALUES (?, ?, ?, ?, '#6366f1', 'Ghost', 1, 0, 1, 1, 1, 1, datetime('now'))
+        VALUES (?, ?, ?, ?, '#6366f1', 'Ghost', 1, 0, 1, 1, 1, 1, 1, datetime('now'))
       `).run(id, name, isKidVal, isParentVal);
       
       broadcast("members");
@@ -77,7 +76,7 @@ export default async function familyRoutes(app: any, opts: any) {
     }
   });
 
-  // 3. UPDATE HERO VISIBILITY TOGGLES (Admin Only)
+  // 3. UPDATE HERO VISIBILITY TOGGLES (Admin Only - Synchronizes Leaderboard & Dashboard flags)
   app.post("/visibility", async (req: any, reply: any) => {
     try {
       ensureTablesExist();
@@ -92,9 +91,21 @@ export default async function familyRoutes(app: any, opts: any) {
         return reply.code(400).send({ error: "Invalid section specified" });
       }
 
-      db.prepare(`UPDATE family_members SET ${section} = ? WHERE id = ?`).run(visible ? 1 : 0, memberId);
+      const val = visible ? 1 : 0;
+
+      // If updating dashboard, update both show_on_dashboard and show_on_leaderboard
+      if (section === "show_on_dashboard" || section === "show_on_leaderboard") {
+        db.prepare(`
+          UPDATE family_members 
+          SET show_on_dashboard = ?, show_on_leaderboard = ? 
+          WHERE id = ?
+        `).run(val, val, memberId);
+      } else {
+        db.prepare(`UPDATE family_members SET ${section} = ? WHERE id = ?`).run(val, memberId);
+      }
       
       broadcast("members");
+      broadcast("points");
       return { success: true };
     } catch (error) {
       console.error("❌ VISIBILITY UPDATE ERROR:", error);

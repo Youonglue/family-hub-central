@@ -1,4 +1,7 @@
+// src/components/calendar/WeekView.tsx
+import React from "react";
 import { Clock } from "lucide-react";
+import { Avatar, parseAvatarConfig } from "@/components/avatar/Avatar";
 
 const pad = (n: number) => String(n).padStart(2, "0");
 const ymd = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -8,34 +11,48 @@ const startOfWeek = (d: Date) => { const s = new Date(d.getFullYear(), d.getMont
 export function WeekView({ anchor, byDay, onPickDay, onSelectDate, memberList }: any) {
   const start = startOfWeek(anchor);
   const days = Array.from({ length: 7 }, (_, i) => addDaysL(start, i));
+
   return (
-    <div className="grid grid-cols-1 md:grid-cols-7 gap-4">
+    <div className="grid grid-cols-1 md:grid-cols-7 gap-3 sm:gap-4">
       {days.map(d => {
         const key = ymd(d);
         const evs = byDay.get(key) ?? [];
+        const isToday = key === ymd(new Date());
+
         return (
-          <div key={key} className="bg-white rounded-[2.5rem] border-4 border-slate-50 p-6 min-h-[400px] shadow-lg cursor-pointer hover:border-slate-200 transition-all group" onClick={() => { onPickDay(d); onSelectDate(d); }}>
-             <p className="text-3xl font-black mb-6 text-slate-900 group-hover:text-indigo-600 transition-colors">{d.getDate()}</p>
-             <div className="space-y-3">
+          <div 
+            key={key} 
+            className={`bg-white rounded-3xl sm:rounded-[2.5rem] border-2 sm:border-4 p-4 sm:p-5 min-h-[140px] md:min-h-[380px] shadow-md cursor-pointer hover:border-indigo-200 transition-all select-none ${
+              isToday ? 'border-slate-900 bg-slate-50/50 shadow-lg' : 'border-slate-50'
+            }`} 
+            onClick={() => { onPickDay(d); onSelectDate(d); }}
+          >
+             <div className="flex items-center justify-between mb-3 md:mb-6">
+               <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                 {d.toLocaleDateString(undefined, { weekday: "short" })}
+               </span>
+               <p className={`text-2xl sm:text-3xl font-black ${isToday ? 'text-indigo-600' : 'text-slate-900'}`}>
+                 {d.getDate()}
+               </p>
+             </div>
+
+             <div className="space-y-2">
                {evs.map((e: any) => {
                  const assignedHero = memberList.find((m: any) => m.id === e.member_id);
+                 const avatarConfig = parseAvatarConfig(assignedHero?.avatar_config);
+
                  return (
                    <div 
                       key={e.id} 
-                      className="p-4 rounded-2xl bg-slate-50 border-l-4 shadow-sm flex flex-col gap-1" 
-                      style={{ borderLeftColor: e.color || 'gray' }}
+                      className="p-3 rounded-2xl bg-slate-50 border-l-4 shadow-xs flex flex-col gap-0.5" 
+                      style={{ borderLeftColor: e.color || '#6366f1' }}
                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="font-black text-sm leading-tight text-slate-900 flex-1 truncate">
+                      <div className="flex items-center justify-between gap-1.5">
+                        <p className="font-black text-xs sm:text-sm leading-tight text-slate-900 flex-1 truncate">
                             {e.title}
                         </p>
                         {assignedHero && (
-                          <div 
-                            className="size-4 rounded-full flex items-center justify-center text-[7px] font-black text-white shrink-0 shadow-inner animate-in zoom-in-50" 
-                            style={{ backgroundColor: assignedHero.avatar_color || '#ccc' }}
-                          >
-                            {assignedHero.name[0].toUpperCase()}
-                          </div>
+                          <Avatar config={avatarConfig} className="size-4 rounded-md shrink-0 shadow-xs" />
                         )}
                       </div>
                       {e.time_from && (
