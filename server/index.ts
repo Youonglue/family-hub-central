@@ -2,6 +2,8 @@
 import Fastify from "fastify";
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
+import fastifyHelmet from "@fastify/helmet";
+import fastifyRateLimit from "@fastify/rate-limit";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { copyFileSync, mkdirSync, readdirSync, unlinkSync, existsSync, statSync } from "node:fs";
@@ -29,24 +31,20 @@ function runAutoSnapshot() {
     const currentDbPath = path.resolve("./data/familyhub.db");
     if (!existsSync(currentDbPath)) return;
 
-    // Check if we already took a snapshot today (format: YYYY-MM-DD)
     const todayStr = new Date().toISOString().slice(0, 10);
     const existingFiles = readdirSync(backupDir).filter(f => f.endsWith(".db"));
     const alreadyBackedUpToday = existingFiles.some(f => f.includes(todayStr));
 
     if (!alreadyBackedUpToday || existingFiles.length === 0) {
-      // 1. Flush SQLite WAL memory pages safely to disk
       try {
         db.pragma("wal_checkpoint(TRUNCATE)");
       } catch (e) {}
 
-      // 2. Create timestamped snapshot
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
       const targetSnapshotPath = path.join(backupDir, `familyhub-auto-${timestamp}.db`);
       copyFileSync(currentDbPath, targetSnapshotPath);
       console.log(`🛡️ Automated Snapshot Created: familyhub-auto-${timestamp}.db`);
 
-      // 3. Keep latest 7 snapshots, delete older ones
       const sortedBackups = readdirSync(backupDir)
         .filter(f => f.endsWith(".db"))
         .sort((a, b) => {
@@ -66,17 +64,30 @@ function runAutoSnapshot() {
   }
 }
 
-// Run initial snapshot on boot and schedule every 6 hours
 runAutoSnapshot();
 setInterval(runAutoSnapshot, 6 * 60 * 60 * 1000);
 
-// MUSCLE: ignoreTrailingSlash ensures routes like /api/chores/ don't return 404
 const app = Fastify({ 
   logger: false,
   ignoreTrailingSlash: true 
 });
 
+// 1. Register WebSockets
 await app.register(fastifyWebsocket);
+
+// 2. Register Security Headers (Helmet)
+await app.register(fastifyHelmet, {
+  contentSecurityPolicy: false, // Allows Vite inline bundles and local avatar SVGs
+  crossOriginEmbedderPolicy: false,
+  frameguard: { action: "deny" } // Prevents clickjacking in iframes
+});
+
+// 3. Register Global Anti-Brute-Force Rate Limiter
+await app.register(fastifyRateLimit, {
+  max: 120, // 120 requests per minute per IP for general endpoints
+  timeWindow: "1 minute",
+  allowList: ["127.0.0.1"]
+});
 
 // --- BROADCASTER MUSCLE ---
 const connections = new Set<any>();
@@ -104,12 +115,10 @@ app.addHook("preHandler", async (req, reply) => {
   const url = req.url;
   const method = req.method;
 
-  // 1. If not an API request, bypass gatekeeper completely
   if (!url.startsWith("/api")) {
     return;
   }
 
-  // 2. Whitelist open unauthenticated API endpoints
   const publicPaths = [
     "/api/auth/login", 
     "/api/auth/register", 
@@ -123,12 +132,10 @@ app.addHook("preHandler", async (req, reply) => {
     return;
   }
 
-  // 3. Whitelist GET (read-only) queries for kiosk and character select
   if (method === "GET" && (url.startsWith("/api/members") || url.startsWith("/api/events") || url.startsWith("/api/notifications") || url.startsWith("/api/auth/users"))) {
     return;
   }
 
-  // 4. All other API requests require valid session
   const user = getSession(req);
   if (!user) return reply.code(401).send({ error: "Unauthorized" });
   (req as any).user = user;

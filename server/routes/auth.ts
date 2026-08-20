@@ -4,6 +4,64 @@ import { copyFileSync, mkdirSync, readdirSync, unlinkSync, existsSync, statSync,
 import path from "node:path";
 import { db } from "../db.js";
 
+// Cryptographic Hardening: Upgraded cost parameters (N=32768, r=8, p=1)
+const SCRYPT_OPTIONS = {
+  cost: 32768,
+  blockSize: 8,
+  parallelization: 1,
+  maxmem: 64 * 1024 * 1024
+};
+
+function hashSecret(secret: string, salt: string): string {
+  return scryptSync(secret, salt, 64, SCRYPT_OPTIONS).toString("hex");
+}
+
+// Dual-Compatibility Verifier: Checks both hardened and legacy scrypt hashes safely
+function verifySecret(secret: string, storedHashString: string): boolean {
+  try {
+    if (!storedHashString || typeof storedHashString !== "string") return false;
+    const parts = storedHashString.split("$");
+    if (parts.length < 3) return false;
+    const [, salt, expectedHash] = parts;
+    const expectedBuf = Buffer.from(expectedHash, "hex");
+
+    // 1. Try with hardened parameters
+    try {
+      const attemptHashHardened = scryptSync(secret, salt, 64, SCRYPT_OPTIONS).toString("hex");
+      const attemptBufHardened = Buffer.from(attemptHashHardened, "hex");
+      if (expectedBuf.length === attemptBufHardened.length && timingSafeEqual(expectedBuf, attemptBufHardened)) {
+        return true;
+      }
+    } catch {}
+
+    // 2. Fallback to default/legacy scrypt parameters for existing accounts
+    try {
+      const attemptHashLegacy = scryptSync(secret, salt, 64).toString("hex");
+      const attemptBufLegacy = Buffer.from(attemptHashLegacy, "hex");
+      if (expectedBuf.length === attemptBufLegacy.length && timingSafeEqual(expectedBuf, attemptBufLegacy)) {
+        return true;
+      }
+    } catch {}
+
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+// Background Stale Session Purge Utility
+function pruneExpiredSessions() {
+  try {
+    const result = db.prepare("DELETE FROM sessions WHERE expires_at <= datetime('now')").run();
+    if (result.changes > 0) {
+      console.log(`🧹 Security Pruner: Evicted ${result.changes} expired session(s)`);
+    }
+  } catch (e) {}
+}
+
+pruneExpiredSessions();
+setInterval(pruneExpiredSessions, 60 * 60 * 1000);
+
 export default async function authRoutes(app: any) {
   const getSessionUser = (req: any) => {
     if (req.user) return req.user;
@@ -40,32 +98,48 @@ export default async function authRoutes(app: any) {
     };
   });
 
-  app.post("/register", async (req: any, reply: any) => {
+  // Rate-limited registration
+  app.post("/register", {
+    config: {
+      rateLimit: {
+        max: 5,
+        timeWindow: "1 minute"
+      }
+    }
+  }, async (req: any, reply: any) => {
     const { username, password } = req.body;
     const isFirst = (db.prepare("SELECT COUNT(*) as n FROM users").get() as any).n === 0;
     const salt = randomBytes(16).toString("hex");
-    const hash = scryptSync(password, salt, 64).toString("hex");
+    const hash = hashSecret(password, salt);
     const id = randomUUID();
     
     db.prepare(`INSERT INTO users (id, username, password_hash, is_admin, role, needs_pin_setup, created_at) VALUES (?,?,?,?,?,1,datetime('now'))`)
       .run(id, username, `scrypt$${salt}$${hash}`, isFirst ? 1 : 0, isFirst ? 'admin' : 'user');
     
-    const token = randomBytes(32).toString("hex");
+    const token = randomBytes(64).toString("hex");
     db.prepare("INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, datetime('now', '+30 days'))").run(token, id);
-    reply.header("Set-Cookie", `fh_sid=${token}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax`);
+    reply.header("Set-Cookie", `fh_sid=${token}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Strict`);
     return { success: true };
   });
 
-  app.post("/login", async (req: any, reply: any) => {
+  // Rate-limited login
+  app.post("/login", {
+    config: {
+      rateLimit: {
+        max: 6,
+        timeWindow: "1 minute"
+      }
+    }
+  }, async (req: any, reply: any) => {
     const { username, password } = req.body;
     const user = db.prepare("SELECT * FROM users WHERE username = ?").get(username) as any;
+    
     if (user && user.password_hash) {
-      const [schema, salt, hash] = user.password_hash.split("$");
-      const attempt = scryptSync(password, salt, 64).toString("hex");
-      if (timingSafeEqual(Buffer.from(hash, "hex"), Buffer.from(attempt, "hex"))) {
-        const token = randomBytes(32).toString("hex");
+      const isValid = verifySecret(password, user.password_hash);
+      if (isValid) {
+        const token = randomBytes(64).toString("hex");
         db.prepare("INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, datetime('now', '+30 days'))").run(token, user.id);
-        reply.header("Set-Cookie", `fh_sid=${token}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax`);
+        reply.header("Set-Cookie", `fh_sid=${token}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Strict`);
         return { success: true };
       }
     }
@@ -77,12 +151,19 @@ export default async function authRoutes(app: any) {
     if (token) {
       db.prepare("DELETE FROM sessions WHERE token = ?").run(token);
     }
-    reply.header("Set-Cookie", "fh_sid=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax");
+    reply.header("Set-Cookie", "fh_sid=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict");
     return { success: true };
   });
 
-  // PIN Verification & Setup directly from Kiosk
-  app.post("/verify-pin", async (req: any, reply: any) => {
+  // PIN Verification (Supports both new scrypt and legacy hashes)
+  app.post("/verify-pin", {
+    config: {
+      rateLimit: {
+        max: 6,
+        timeWindow: "1 minute"
+      }
+    }
+  }, async (req: any, reply: any) => {
     const { userId, pin, isSetup } = req.body;
     const activeUser = getSessionUser(req);
     const targetUserId = userId || activeUser?.id;
@@ -102,15 +183,15 @@ export default async function authRoutes(app: any) {
       }
 
       const salt = randomBytes(16).toString("hex");
-      const hash = scryptSync(pin, salt, 64).toString("hex");
+      const hash = hashSecret(pin, salt);
       db.prepare("UPDATE users SET pin_hash = ?, needs_pin_setup = 0 WHERE id = ?").run(`scrypt$${salt}$${hash}`, user.id);
       
-      const token = randomBytes(32).toString("hex");
+      const token = randomBytes(64).toString("hex");
       db.prepare("INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, datetime('now', '+30 minutes'))").run(token, user.id);
       
       const linkedHero = db.prepare("SELECT * FROM family_members WHERE user_id = ? OR LOWER(name) = LOWER(?)").get(user.id, user.username) as any;
 
-      reply.header("Set-Cookie", `fh_sid=${token}; Path=/; Max-Age=1800; HttpOnly; SameSite=Lax`);
+      reply.header("Set-Cookie", `fh_sid=${token}; Path=/; Max-Age=1800; HttpOnly; SameSite=Strict`);
       return { 
         success: true, 
         setupComplete: true,
@@ -119,16 +200,14 @@ export default async function authRoutes(app: any) {
       };
     }
 
-    const [schema, salt, hash] = user.pin_hash.split("$");
-    const attempt = scryptSync(pin, salt, 64).toString("hex");
-    
-    if (timingSafeEqual(Buffer.from(hash, "hex"), Buffer.from(attempt, "hex"))) {
-      const token = randomBytes(32).toString("hex");
+    const isValid = verifySecret(pin, user.pin_hash);
+    if (isValid) {
+      const token = randomBytes(64).toString("hex");
       db.prepare("INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, datetime('now', '+30 minutes'))").run(token, user.id);
       
       const linkedHero = db.prepare("SELECT * FROM family_members WHERE user_id = ? OR LOWER(name) = LOWER(?)").get(user.id, user.username) as any;
 
-      reply.header("Set-Cookie", `fh_sid=${token}; Path=/; Max-Age=1800; HttpOnly; SameSite=Lax`);
+      reply.header("Set-Cookie", `fh_sid=${token}; Path=/; Max-Age=1800; HttpOnly; SameSite=Strict`);
       return { 
         success: true, 
         user: { id: user.id, username: user.username, role: user.role },
@@ -152,7 +231,7 @@ export default async function authRoutes(app: any) {
       const formattedKey = `FHUB-${rawKey.slice(0, 4)}-${rawKey.slice(4, 8)}-${rawKey.slice(8, 12)}-${rawKey.slice(12, 16)}-${rawKey.slice(16, 20)}`;
 
       const salt = randomBytes(16).toString("hex");
-      const hash = scryptSync(formattedKey.replace(/-/g, ""), salt, 64).toString("hex");
+      const hash = hashSecret(formattedKey.replace(/-/g, ""), salt);
       
       db.prepare("UPDATE users SET recovery_key_hash = ? WHERE id = ?").run(`scrypt$${salt}$${hash}`, user.id);
 
@@ -177,21 +256,22 @@ export default async function authRoutes(app: any) {
       }
 
       const cleanInputKey = recoveryKey.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
-      const [schema, salt, hash] = user.recovery_key_hash.split("$");
-      const attempt = scryptSync(cleanInputKey, salt, 64).toString("hex");
+      const isValid = verifySecret(cleanInputKey, user.recovery_key_hash);
 
-      if (!timingSafeEqual(Buffer.from(hash, "hex"), Buffer.from(attempt, "hex"))) {
+      if (!isValid) {
         return reply.code(401).send({ error: "Invalid Recovery Key" });
       }
 
       const newSalt = randomBytes(16).toString("hex");
-      const newPassHash = scryptSync(newPassword, newSalt, 64).toString("hex");
+      const newPassHash = hashSecret(newPassword, newSalt);
 
       let newPinHash = null;
       if (newPin && newPin.length === 6) {
         const pinSalt = randomBytes(16).toString("hex");
-        newPinHash = `scrypt$${pinSalt}$${scryptSync(newPin, pinSalt, 64).toString("hex")}`;
+        newPinHash = `scrypt$${pinSalt}$${hashSecret(newPin, pinSalt)}`;
       }
+
+      db.prepare("DELETE FROM sessions WHERE user_id = ?").run(user.id);
 
       db.prepare(`
         UPDATE users 
@@ -199,9 +279,9 @@ export default async function authRoutes(app: any) {
         WHERE id = ?
       `).run(`scrypt$${newSalt}$${newPassHash}`, newPinHash, newPinHash ? 0 : 1, user.id);
 
-      const token = randomBytes(32).toString("hex");
+      const token = randomBytes(64).toString("hex");
       db.prepare("INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, datetime('now', '+30 days'))").run(token, user.id);
-      reply.header("Set-Cookie", `fh_sid=${token}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax`);
+      reply.header("Set-Cookie", `fh_sid=${token}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Strict`);
 
       return { success: true, message: "Account recovered and elevated successfully!" };
     } catch (error) {
@@ -209,9 +289,7 @@ export default async function authRoutes(app: any) {
     }
   });
 
-  // --- AUTOMATED SNAPSHOT ROUTES ---
-
-  // 1. List all available snapshots on disk
+  // Automated Snapshot Routes
   app.get("/snapshots", async (req: any, reply: any) => {
     try {
       const user = getSessionUser(req);
@@ -241,7 +319,6 @@ export default async function authRoutes(app: any) {
     }
   });
 
-  // 2. Trigger Manual Snapshot
   app.post("/create-snapshot", async (req: any, reply: any) => {
     try {
       const user = getSessionUser(req);
@@ -280,7 +357,6 @@ export default async function authRoutes(app: any) {
     }
   });
 
-  // 3. Download a specific snapshot directly
   app.get("/download-snapshot/:filename", async (req: any, reply: any) => {
     try {
       const user = getSessionUser(req);
@@ -318,17 +394,21 @@ export default async function authRoutes(app: any) {
       }
 
       if (currentPassword && user.password_hash) {
-        const [schema, salt, hash] = user.password_hash.split("$");
-        const attempt = scryptSync(currentPassword, salt, 64).toString("hex");
-        if (!timingSafeEqual(Buffer.from(hash, "hex"), Buffer.from(attempt, "hex"))) {
+        const isValid = verifySecret(currentPassword, user.password_hash);
+        if (!isValid) {
           return reply.code(400).send({ error: "Current password is incorrect" });
         }
       }
 
       const newSalt = randomBytes(16).toString("hex");
-      const newHash = scryptSync(newPassword, newSalt, 64).toString("hex");
+      const newHash = hashSecret(newPassword, newSalt);
       
       db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(`scrypt$${newSalt}$${newHash}`, user.id);
+
+      const currentToken = req.headers.cookie?.match(/fh_sid=([^;]+)/)?.[1];
+      if (currentToken) {
+        db.prepare("DELETE FROM sessions WHERE user_id = ? AND token != ?").run(user.id, currentToken);
+      }
 
       return { success: true, message: "Password updated successfully" };
     } catch (error) {
@@ -337,7 +417,6 @@ export default async function authRoutes(app: any) {
     }
   });
 
-  // Change Username Endpoint
   app.post("/change-username", async (req: any, reply: any) => {
     try {
       const user = getSessionUser(req);
@@ -351,9 +430,8 @@ export default async function authRoutes(app: any) {
       }
 
       if (currentPassword && user.password_hash) {
-        const [schema, salt, hash] = user.password_hash.split("$");
-        const attempt = scryptSync(currentPassword, salt, 64).toString("hex");
-        if (!timingSafeEqual(Buffer.from(hash, "hex"), Buffer.from(attempt, "hex"))) {
+        const isValid = verifySecret(currentPassword, user.password_hash);
+        if (!isValid) {
           return reply.code(400).send({ error: "Current password is incorrect" });
         }
       }
@@ -385,20 +463,18 @@ export default async function authRoutes(app: any) {
     }
 
     if (currentPassword && user.password_hash) {
-      const [schema, salt, hash] = user.password_hash.split("$");
-      const attempt = scryptSync(currentPassword, salt, 64).toString("hex");
-      if (!timingSafeEqual(Buffer.from(hash, "hex"), Buffer.from(attempt, "hex"))) {
+      const isValid = verifySecret(currentPassword, user.password_hash);
+      if (!isValid) {
         return reply.code(400).send({ error: "Current password is incorrect" });
       }
     }
 
     const salt = randomBytes(16).toString("hex");
-    const hash = scryptSync(pin, salt, 64).toString("hex");
+    const hash = hashSecret(pin, salt);
     db.prepare(`UPDATE users SET pin_hash = ?, needs_pin_setup = 0 WHERE id = ?`).run(`scrypt$${salt}$${hash}`, user.id);
     return { success: true };
   });
 
-  // Clear PIN Endpoint
   app.post("/clear-pin", async (req: any, reply: any) => {
     const user = getSessionUser(req);
     if (!user) {
