@@ -69,24 +69,55 @@ setInterval(runAutoSnapshot, 6 * 60 * 60 * 1000);
 
 const app = Fastify({ 
   logger: false,
-  ignoreTrailingSlash: true 
+  ignoreTrailingSlash: true,
+  trustProxy: true
 });
 
-// 1. Register WebSockets
 await app.register(fastifyWebsocket);
 
-// 2. Register Security Headers (Helmet)
 await app.register(fastifyHelmet, {
-  contentSecurityPolicy: false, // Allows Vite inline bundles and local avatar SVGs
+  contentSecurityPolicy: false,
   crossOriginEmbedderPolicy: false,
-  frameguard: { action: "deny" } // Prevents clickjacking in iframes
+  frameguard: { action: "deny" }
 });
 
-// 3. Register Global Anti-Brute-Force Rate Limiter
 await app.register(fastifyRateLimit, {
-  max: 120, // 120 requests per minute per IP for general endpoints
+  max: 180,
   timeWindow: "1 minute",
   allowList: ["127.0.0.1"]
+});
+
+// --- LOCAL HOME NETWORK AIR-GAP GUARD ---
+app.addHook("onRequest", async (req, reply) => {
+  const ip = req.ip || req.socket.remoteAddress || "";
+  const cleanIp = ip.replace(/^::ffff:/, "");
+
+  const isLocalSubnet = 
+    cleanIp === "127.0.0.1" || 
+    cleanIp === "::1" || 
+    cleanIp.startsWith("192.168.") || 
+    cleanIp.startsWith("10.") || 
+    cleanIp.startsWith("172.16.") || 
+    cleanIp.startsWith("172.17.") || 
+    cleanIp.startsWith("172.18.") || 
+    cleanIp.startsWith("172.19.") || 
+    cleanIp.startsWith("172.20.") || 
+    cleanIp.startsWith("172.21.") || 
+    cleanIp.startsWith("172.22.") || 
+    cleanIp.startsWith("172.23.") || 
+    cleanIp.startsWith("172.24.") || 
+    cleanIp.startsWith("172.25.") || 
+    cleanIp.startsWith("172.26.") || 
+    cleanIp.startsWith("172.27.") || 
+    cleanIp.startsWith("172.28.") || 
+    cleanIp.startsWith("172.29.") || 
+    cleanIp.startsWith("172.30.") || 
+    cleanIp.startsWith("172.31.");
+
+  if (!isLocalSubnet) {
+    console.warn(`🛑 Blocked non-local connection attempt from IP: ${cleanIp}`);
+    return reply.code(403).send({ error: "Access strictly restricted to home network." });
+  }
 });
 
 // --- BROADCASTER MUSCLE ---
@@ -110,7 +141,7 @@ const getSession = (req: any) => {
   return db.prepare(`SELECT u.* FROM sessions s JOIN users u ON s.user_id = u.id WHERE s.token = ? AND s.expires_at > datetime('now')`).get(token) as any;
 };
 
-// Global Gatekeeper Hook with Read-Only Whitelist
+// Global Gatekeeper Hook with Read-Only & Pairing Whitelist
 app.addHook("preHandler", async (req, reply) => {
   const url = req.url;
   const method = req.method;
@@ -119,12 +150,17 @@ app.addHook("preHandler", async (req, reply) => {
     return;
   }
 
+  // Whitelist public auth & device pairing routes
   const publicPaths = [
     "/api/auth/login", 
     "/api/auth/register", 
     "/api/auth/me", 
     "/api/auth/logout", 
     "/api/auth/emergency-recover",
+    "/api/auth/device-status",
+    "/api/auth/request-pairing",
+    "/api/auth/check-pairing",
+    "/api/auth/pair-with-pin",
     "/api/events/calendar.ics"
   ];
 
@@ -142,7 +178,7 @@ app.addHook("preHandler", async (req, reply) => {
 });
 
 // --- REGISTER MODULAR ROUTES ---
-app.register(authRoutes, { prefix: "/api/auth" });
+app.register(authRoutes, { prefix: "/api/auth", broadcast });
 app.register(familyRoutes, { prefix: "/api/members", broadcast });
 app.register(rewardRoutes, { prefix: "/api/rewards", broadcast });
 app.register(shoppingRoutes, { prefix: "/api/shopping", broadcast });
@@ -180,5 +216,5 @@ app.setNotFoundHandler((req, reply) => {
 });
 
 app.listen({ port: 3000, host: "0.0.0.0" }, () => {
-    console.log(`🚀 FORTRESS ONLINE | 192.168.1.210:3000`);
+    console.log(`🚀 FORTRESS ONLINE | http://192.168.1.210:3000 (Home Subnet Air-Gapped)`);
 });

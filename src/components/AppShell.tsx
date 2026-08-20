@@ -25,6 +25,7 @@ import { KioskLockScreen } from "@/components/kiosk/KioskLockScreen";
 import { KioskPinPortal } from "@/components/kiosk/KioskPinPortal";
 import { KioskHeroSelect } from "@/components/kiosk/KioskHeroSelect";
 import { PortraitHeroSwitcher } from "@/components/kiosk/PortraitHeroSwitcher";
+import { DevicePairingScreen } from "@/components/kiosk/DevicePairingScreen";
 
 const nav = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -45,6 +46,24 @@ export function AppShell({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
   useLanLive(); 
+
+  // --- DEVICE AUTHORIZATION CHECK ---
+  const [deviceToken, setDeviceToken] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem("fh_device_token");
+    } catch {
+      return null;
+    }
+  });
+
+  const deviceStatus = useQuery({
+    queryKey: ["device-status", deviceToken],
+    queryFn: () => {
+      const headers: Record<string, string> = {};
+      if (deviceToken) headers["x-device-token"] = deviceToken;
+      return fetch("/api/auth/device-status", { headers }).then(r => r.json());
+    }
+  });
 
   // --- DATA FETCHING ---
   const me = useQuery({ queryKey: ["me"], queryFn: () => getMe() });
@@ -252,7 +271,8 @@ export function AppShell({ children }: { children: ReactNode }) {
     return true;
   });
 
-  if (me.isLoading || members.isLoading || events.isLoading) {
+  // --- 1. GLOBAL LOADING STATE ---
+  if (deviceStatus.isLoading || me.isLoading || members.isLoading || events.isLoading) {
     return (
       <div className="fixed inset-0 bg-slate-50 flex flex-col items-center justify-center p-4">
         <Loader2 className="size-10 text-indigo-500 animate-spin mb-4" />
@@ -263,7 +283,19 @@ export function AppShell({ children }: { children: ReactNode }) {
     );
   }
 
-  // 1. Idle Lock Screen View
+  // --- 2. DEVICE PAIRING GATEKEEPER (Shows if device is unauthorized) ---
+  if (deviceStatus.data?.is_trusted === false) {
+    return (
+      <DevicePairingScreen
+        onPairedSuccess={(newToken) => {
+          setDeviceToken(newToken);
+          qc.invalidateQueries({ queryKey: ["device-status"] });
+        }}
+      />
+    );
+  }
+
+  // --- 3. IDLE LOCK SCREEN VIEW ---
   if (isIdle) {
     return (
       <KioskLockScreen
@@ -278,7 +310,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     );
   }
 
-  // 2. Admin Quick-PIN Portal
+  // --- 4. ADMIN QUICK-PIN PORTAL ---
   if (showAdminPortal) {
     return (
       <KioskPinPortal
@@ -302,7 +334,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     );
   }
 
-  // 3. Global Character Select ("Which Hero Are You?")
+  // --- 5. GLOBAL CHARACTER SELECT ("Which Hero Are You?") ---
   if (!kioskMember && !isAdmin && visibleKioskHeroes.length > 0) {
     return (
       <KioskHeroSelect
@@ -313,7 +345,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     );
   }
 
-  // 4. Standard App Layout
+  // --- 6. STANDARD APP LAYOUT ---
   return (
     <div className="min-h-screen bg-canvas">
       

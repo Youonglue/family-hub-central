@@ -7,11 +7,12 @@ import { AppShell } from "@/components/AppShell";
 import { getMe, getPinStatus } from "@/lib/auth-client";
 import { ShieldCheck, ShieldAlert, Loader2, Lock } from "lucide-react";
 
-// Sub-component Imports (Compartmentalized)
+// Sub-component Imports
 import { LeaderboardRoster } from "@/components/settings/LeaderboardRoster";
-import { FamilyApprovals } from "@/components/settings/FamilyApprovals"; // Consolidated Approvals Center
+import { FamilyApprovals } from "@/components/settings/FamilyApprovals";
 import { IdentityForms } from "@/components/settings/IdentityForms";
 import { BackupSettings } from "@/components/settings/BackupSettings";
+import { TrustedDevices } from "@/components/settings/TrustedDevices";
 
 export const Route = createFileRoute("/_authenticated/settings")({
   ssr: false,
@@ -29,8 +30,6 @@ function SettingsPage() {
 
   const isAdmin = me.data?.role?.toLowerCase() === "admin";
 
-  // --- HARD ROUTE GUARD ---
-  // If user is loaded and they are NOT an Admin, completely lock them out!
   if (me.isLoading) {
     return (
       <AppShell>
@@ -56,7 +55,6 @@ function SettingsPage() {
     );
   }
 
-  // If already authenticated as Admin, allow direct entry; otherwise provide the inline verification
   const gateActive = pinStatus.data?.has_pin === true && !isAdmin && !unlocked;
 
   async function handleUnlock(e: React.FormEvent) {
@@ -91,7 +89,7 @@ function SettingsPage() {
     <AppShell>
       <div className="mx-auto max-w-4xl px-4 py-4 sm:py-6 md:px-8 md:py-10 space-y-6">
         
-        {/* Header - Mobile & Tablet Responsive */}
+        {/* Header */}
         <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-slate-100 pb-4">
           <div>
             <p className="font-mono text-[9px] sm:text-[10px] uppercase tracking-[0.3em] text-indigo-500 font-black">
@@ -162,20 +160,23 @@ function UnlockedSettings({
 }: { hasPin: boolean; onPinChanged: () => void; onUsernameChanged: () => void }) {
   return (
     <div className="space-y-6 sm:space-y-8">
-      {/* 1. Roster and Point Deductions Administration */}
+      {/* 1. Device Pairing & Zero-Trust Access */}
+      <TrustedDevices />
+
+      {/* 2. Roster and Point Deductions Administration */}
       <LeaderboardRoster />
 
-      {/* 2. Consolidated Family Approvals Center (Quest Approvals & Co-Op Claims) */}
+      {/* 3. Consolidated Family Approvals Center */}
       <FamilyApprovals />
 
-      {/* 3. Hero Identity & Admin Security Credentials */}
+      {/* 4. Hero Identity & Admin Security Credentials */}
       <IdentityForms 
         hasPin={hasPin} 
         onPinChanged={onPinChanged} 
         onUsernameChanged={onUsernameChanged} 
       />
 
-      {/* 4. Encrypted Backup Extraction Tool */}
+      {/* 5. Automated Snapshots & Backup Tool */}
       <BackupSettings />
     </div>
   );

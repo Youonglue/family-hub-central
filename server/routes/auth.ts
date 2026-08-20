@@ -4,7 +4,6 @@ import { copyFileSync, mkdirSync, readdirSync, unlinkSync, existsSync, statSync,
 import path from "node:path";
 import { db } from "../db.js";
 
-// Cryptographic Hardening: Upgraded cost parameters (N=32768, r=8, p=1)
 const SCRYPT_OPTIONS = {
   cost: 32768,
   blockSize: 8,
@@ -16,7 +15,6 @@ function hashSecret(secret: string, salt: string): string {
   return scryptSync(secret, salt, 64, SCRYPT_OPTIONS).toString("hex");
 }
 
-// Dual-Compatibility Verifier: Checks both hardened and legacy scrypt hashes safely
 function verifySecret(secret: string, storedHashString: string): boolean {
   try {
     if (!storedHashString || typeof storedHashString !== "string") return false;
@@ -25,7 +23,6 @@ function verifySecret(secret: string, storedHashString: string): boolean {
     const [, salt, expectedHash] = parts;
     const expectedBuf = Buffer.from(expectedHash, "hex");
 
-    // 1. Try with hardened parameters
     try {
       const attemptHashHardened = scryptSync(secret, salt, 64, SCRYPT_OPTIONS).toString("hex");
       const attemptBufHardened = Buffer.from(attemptHashHardened, "hex");
@@ -34,7 +31,6 @@ function verifySecret(secret: string, storedHashString: string): boolean {
       }
     } catch {}
 
-    // 2. Fallback to default/legacy scrypt parameters for existing accounts
     try {
       const attemptHashLegacy = scryptSync(secret, salt, 64).toString("hex");
       const attemptBufLegacy = Buffer.from(attemptHashLegacy, "hex");
@@ -49,20 +45,18 @@ function verifySecret(secret: string, storedHashString: string): boolean {
   }
 }
 
-// Background Stale Session Purge Utility
 function pruneExpiredSessions() {
   try {
-    const result = db.prepare("DELETE FROM sessions WHERE expires_at <= datetime('now')").run();
-    if (result.changes > 0) {
-      console.log(`🧹 Security Pruner: Evicted ${result.changes} expired session(s)`);
-    }
+    db.prepare("DELETE FROM sessions WHERE expires_at <= datetime('now')").run();
   } catch (e) {}
 }
 
 pruneExpiredSessions();
 setInterval(pruneExpiredSessions, 60 * 60 * 1000);
 
-export default async function authRoutes(app: any) {
+export default async function authRoutes(app: any, opts: any) {
+  const { broadcast } = opts || {};
+
   const getSessionUser = (req: any) => {
     if (req.user) return req.user;
     const token = req.headers.cookie?.match(/fh_sid=([^;]+)/)?.[1];
@@ -98,15 +92,153 @@ export default async function authRoutes(app: any) {
     };
   });
 
-  // Rate-limited registration
-  app.post("/register", {
-    config: {
-      rateLimit: {
-        max: 5,
-        timeWindow: "1 minute"
-      }
+  // --- DEVICE PAIRING & AUTHORIZATION SYSTEM ---
+
+  // 1. Check if the current device is authorized
+  app.get("/device-status", async (req: any) => {
+    const rawHeader = req.headers["x-device-token"];
+    const deviceToken = typeof rawHeader === "string" ? rawHeader : (req.query?.token as string);
+
+    if (!deviceToken) {
+      return { is_trusted: false };
     }
-  }, async (req: any, reply: any) => {
+
+    const device = db.prepare("SELECT * FROM trusted_devices WHERE device_token = ? AND is_trusted = 1").get(deviceToken) as any;
+    if (device) {
+      db.prepare("UPDATE trusted_devices SET last_active = datetime('now') WHERE id = ?").run(device.id);
+      return { is_trusted: true, device_name: device.device_name };
+    }
+
+    return { is_trusted: false };
+  });
+
+  // 2. Request a new 6-character Pairing Code
+  app.post("/request-pairing", async (req: any) => {
+    const { deviceName } = req.body;
+    const rawCode = randomBytes(3).toString("hex").toUpperCase();
+    const pairingCode = `HUB-${rawCode}`;
+    const requestId = randomUUID();
+    const ip = req.ip || req.socket.remoteAddress || "Local";
+    const userAgent = req.headers["user-agent"] || "Unknown Device";
+
+    db.prepare(`
+      INSERT INTO pairing_requests (id, pairing_code, device_name, ip_address, user_agent, status, created_at)
+      VALUES (?, ?, ?, ?, ?, 'pending', datetime('now'))
+    `).run(requestId, pairingCode, (deviceName || "Tablet / Phone").trim(), ip, userAgent);
+
+    if (broadcast) broadcast("pairing-request");
+    return { success: true, pairingCode, requestId };
+  });
+
+  // 3. Poll pairing status from the waiting device (Publicly Accessible)
+  app.get("/check-pairing/:requestId", async (req: any, reply: any) => {
+    const { requestId } = req.params;
+    const request = db.prepare("SELECT * FROM pairing_requests WHERE id = ?").get(requestId) as any;
+    if (!request) return reply.code(404).send({ error: "Request not found" });
+
+    if (request.status === "approved" && request.device_token) {
+      return { status: "approved", deviceToken: request.device_token };
+    }
+
+    return { status: request.status };
+  });
+
+  // 4. Instant On-Device PIN Pairing
+  app.post("/pair-with-pin", async (req: any, reply: any) => {
+    const { pin, requestId, deviceName } = req.body;
+    if (!pin || pin.length !== 6) return reply.code(400).send({ error: "6-digit PIN required" });
+
+    const admin = db.prepare("SELECT * FROM users WHERE (is_admin = 1 OR role = 'admin') AND pin_hash IS NOT NULL LIMIT 1").get() as any;
+    if (!admin || !verifySecret(pin, admin.pin_hash)) {
+      return reply.code(401).send({ error: "Invalid Admin PIN" });
+    }
+
+    const deviceToken = randomBytes(64).toString("hex");
+    const deviceId = randomUUID();
+    const ip = req.ip || req.socket.remoteAddress || "Local";
+    const userAgent = req.headers["user-agent"] || "Trusted Device";
+
+    db.prepare(`
+      INSERT INTO trusted_devices (id, device_name, device_token, ip_address, user_agent, paired_by, is_trusted, last_active, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, 1, datetime('now'), datetime('now'))
+    `).run(deviceId, (deviceName || "Kitchen Wall Tablet").trim(), deviceToken, ip, userAgent, admin.username);
+
+    if (requestId) {
+      db.prepare("UPDATE pairing_requests SET status = 'approved', device_token = ? WHERE id = ?").run(deviceToken, requestId);
+    }
+
+    if (broadcast) {
+      broadcast("device-paired");
+      broadcast("pairing-request");
+    }
+
+    return { success: true, deviceToken, deviceName: deviceName || "Kitchen Wall Tablet" };
+  });
+
+  // 5. Admin Approve Device from Settings (Broadcasting Realtime Approval)
+  app.post("/approve-device", async (req: any, reply: any) => {
+    const user = getSessionUser(req);
+    if (!user || user.role !== "admin") return reply.code(403).send({ error: "Admin only" });
+
+    const { requestId } = req.body;
+    const request = db.prepare("SELECT * FROM pairing_requests WHERE id = ?").get(requestId) as any;
+    if (!request) return reply.code(404).send({ error: "Pairing request not found" });
+
+    const deviceToken = randomBytes(64).toString("hex");
+    const deviceId = randomUUID();
+
+    db.prepare(`
+      INSERT INTO trusted_devices (id, device_name, device_token, ip_address, user_agent, paired_by, is_trusted, last_active, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, 1, datetime('now'), datetime('now'))
+    `).run(deviceId, request.device_name, deviceToken, request.ip_address, request.user_agent, user.username);
+
+    db.prepare("UPDATE pairing_requests SET status = 'approved', device_token = ? WHERE id = ?").run(deviceToken, requestId);
+
+    if (broadcast) {
+      broadcast("device-paired");
+      broadcast("pairing-request");
+    }
+
+    return { success: true };
+  });
+
+  // 6. List Paired Devices & Pending Requests
+  app.get("/devices", async (req: any, reply: any) => {
+    const user = getSessionUser(req);
+    if (!user || user.role !== "admin") return reply.code(403).send({ error: "Admin only" });
+
+    const trusted = db.prepare("SELECT id, device_name, ip_address, paired_by, last_active, created_at FROM trusted_devices WHERE is_trusted = 1 ORDER BY last_active DESC").all();
+    const pending = db.prepare("SELECT id, pairing_code, device_name, ip_address, created_at FROM pairing_requests WHERE status = 'pending' ORDER BY created_at DESC").all();
+
+    return { trusted, pending };
+  });
+
+  // 7. Rename Paired Device
+  app.patch("/devices/:id", async (req: any, reply: any) => {
+    const user = getSessionUser(req);
+    if (!user || user.role !== "admin") return reply.code(403).send({ error: "Admin only" });
+
+    const { deviceName } = req.body;
+    if (!deviceName || !deviceName.trim()) {
+      return reply.code(400).send({ error: "Device name cannot be empty" });
+    }
+
+    db.prepare("UPDATE trusted_devices SET device_name = ? WHERE id = ?").run(deviceName.trim(), req.params.id);
+    return { success: true, message: "Device renamed successfully" };
+  });
+
+  // 8. Revoke Paired Device
+  app.delete("/devices/:id", async (req: any, reply: any) => {
+    const user = getSessionUser(req);
+    if (!user || user.role !== "admin") return reply.code(403).send({ error: "Admin only" });
+
+    db.prepare("DELETE FROM trusted_devices WHERE id = ?").run(req.params.id);
+    if (broadcast) broadcast("device-paired");
+    return { success: true };
+  });
+
+  // Standard Auth Endpoints
+  app.post("/register", async (req: any, reply: any) => {
     const { username, password } = req.body;
     const isFirst = (db.prepare("SELECT COUNT(*) as n FROM users").get() as any).n === 0;
     const salt = randomBytes(16).toString("hex");
@@ -122,15 +254,7 @@ export default async function authRoutes(app: any) {
     return { success: true };
   });
 
-  // Rate-limited login
-  app.post("/login", {
-    config: {
-      rateLimit: {
-        max: 6,
-        timeWindow: "1 minute"
-      }
-    }
-  }, async (req: any, reply: any) => {
+  app.post("/login", async (req: any, reply: any) => {
     const { username, password } = req.body;
     const user = db.prepare("SELECT * FROM users WHERE username = ?").get(username) as any;
     
@@ -155,32 +279,18 @@ export default async function authRoutes(app: any) {
     return { success: true };
   });
 
-  // PIN Verification (Supports both new scrypt and legacy hashes)
-  app.post("/verify-pin", {
-    config: {
-      rateLimit: {
-        max: 6,
-        timeWindow: "1 minute"
-      }
-    }
-  }, async (req: any, reply: any) => {
+  app.post("/verify-pin", async (req: any, reply: any) => {
     const { userId, pin, isSetup } = req.body;
     const activeUser = getSessionUser(req);
     const targetUserId = userId || activeUser?.id;
 
-    if (!targetUserId) {
-      return reply.code(400).send({ error: "No user specified" });
-    }
+    if (!targetUserId) return reply.code(400).send({ error: "No user specified" });
     
     const user = db.prepare("SELECT * FROM users WHERE id = ?").get(targetUserId) as any;
-    if (!user) {
-      return reply.code(404).send({ error: "User not found" });
-    }
+    if (!user) return reply.code(404).send({ error: "User not found" });
 
     if (isSetup || !user.pin_hash || user.needs_pin_setup === 1) {
-      if (!pin || pin.length !== 6) {
-        return reply.code(400).send({ error: "PIN must be 6 digits" });
-      }
+      if (!pin || pin.length !== 6) return reply.code(400).send({ error: "PIN must be 6 digits" });
 
       const salt = randomBytes(16).toString("hex");
       const hash = hashSecret(pin, salt);
@@ -218,14 +328,11 @@ export default async function authRoutes(app: any) {
     return reply.code(401).send({ error: "Wrong PIN" });
   });
 
-  // Emergency Master Recovery Key Generation
+  // Master Recovery Key Routes
   app.post("/generate-recovery-key", async (req: any, reply: any) => {
     try {
-      ensureRecoverySchema();
       const user = getSessionUser(req);
-      if (!user || user.role !== 'admin') {
-        return reply.code(403).send({ error: "Only administrators can generate recovery keys" });
-      }
+      if (!user || user.role !== 'admin') return reply.code(403).send({ error: "Admin only" });
 
       const rawKey = randomBytes(10).toString("hex").toUpperCase();
       const formattedKey = `FHUB-${rawKey.slice(0, 4)}-${rawKey.slice(4, 8)}-${rawKey.slice(8, 12)}-${rawKey.slice(12, 16)}-${rawKey.slice(16, 20)}`;
@@ -234,20 +341,17 @@ export default async function authRoutes(app: any) {
       const hash = hashSecret(formattedKey.replace(/-/g, ""), salt);
       
       db.prepare("UPDATE users SET recovery_key_hash = ? WHERE id = ?").run(`scrypt$${salt}$${hash}`, user.id);
-
       return { success: true, key: formattedKey };
     } catch (error) {
       return reply.code(500).send({ error: (error as Error).message });
     }
   });
 
-  // Emergency Reset using Master Key
   app.post("/emergency-recover", async (req: any, reply: any) => {
     try {
-      ensureRecoverySchema();
       const { username, recoveryKey, newPassword, newPin } = req.body;
       if (!username || !recoveryKey || !newPassword) {
-        return reply.code(400).send({ error: "Username, Recovery Key, and New Password are required" });
+        return reply.code(400).send({ error: "Username, Recovery Key, and New Password required" });
       }
 
       const user = db.prepare("SELECT * FROM users WHERE username = ?").get(username.trim()) as any;
@@ -258,9 +362,7 @@ export default async function authRoutes(app: any) {
       const cleanInputKey = recoveryKey.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
       const isValid = verifySecret(cleanInputKey, user.recovery_key_hash);
 
-      if (!isValid) {
-        return reply.code(401).send({ error: "Invalid Recovery Key" });
-      }
+      if (!isValid) return reply.code(401).send({ error: "Invalid Recovery Key" });
 
       const newSalt = randomBytes(16).toString("hex");
       const newPassHash = hashSecret(newPassword, newSalt);
@@ -272,30 +374,24 @@ export default async function authRoutes(app: any) {
       }
 
       db.prepare("DELETE FROM sessions WHERE user_id = ?").run(user.id);
-
-      db.prepare(`
-        UPDATE users 
-        SET password_hash = ?, pin_hash = ?, needs_pin_setup = ? 
-        WHERE id = ?
-      `).run(`scrypt$${newSalt}$${newPassHash}`, newPinHash, newPinHash ? 0 : 1, user.id);
+      db.prepare(`UPDATE users SET password_hash = ?, pin_hash = ?, needs_pin_setup = ? WHERE id = ?`)
+        .run(`scrypt$${newSalt}$${newPassHash}`, newPinHash, newPinHash ? 0 : 1, user.id);
 
       const token = randomBytes(64).toString("hex");
       db.prepare("INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, datetime('now', '+30 days'))").run(token, user.id);
       reply.header("Set-Cookie", `fh_sid=${token}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Strict`);
 
-      return { success: true, message: "Account recovered and elevated successfully!" };
+      return { success: true, message: "Account recovered successfully!" };
     } catch (error) {
       return reply.code(500).send({ error: (error as Error).message });
     }
   });
 
-  // Automated Snapshot Routes
+  // Snapshots
   app.get("/snapshots", async (req: any, reply: any) => {
     try {
       const user = getSessionUser(req);
-      if (!user || user.role !== 'admin') {
-        return reply.code(403).send({ error: "Only administrators can access snapshots" });
-      }
+      if (!user || user.role !== 'admin') return reply.code(403).send({ error: "Admin only" });
 
       const backupDir = path.resolve("./data/backups");
       mkdirSync(backupDir, { recursive: true });
@@ -322,16 +418,12 @@ export default async function authRoutes(app: any) {
   app.post("/create-snapshot", async (req: any, reply: any) => {
     try {
       const user = getSessionUser(req);
-      if (!user || user.role !== 'admin') {
-        return reply.code(403).send({ error: "Only administrators can trigger database backups" });
-      }
+      if (!user || user.role !== 'admin') return reply.code(403).send({ error: "Admin only" });
 
       const backupDir = path.resolve("./data/backups");
       mkdirSync(backupDir, { recursive: true });
 
-      try {
-        db.pragma("wal_checkpoint(TRUNCATE)");
-      } catch (e) {}
+      try { db.pragma("wal_checkpoint(TRUNCATE)"); } catch (e) {}
 
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
       const backupFilename = `familyhub-snap-${timestamp}.db`;
@@ -360,17 +452,13 @@ export default async function authRoutes(app: any) {
   app.get("/download-snapshot/:filename", async (req: any, reply: any) => {
     try {
       const user = getSessionUser(req);
-      if (!user || user.role !== 'admin') {
-        return reply.code(403).send({ error: "Unauthorized" });
-      }
+      if (!user || user.role !== 'admin') return reply.code(403).send({ error: "Unauthorized" });
 
       const { filename } = req.params;
       const safeFilename = path.basename(filename);
       const filePath = path.resolve("./data/backups", safeFilename);
 
-      if (!existsSync(filePath)) {
-        return reply.code(404).send({ error: "Snapshot file not found" });
-      }
+      if (!existsSync(filePath)) return reply.code(404).send({ error: "Snapshot file not found" });
 
       reply.header("Content-Disposition", `attachment; filename="${safeFilename}"`);
       reply.header("Content-Type", "application/x-sqlite3");
@@ -380,29 +468,23 @@ export default async function authRoutes(app: any) {
     }
   });
 
-  // Change Password Endpoint
   app.post("/change-password", async (req: any, reply: any) => {
     try {
       const user = getSessionUser(req);
-      if (!user) {
-        return reply.code(401).send({ error: "Unauthorized session" });
-      }
+      if (!user) return reply.code(401).send({ error: "Unauthorized session" });
 
       const { currentPassword, newPassword } = req.body;
       if (!newPassword || newPassword.length < 4) {
-        return reply.code(400).send({ error: "New password must be at least 4 characters long" });
+        return reply.code(400).send({ error: "Password must be at least 4 characters" });
       }
 
       if (currentPassword && user.password_hash) {
         const isValid = verifySecret(currentPassword, user.password_hash);
-        if (!isValid) {
-          return reply.code(400).send({ error: "Current password is incorrect" });
-        }
+        if (!isValid) return reply.code(400).send({ error: "Current password incorrect" });
       }
 
       const newSalt = randomBytes(16).toString("hex");
       const newHash = hashSecret(newPassword, newSalt);
-      
       db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(`scrypt$${newSalt}$${newHash}`, user.id);
 
       const currentToken = req.headers.cookie?.match(/fh_sid=([^;]+)/)?.[1];
@@ -410,9 +492,8 @@ export default async function authRoutes(app: any) {
         db.prepare("DELETE FROM sessions WHERE user_id = ? AND token != ?").run(user.id, currentToken);
       }
 
-      return { success: true, message: "Password updated successfully" };
+      return { success: true, message: "Password updated" };
     } catch (error) {
-      console.error("Change Password Error:", error);
       return reply.code(500).send({ error: (error as Error).message });
     }
   });
@@ -420,9 +501,7 @@ export default async function authRoutes(app: any) {
   app.post("/change-username", async (req: any, reply: any) => {
     try {
       const user = getSessionUser(req);
-      if (!user) {
-        return reply.code(401).send({ error: "Unauthorized session" });
-      }
+      if (!user) return reply.code(401).send({ error: "Unauthorized session" });
 
       const { currentPassword, newUsername } = req.body;
       if (!newUsername || newUsername.trim().length === 0) {
@@ -431,17 +510,14 @@ export default async function authRoutes(app: any) {
 
       if (currentPassword && user.password_hash) {
         const isValid = verifySecret(currentPassword, user.password_hash);
-        if (!isValid) {
-          return reply.code(400).send({ error: "Current password is incorrect" });
-        }
+        if (!isValid) return reply.code(400).send({ error: "Current password incorrect" });
       }
 
       db.prepare("UPDATE users SET username = ? WHERE id = ?").run(newUsername.trim(), user.id);
       db.prepare("UPDATE family_members SET name = ? WHERE user_id = ?").run(newUsername.trim(), user.id);
 
-      return { success: true, message: "Username updated successfully" };
+      return { success: true, message: "Username updated" };
     } catch (error) {
-      console.error("Change Username Error:", error);
       return reply.code(500).send({ error: (error as Error).message });
     }
   });
@@ -449,24 +525,14 @@ export default async function authRoutes(app: any) {
   // Set PIN Endpoint
   app.post("/set-pin", async (req: any, reply: any) => {
     const user = getSessionUser(req);
-    if (!user) {
-      return reply.code(401).send({ error: "Unauthorized" });
-    }
-
-    try {
-      db.prepare("ALTER TABLE users ADD COLUMN needs_pin_setup INTEGER DEFAULT 0").run();
-    } catch (e) {}
+    if (!user) return reply.code(401).send({ error: "Unauthorized" });
 
     const { pin, currentPassword } = req.body;
-    if (!pin || pin.length !== 6) {
-      return reply.code(400).send({ error: "PIN must be exactly 6 digits" });
-    }
+    if (!pin || pin.length !== 6) return reply.code(400).send({ error: "PIN must be 6 digits" });
 
     if (currentPassword && user.password_hash) {
       const isValid = verifySecret(currentPassword, user.password_hash);
-      if (!isValid) {
-        return reply.code(400).send({ error: "Current password is incorrect" });
-      }
+      if (!isValid) return reply.code(400).send({ error: "Current password incorrect" });
     }
 
     const salt = randomBytes(16).toString("hex");
@@ -477,9 +543,7 @@ export default async function authRoutes(app: any) {
 
   app.post("/clear-pin", async (req: any, reply: any) => {
     const user = getSessionUser(req);
-    if (!user) {
-      return reply.code(401).send({ error: "Unauthorized" });
-    }
+    if (!user) return reply.code(401).send({ error: "Unauthorized" });
 
     db.prepare("UPDATE users SET pin_hash = NULL WHERE id = ?").run(user.id);
     return { success: true };
@@ -505,17 +569,10 @@ export default async function authRoutes(app: any) {
   app.post("/set-ntfy-topic", async (req: any, reply: any) => {
     try {
       const user = getSessionUser(req);
-      if (!user || user.role !== 'admin') {
-        return reply.code(403).send({ error: "Only administrators can configure push settings" });
-      }
-
-      try {
-        db.prepare("ALTER TABLE users ADD COLUMN ntfy_topic TEXT").run();
-      } catch (e) {}
+      if (!user || user.role !== 'admin') return reply.code(403).send({ error: "Admin only" });
 
       const { topic } = req.body;
       db.prepare("UPDATE users SET ntfy_topic = ? WHERE id = ?").run(topic ? topic.trim() : null, user.id);
-
       return { success: true };
     } catch (error) {
       return reply.code(500).send({ error: (error as Error).message });
@@ -525,25 +582,13 @@ export default async function authRoutes(app: any) {
   app.post("/link-member", async (req: any, reply: any) => {
     try {
       const user = getSessionUser(req);
-      if (!user || user.role !== 'admin') {
-        return reply.code(403).send({ error: "Only administrators can link accounts" });
-      }
+      if (!user || user.role !== 'admin') return reply.code(403).send({ error: "Admin only" });
 
       const { memberId, userId } = req.body;
-
-      try {
-        db.prepare("ALTER TABLE family_members ADD COLUMN user_id TEXT").run();
-      } catch (e) {}
-
-      try {
-        db.prepare("ALTER TABLE family_members ADD COLUMN role TEXT").run();
-      } catch (e) {}
-
       db.prepare("UPDATE family_members SET user_id = NULL WHERE user_id = ?").run(userId);
 
       if (memberId) {
         db.prepare("UPDATE family_members SET user_id = ? WHERE id = ?").run(userId, memberId);
-
         const targetUser = db.prepare("SELECT role FROM users WHERE id = ?").get(userId) as any;
         if (targetUser) {
           db.prepare("UPDATE family_members SET role = ? WHERE id = ?").run(targetUser.role, memberId);
@@ -559,37 +604,27 @@ export default async function authRoutes(app: any) {
 
   app.delete("/users/:id", async (req: any, reply: any) => {
     const user = getSessionUser(req);
-    if (!user || user.role !== 'admin') {
-      return reply.code(403).send({ error: "Only administrators can delete user accounts" });
-    }
+    if (!user || user.role !== 'admin') return reply.code(403).send({ error: "Admin only" });
 
     const { id } = req.params;
-
-    if (user.id === id) {
-      return reply.code(400).send({ error: "You cannot delete your own account" });
-    }
+    if (user.id === id) return reply.code(400).send({ error: "Cannot delete your own account" });
 
     db.prepare("DELETE FROM sessions WHERE user_id = ?").run(id);
     db.prepare("DELETE FROM users WHERE id = ?").run(id);
     db.prepare("UPDATE family_members SET user_id = NULL, role = 'user' WHERE user_id = ?").run(id);
-
     return { success: true };
   });
 
   app.post("/promote", async (req: any, reply: any) => {
     const user = getSessionUser(req);
-    if (!user || user.role !== 'admin') {
-      return reply.code(403).send({ error: "Only administrators can promote users" });
-    }
+    if (!user || user.role !== 'admin') return reply.code(403).send({ error: "Admin only" });
 
     const { userId } = req.body;
     let targetUserId = userId;
     
     try {
       const member = db.prepare("SELECT * FROM family_members WHERE id = ?").get(userId) as any;
-      if (member && member.user_id) {
-        targetUserId = member.user_id;
-      }
+      if (member && member.user_id) targetUserId = member.user_id;
     } catch (e) {}
 
     db.prepare("UPDATE users SET role = 'admin', is_admin = 1, needs_pin_setup = 1 WHERE id = ?").run(targetUserId);
@@ -602,31 +637,20 @@ export default async function authRoutes(app: any) {
 
   app.post("/demote", async (req: any, reply: any) => {
     const user = getSessionUser(req);
-    if (!user || user.role !== 'admin') {
-      return reply.code(403).send({ error: "Only administrators can demote users" });
-    }
+    if (!user || user.role !== 'admin') return reply.code(403).send({ error: "Admin only" });
 
     const { userId } = req.body;
     let targetUserId = userId;
 
     try {
       const member = db.prepare("SELECT * FROM family_members WHERE id = ?").get(userId) as any;
-      if (member && member.user_id) {
-        targetUserId = member.user_id;
-      }
+      if (member && member.user_id) targetUserId = member.user_id;
     } catch (e) {}
 
-    if (user.id === targetUserId) {
-      return reply.code(400).send({ error: "You cannot demote yourself" });
-    }
+    if (user.id === targetUserId) return reply.code(400).send({ error: "Cannot demote yourself" });
 
-    const adminCountResult = db.prepare(
-      "SELECT COUNT(*) as count FROM users WHERE role = 'admin' OR is_admin = 1"
-    ).get() as { count: number };
-
-    if (adminCountResult.count <= 1) {
-      return reply.code(400).send({ error: "Cannot demote the last remaining administrator." });
-    }
+    const adminCountResult = db.prepare("SELECT COUNT(*) as count FROM users WHERE role = 'admin' OR is_admin = 1").get() as { count: number };
+    if (adminCountResult.count <= 1) return reply.code(400).send({ error: "Cannot demote the sole admin." });
 
     db.prepare("UPDATE users SET role = 'user', is_admin = 0, pin_hash = NULL, needs_pin_setup = 0 WHERE id = ?").run(targetUserId);
     try {
