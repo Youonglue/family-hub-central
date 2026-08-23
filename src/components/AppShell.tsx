@@ -47,7 +47,15 @@ export function AppShell({ children }: { children: ReactNode }) {
   const qc = useQueryClient();
   useLanLive(); 
 
-  // --- DEVICE AUTHORIZATION CHECK ---
+  const enforceFullscreenIfEnabled = () => {
+    try {
+      const isEnabled = localStorage.getItem("fh_fullscreen_enabled") === "true";
+      if (isEnabled && !document.fullscreenElement && document.documentElement.requestFullscreen) {
+        document.documentElement.requestFullscreen().catch(() => {});
+      }
+    } catch {}
+  };
+
   const [deviceToken, setDeviceToken] = useState<string | null>(() => {
     try {
       return localStorage.getItem("fh_device_token");
@@ -65,7 +73,6 @@ export function AppShell({ children }: { children: ReactNode }) {
     }
   });
 
-  // --- DATA FETCHING ---
   const me = useQuery({ queryKey: ["me"], queryFn: () => getMe() });
   const members = useQuery({ queryKey: ["members"], queryFn: listMembers });
   
@@ -82,9 +89,14 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [pinInput, setPinInput] = useState("");
   const [isSubmittingPin, setIsSubmittingPin] = useState(false);
 
-  // --- GLOBAL KIOSK STATE MANAGEMENT ---
   const [now, setNow] = useState(new Date());
   const [isIdle, setIsIdle] = useState(false);
+  const isIdleRef = useRef(false);
+
+  useEffect(() => {
+    isIdleRef.current = isIdle;
+  }, [isIdle]);
+
   const [kioskMember, setKioskMember] = useState<any>(() => {
     try {
       return JSON.parse(localStorage.getItem("kiosk_active_member") || "null");
@@ -100,7 +112,6 @@ export function AppShell({ children }: { children: ReactNode }) {
   const idleTimerRef = useRef<any>(null);
 
   const resetIdle = () => {
-    setIsIdle(false);
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
     
     const timeoutDuration = isAdmin ? 30000 : 60000;
@@ -110,7 +121,9 @@ export function AppShell({ children }: { children: ReactNode }) {
         toast.info("Admin session expired for security");
       } else {
         setIsIdle(true);
+        isIdleRef.current = true;
         setKioskMember(null);
+        setShowAdminPortal(false);
         localStorage.removeItem("kiosk_active_member");
       }
     }, timeoutDuration);
@@ -121,19 +134,28 @@ export function AppShell({ children }: { children: ReactNode }) {
     resetIdle();
 
     const activityEvents = ["mousemove", "mousedown", "touchstart", "click", "keypress"];
-    activityEvents.forEach(e => window.addEventListener(e, resetIdle, { passive: true }));
+    const handleActivity = () => {
+      if (isIdleRef.current) return;
+      enforceFullscreenIfEnabled();
+      resetIdle();
+    };
+
+    activityEvents.forEach(e => window.addEventListener(e, handleActivity, { passive: true }));
 
     return () => {
       clearInterval(t);
-      activityEvents.forEach(e => window.removeEventListener(e, resetIdle));
+      activityEvents.forEach(e => window.removeEventListener(e, handleActivity));
       if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
     };
   }, [isAdmin]);
 
   const handleSelectHero = (member: any) => {
+    enforceFullscreenIfEnabled();
     setKioskMember(member);
     localStorage.setItem("kiosk_active_member", JSON.stringify(member));
     setIsIdle(false);
+    isIdleRef.current = false;
+    resetIdle();
     toast.success(`Welcome back, ${member.name}! ⭐`, { position: "top-center" });
   };
 
@@ -151,6 +173,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
     localStorage.removeItem('kiosk_active_member');
     setKioskMember(null);
+    setShowAdminPortal(false);
 
     if (isBypassKiosk) {
       navigate({ to: "/auth", replace: true });
@@ -180,6 +203,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       
       if (res.ok) {
         setIsIdle(true);
+        isIdleRef.current = true;
         qc.invalidateQueries();
         return;
       }
@@ -235,6 +259,10 @@ export function AppShell({ children }: { children: ReactNode }) {
         setSelectedAdmin(null);
         setPinInput("");
         setIsIdle(false);
+        isIdleRef.current = false;
+        resetIdle();
+
+        enforceFullscreenIfEnabled();
 
         await qc.invalidateQueries();
         navigate({ to: "/dashboard" });
@@ -249,14 +277,9 @@ export function AppShell({ children }: { children: ReactNode }) {
     }
   };
 
-  const upcomingEvent = useMemo(() => {
-    const list = Array.isArray(events.data) ? events.data : [];
-    const todayKey = ymd(now);
-    return list.find((e: any) => e.starts_at >= todayKey);
-  }, [events.data, now]);
-
   const memberList = Array.isArray(members.data) ? members.data : [];
   const userList = Array.isArray(usersQuery.data) ? usersQuery.data : [];
+  const eventList = Array.isArray(events.data) ? events.data : [];
 
   const visibleKioskHeroes = useMemo(() => {
     return memberList.filter((m: any) => m.show_on_kiosk !== 0);
@@ -283,7 +306,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     );
   }
 
-  // --- 2. DEVICE PAIRING GATEKEEPER (Shows if device is unauthorized) ---
+  // --- 2. DEVICE PAIRING GATEKEEPER ---
   if (deviceStatus.data?.is_trusted === false) {
     return (
       <DevicePairingScreen
@@ -295,22 +318,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     );
   }
 
-  // --- 3. IDLE LOCK SCREEN VIEW ---
-  if (isIdle) {
-    return (
-      <KioskLockScreen
-        now={now}
-        upcomingEvent={upcomingEvent}
-        onWake={() => {
-          setIsIdle(false);
-          resetIdle();
-        }}
-        onOpenAdmin={() => setShowAdminPortal(true)}
-      />
-    );
-  }
-
-  // --- 4. ADMIN QUICK-PIN PORTAL ---
+  // --- 3. ADMIN QUICK-PIN PORTAL (PRIORITY OVERLAY: CAN LAUNCH FROM ANYWHERE) ---
   if (showAdminPortal) {
     return (
       <KioskPinPortal
@@ -334,22 +342,46 @@ export function AppShell({ children }: { children: ReactNode }) {
     );
   }
 
+  // --- 4. EXPANDED WEEKLY HORIZON SCREENSAVER ---
+  if (isIdle) {
+    return (
+      <KioskLockScreen
+        now={now}
+        eventsList={eventList}
+        memberList={memberList}
+        onOpenHeroSelect={() => {
+          enforceFullscreenIfEnabled();
+          setIsIdle(false);
+          isIdleRef.current = false;
+          resetIdle();
+        }}
+        onOpenAdmin={() => {
+          enforceFullscreenIfEnabled();
+          setShowAdminPortal(true);
+        }}
+      />
+    );
+  }
+
   // --- 5. GLOBAL CHARACTER SELECT ("Which Hero Are You?") ---
   if (!kioskMember && !isAdmin && visibleKioskHeroes.length > 0) {
     return (
       <KioskHeroSelect
         heroes={visibleKioskHeroes}
         onSelectHero={handleSelectHero}
-        onOpenAdmin={() => setShowAdminPortal(true)}
+        onOpenAdmin={() => {
+          enforceFullscreenIfEnabled();
+          setShowAdminPortal(true);
+        }}
       />
     );
   }
 
-  // --- 6. STANDARD APP LAYOUT ---
+  // --- 6. MAIN APPLICATION LAYOUT ---
   return (
     <div className="min-h-screen bg-canvas">
       
-      {/* Desktop Sidebar */}
+      {/* Desktop / Landscape Tablet Sidebar */}
       <aside className="fixed left-0 top-0 h-screen w-64 flex flex-col border-r border-border bg-panel/70 backdrop-blur hidden md:flex z-40 overflow-y-auto scrollbar-thin">
         <Link to="/dashboard" className="flex items-center gap-2 px-6 py-6 shrink-0">
           <div className="grid size-9 place-items-center rounded-2xl bg-indigo-600 text-white font-display text-lg font-black italic">
@@ -399,7 +431,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
         )}
 
-        <div className="p-3 shrink-0 mb-2">
+        <div className="p-3 shrink-0 mb-2 border-t border-slate-100">
           <button
             onClick={() => signOut(true)}
             className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-black uppercase tracking-wider text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer min-h-[44px]"
@@ -411,13 +443,27 @@ export function AppShell({ children }: { children: ReactNode }) {
       </aside>
 
       {/* Portrait / Mobile Top-Bar Hero Switcher */}
-      <PortraitHeroSwitcher
-        kioskMember={kioskMember}
-        visibleHeroes={visibleKioskHeroes}
-        onSelectHero={handleSelectHero}
-        onOpenAdmin={() => setShowAdminPortal(true)}
-        onSignOut={() => signOut(true)}
-      />
+      <div className="md:hidden sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-slate-100 px-3.5 py-2.5 flex items-center justify-between shadow-xs">
+        <Link to="/dashboard" className="flex items-center gap-2">
+          <div className="grid size-8 place-items-center rounded-xl bg-indigo-600 text-white font-display text-sm font-black italic">
+            H
+          </div>
+          <span className="font-display text-base font-black uppercase italic tracking-tight text-slate-900">
+            Family Hub
+          </span>
+        </Link>
+
+        <PortraitHeroSwitcher
+          kioskMember={kioskMember}
+          visibleHeroes={visibleKioskHeroes}
+          onSelectHero={handleSelectHero}
+          onOpenAdmin={() => {
+            enforceFullscreenIfEnabled();
+            setShowAdminPortal(true);
+          }}
+          onSignOut={() => signOut(true)}
+        />
+      </div>
 
       {/* Mobile / Mini-Tablet Bottom Navigation Bar */}
       <nav className="fixed bottom-3 left-1/2 -translate-x-1/2 z-40 flex items-center gap-1 rounded-2xl border border-border bg-panel/95 backdrop-blur px-2 sm:px-3 py-2 shadow-2xl md:hidden w-[94%] max-w-md justify-between safe-area-inset-bottom">

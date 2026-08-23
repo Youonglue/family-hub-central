@@ -11,8 +11,7 @@ import {
   ChevronLeft, 
   ChevronRight,
   RotateCcw,
-  Loader2,
-  Lock
+  Loader2
 } from "lucide-react";
 
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -38,6 +37,18 @@ const EVENT_COLORS = [
   { id: "#0d9488", name: "Teal" },
 ];
 
+const PALETTE = ["#0284c7", "#e11d48", "#d97706", "#059669", "#7c3aed", "#4f46e5", "#ea580c", "#0d9488"];
+
+const getAutoColor = (title: string, category: string): string => {
+  const combined = `${title.toLowerCase()}_${category.toLowerCase()}`;
+  let hash = 0;
+  for (let i = 0; i < combined.length; i++) {
+    hash = combined.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const index = Math.abs(hash) % PALETTE.length;
+  return PALETTE[index];
+};
+
 const CATEGORIES = ["Work", "School", "Sports", "Fun", "Chores", "General"];
 
 const QUEST_TEMPLATES = [
@@ -52,7 +63,7 @@ const QUEST_TEMPLATES = [
 export function CalendarAddQuestModal({ 
   anchor, 
   selectedDates: initialSelectedDates = [], 
-  memberList, 
+  memberList = [], 
   existingRoutines = [],
   onClose, 
   onRefresh, 
@@ -60,21 +71,20 @@ export function CalendarAddQuestModal({
 }: any) {
   const [formTitle, setFormTitle] = useState("");
   const [formLocation, setFormLocation] = useState("");
+  
+  // Color state defaults to "" (No Colour / Auto-Colour)
+  const [formColor, setFormColor] = useState("");
   const [formCategory, setFormCategory] = useState("Work");
   const [formMemberId, setFormMemberId] = useState("");
   const [timeFrom, setTimeFrom] = useState("");
   const [timeTo, setTimeTo] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Tint Tile Switch Defaults to FALSE (Off)
+  // Tint Day Tile Switch (Defaults to OFF)
   const [tintTile, setTintTile] = useState(false);
 
-  // Find colors already in use by active routines to gray them out
+  // Colors already in use by active routines to gray them out
   const usedColors = new Set(existingRoutines.map((r: any) => r.color?.toLowerCase()));
-  
-  // Pick the first available unused color as default
-  const defaultAvailableColor = EVENT_COLORS.find(c => !usedColors.has(c.id.toLowerCase()))?.id || "#0284c7";
-  const [formColor, setFormColor] = useState(defaultAvailableColor);
 
   const [customMultiDates, setCustomMultiDates] = useState<string[]>(() => {
     return initialSelectedDates.length > 0 ? initialSelectedDates : [ymd(anchor || new Date())];
@@ -85,7 +95,7 @@ export function CalendarAddQuestModal({
   const handleApplyTemplate = (tpl: any) => {
     setFormTitle(tpl.title);
     setFormLocation(tpl.location);
-    if (!usedColors.has(tpl.color.toLowerCase())) {
+    if (tpl.color && !usedColors.has(tpl.color.toLowerCase())) {
       setFormColor(tpl.color);
     }
     setFormCategory(tpl.category || "General");
@@ -124,6 +134,11 @@ export function CalendarAddQuestModal({
     }
 
     const finalDates = customMultiDates.length > 0 ? customMultiDates : [ymd(anchor || new Date())];
+    
+    // If no colour was chosen, auto-generate via hero or deterministic hash
+    const assignedMember = memberList.find((m: any) => m.id === formMemberId);
+    const resolvedColor = formColor || assignedMember?.avatar_color || getAutoColor(formTitle, formCategory);
+
     setIsSubmitting(true);
 
     try {
@@ -134,8 +149,8 @@ export function CalendarAddQuestModal({
           title: formTitle.trim(),
           location: formLocation.trim(),
           member_id: formMemberId ? formMemberId : null,
-          color: formColor,
-          tile_color: tintTile ? formColor : null,
+          color: resolvedColor,
+          tile_color: tintTile ? resolvedColor : null,
           is_recurring: tintTile ? 1 : 0,
           dates: finalDates,
           time_from: timeFrom,
@@ -146,7 +161,7 @@ export function CalendarAddQuestModal({
 
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.error || "Only Admins can schedule quests");
+        throw new Error(errorData.error || "Failed to schedule quest");
       }
 
       toast.success(tintTile ? `Shift Tinted on ${finalDates.length} days! 🎨` : "Quest Logged!");
@@ -168,10 +183,10 @@ export function CalendarAddQuestModal({
          <div className="flex justify-between items-center mb-4 shrink-0 border-b border-slate-100 pb-3">
            <div>
              <h2 className="text-2xl sm:text-3xl font-black italic uppercase tracking-tight text-slate-900 leading-tight">
-               Schedule Quest & Shift
+               Schedule Quest
              </h2>
              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">
-               Admin Schedule Console
+               Multi-Select Dates & Work Shift Tinting
              </p>
            </div>
            <button 
@@ -227,7 +242,7 @@ export function CalendarAddQuestModal({
                       Tint Entire Day Tile
                     </span>
                     <span className="text-[9px] font-bold text-slate-500">
-                      Colors the date background (Title appears in the sidebar key only)
+                      Colors the background & displays prominently on the screensaver
                     </span>
                   </div>
                 </div>
@@ -243,14 +258,14 @@ export function CalendarAddQuestModal({
                 </label>
               </div>
 
-              {/* MINI MULTI-MONTH YEAR DATE PICKER (Active when Tint is on or choosing dates) */}
+              {/* MINI MULTI-MONTH YEAR DATE PICKER */}
               {tintTile && (
                 <div className="bg-slate-50 p-4 rounded-3xl border-2 border-indigo-100 space-y-3 animate-in fade-in duration-200">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <CalendarIcon size={16} className="text-indigo-600" />
                       <span className="text-xs font-black uppercase tracking-wider text-slate-800">
-                        Select Shift Dates
+                        Select Shift Dates Across Year
                       </span>
                     </div>
                     
@@ -373,7 +388,7 @@ export function CalendarAddQuestModal({
                 </div>
               </div>
 
-              {/* Assignee, Category & Color Palette (With Greyed-Out In-Use Colors) */}
+              {/* Assignee, Category & Colour Dropdown (With "No Colour" Choice & Greyed Out In-Use Colors) */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="space-y-1">
                   <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 ml-3">Assign Hero</span>
@@ -391,22 +406,22 @@ export function CalendarAddQuestModal({
                   <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 ml-3">Category</span>
                   <select 
                     value={formCategory} 
-                    onChange={e => setFormCategory(e.target.value)} 
+                    onChange={(e) => setFormCategory(e.target.value)} 
                     className="w-full p-3.5 bg-slate-50 rounded-2xl font-black uppercase text-xs cursor-pointer border-2 border-transparent outline-none min-h-[44px]"
                   >
                     {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
                 
-                {/* Tile Color Picker (Locks out colors already assigned to routines) */}
+                {/* Colour Choice: Defaults to "No Colour / Auto-Colour" */}
                 <div className="space-y-1">
-                  <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 ml-3">Tile Color</span>
+                  <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 ml-3">Quest / Tile Colour</span>
                   <select 
-                    name="color" 
                     value={formColor} 
                     onChange={(e) => setFormColor(e.target.value)} 
                     className="w-full p-3.5 bg-slate-50 rounded-2xl font-black uppercase text-xs border-2 border-transparent outline-none cursor-pointer min-h-[44px]"
                   >
+                    <option value="">🌟 No Colour (Auto-Colour)</option>
                     {EVENT_COLORS.map(c => {
                       const isAlreadyUsed = usedColors.has(c.id.toLowerCase());
                       return (

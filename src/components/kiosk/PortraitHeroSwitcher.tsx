@@ -24,27 +24,18 @@ export function PortraitHeroSwitcher({
   return (
     <>
       {/* Sticky Top-Bar Pill on Mobile / Portrait Devices */}
-      <div className="md:hidden sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-slate-100 px-4 py-2.5 flex items-center justify-between shadow-sm">
-        <Link to="/dashboard" className="flex items-center gap-2">
-          <div className="grid size-8 place-items-center rounded-xl bg-indigo-600 text-white font-display text-sm font-black italic">
-            H
-          </div>
-          <span className="font-display text-base font-black uppercase italic tracking-tight text-slate-900">
-            Family Hub
-          </span>
-        </Link>
-
+      <div className="flex items-center gap-2">
         {kioskMember ? (
           <button
             onClick={() => setShowDrawer(true)}
-            className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-2xl cursor-pointer active:scale-95 transition-all min-h-[40px]"
+            className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-2xl cursor-pointer active:scale-95 transition-all min-h-[40px] shadow-xs"
           >
             <Avatar 
               config={parseAvatarConfig(kioskMember.avatar_config)} 
-              className="size-7 rounded-lg shadow-sm shrink-0" 
+              className="size-7 rounded-lg shadow-xs shrink-0" 
             />
             <div className="text-left">
-              <span className="text-xs font-black uppercase text-slate-800 leading-none block truncate max-w-[90px]">
+              <span className="text-xs font-black uppercase text-slate-800 leading-none block truncate max-w-[85px]">
                 {kioskMember.name}
               </span>
               <span className="text-[8px] font-black text-indigo-600 uppercase tracking-widest leading-none block mt-0.5">
@@ -63,30 +54,32 @@ export function PortraitHeroSwitcher({
         )}
       </div>
 
-      {/* Slide-Up Hero Switcher Drawer */}
+      {/* Slide-Up Hero Switcher Drawer (Elevated to z-[9999] so nothing can block it) */}
       {showDrawer && (
         <div 
-          className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200" 
+          className="fixed inset-0 z-[9999] bg-slate-900/70 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200" 
           onClick={() => setShowDrawer(false)}
         >
           <div 
-            className="bg-white w-full sm:max-w-lg rounded-t-[2.5rem] sm:rounded-[3rem] p-6 sm:p-8 shadow-2xl border-t-4 sm:border-4 border-slate-100 max-h-[85vh] overflow-y-auto animate-in slide-in-from-bottom-6 duration-200" 
+            className="bg-white w-full sm:max-w-lg rounded-t-[2.5rem] sm:rounded-[3rem] p-6 sm:p-8 shadow-2xl border-t-4 sm:border-4 border-slate-100 max-h-[85vh] overflow-y-auto animate-in slide-in-from-bottom-6 duration-200 flex flex-col pb-28 sm:pb-8" 
             onClick={e => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between mb-6 pb-2 border-b border-slate-100">
+            {/* Header */}
+            <div className="flex items-center justify-between mb-5 pb-3 border-b border-slate-100 shrink-0">
               <div>
                 <h3 className="text-2xl font-black uppercase italic tracking-tight text-slate-900">Switch Hero</h3>
                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Tap your avatar to switch profile</p>
               </div>
               <button 
                 onClick={() => setShowDrawer(false)}
-                className="p-2.5 bg-slate-100 hover:bg-slate-200 rounded-full transition-colors cursor-pointer min-h-[44px] min-w-[44px] flex items-center justify-center"
+                className="p-2.5 bg-slate-100 hover:bg-rose-50 hover:text-rose-600 rounded-full transition-colors cursor-pointer min-h-[44px] min-w-[44px] flex items-center justify-center"
               >
                 <X size={18} />
               </button>
             </div>
 
-            <div className="grid grid-cols-2 gap-3 sm:gap-4 mb-6">
+            {/* Heroes Grid */}
+            <div className="grid grid-cols-2 gap-3 sm:gap-4 mb-6 flex-1 overflow-y-auto pr-1 scrollbar-thin">
               {visibleHeroes.map((m: any) => {
                 const isCurrent = kioskMember?.id === m.id;
                 const avatarConfig = parseAvatarConfig(m.avatar_config);
@@ -115,20 +108,26 @@ export function PortraitHeroSwitcher({
               })}
             </div>
 
-            <div className="flex items-center gap-2">
+            {/* Action Buttons: Positioned comfortably above the bottom navigation bar */}
+            <div className="flex flex-col sm:flex-row items-center gap-2.5 shrink-0 pt-2 border-t border-slate-100">
               <button
+                type="button"
                 onClick={() => {
                   setShowDrawer(false);
                   onOpenAdmin();
                 }}
-                className="flex-1 py-3.5 bg-slate-900 text-white rounded-2xl font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-md cursor-pointer active:scale-95 min-h-[44px]"
+                className="w-full sm:flex-1 py-4 bg-slate-900 hover:bg-indigo-600 active:scale-95 text-white rounded-2xl font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-lg cursor-pointer min-h-[48px] transition-all"
               >
-                <ShieldCheck size={16} /> Admin Login
+                <ShieldCheck size={18} /> Admin Login
               </button>
 
               <button
-                onClick={() => onSignOut()}
-                className="px-4 py-3.5 bg-rose-50 text-rose-600 rounded-2xl font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 border border-rose-200 cursor-pointer active:scale-95 min-h-[44px]"
+                type="button"
+                onClick={() => {
+                  setShowDrawer(false);
+                  onSignOut();
+                }}
+                className="w-full sm:w-auto px-6 py-4 bg-rose-50 hover:bg-rose-100 text-rose-600 active:scale-95 rounded-2xl font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 border border-rose-200 cursor-pointer min-h-[48px] transition-all"
               >
                 <LogOut size={16} /> Sign out
               </button>

@@ -1,11 +1,11 @@
 // src/routes/_authenticated/settings.tsx
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/AppShell";
 import { getMe, getPinStatus } from "@/lib/auth-client";
-import { ShieldCheck, ShieldAlert, Loader2, Lock } from "lucide-react";
+import { ShieldCheck, ShieldAlert, Loader2, Lock, Maximize2, Minimize2, Monitor } from "lucide-react";
 
 // Sub-component Imports
 import { LeaderboardRoster } from "@/components/settings/LeaderboardRoster";
@@ -13,6 +13,7 @@ import { FamilyApprovals } from "@/components/settings/FamilyApprovals";
 import { IdentityForms } from "@/components/settings/IdentityForms";
 import { BackupSettings } from "@/components/settings/BackupSettings";
 import { TrustedDevices } from "@/components/settings/TrustedDevices";
+import { ScreensaverCustomizer } from "@/components/settings/ScreensaverCustomizer";
 
 export const Route = createFileRoute("/_authenticated/settings")({
   ssr: false,
@@ -27,6 +28,32 @@ function SettingsPage() {
   const [unlocked, setUnlocked] = useState(false);
   const [pin, setPinInput] = useState("");
   const [unlocking, setUnlocking] = useState(false);
+
+  const [isFullscreenEnabled, setIsFullscreenEnabled] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("fh_fullscreen_enabled") === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleFullScreenKiosk = () => {
+    if (!isFullscreenEnabled) {
+      if (document.documentElement.requestFullscreen) {
+        document.documentElement.requestFullscreen().catch(() => {});
+      }
+      localStorage.setItem("fh_fullscreen_enabled", "true");
+      setIsFullscreenEnabled(true);
+      toast.success("Borderless Kiosk Mode Enabled (Locked Across Wakes)");
+    } else {
+      if (document.fullscreenElement && document.exitFullscreen) {
+        document.exitFullscreen().catch(() => {});
+      }
+      localStorage.setItem("fh_fullscreen_enabled", "false");
+      setIsFullscreenEnabled(false);
+      toast.info("Borderless Kiosk Mode Disabled");
+    }
+  };
 
   const isAdmin = me.data?.role?.toLowerCase() === "admin";
 
@@ -46,7 +73,7 @@ function SettingsPage() {
       <AppShell>
         <div className="flex flex-col items-center justify-center min-h-[75vh] p-6 text-center animate-in fade-in duration-300">
           <ShieldAlert className="size-16 text-rose-500 mb-6 animate-bounce" />
-          <h1 className="text-3xl sm:text-4xl font-black uppercase italic tracking-tighter text-slate-900 mb-2">Access Denied</h1>
+          <h1 className="text-3xl sm:text-4xl font-black uppercase italic tracking-tight text-slate-900 mb-2">Access Denied</h1>
           <p className="text-xs sm:text-sm font-bold text-slate-400 uppercase tracking-widest max-w-sm">
             Only administrators with an elevated session are permitted in Settings.
           </p>
@@ -142,7 +169,45 @@ function SettingsPage() {
             </form>
           </div>
         ) : (
-          <div className="animate-in zoom-in-95 duration-200">
+          <div className="animate-in zoom-in-95 duration-200 space-y-6 sm:space-y-8">
+            
+            {/* FULLSCREEN DISPLAY CONTROLS */}
+            <section className="rounded-3xl sm:rounded-[3rem] border-2 sm:border-4 border-slate-50 bg-white p-5 sm:p-8 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className={`p-3 rounded-2xl text-white transition-colors ${
+                  isFullscreenEnabled ? "bg-indigo-600" : "bg-slate-300"
+                }`}>
+                  <Monitor className="size-6" />
+                </div>
+                <div>
+                  <h2 className="font-display text-base sm:text-lg font-black uppercase italic tracking-tight text-slate-900">
+                    Tablet Display & Fullscreen Kiosk
+                  </h2>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                    {isFullscreenEnabled 
+                      ? "Locked ON: Permanently hides browser address bars on touch & wake" 
+                      : "Standard View: Address bar visible"}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={toggleFullScreenKiosk}
+                className={`px-6 py-3.5 rounded-2xl font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-md transition-all active:scale-95 cursor-pointer min-h-[48px] w-full sm:w-auto ${
+                  isFullscreenEnabled 
+                    ? "bg-slate-900 text-white hover:bg-slate-800" 
+                    : "bg-indigo-600 text-white hover:bg-indigo-700 shadow-indigo-200"
+                }`}
+              >
+                {isFullscreenEnabled ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+                {isFullscreenEnabled ? "Turn Off Kiosk Mode" : "Lock In Fullscreen Kiosk"}
+              </button>
+            </section>
+
+            {/* 1. SCREENSAVER CUSTOMIZER STUDIO */}
+            <ScreensaverCustomizer />
+
             <UnlockedSettings
               hasPin={!!pinStatus.data?.has_pin}
               onPinChanged={() => qc.invalidateQueries({ queryKey: ["pin-status"] })}
@@ -160,23 +225,23 @@ function UnlockedSettings({
 }: { hasPin: boolean; onPinChanged: () => void; onUsernameChanged: () => void }) {
   return (
     <div className="space-y-6 sm:space-y-8">
-      {/* 1. Device Pairing & Zero-Trust Access */}
+      {/* 2. Device Pairing & Zero-Trust Access */}
       <TrustedDevices />
 
-      {/* 2. Roster and Point Deductions Administration */}
+      {/* 3. Roster and Point Deductions Administration */}
       <LeaderboardRoster />
 
-      {/* 3. Consolidated Family Approvals Center */}
+      {/* 4. Consolidated Family Approvals Center */}
       <FamilyApprovals />
 
-      {/* 4. Hero Identity & Admin Security Credentials */}
+      {/* 5. Hero Identity & Admin Security Credentials */}
       <IdentityForms 
         hasPin={hasPin} 
         onPinChanged={onPinChanged} 
         onUsernameChanged={onUsernameChanged} 
       />
 
-      {/* 5. Automated Snapshots & Backup Tool */}
+      {/* 6. Automated Snapshots & Backup Tool */}
       <BackupSettings />
     </div>
   );
