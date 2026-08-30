@@ -1,5 +1,5 @@
 // src/components/AppShell.tsx
-import { Link, useLocation, useNavigate } from "@tanstack/react-router";
+import { Link, useLocation } from "@tanstack/react-router";
 import { 
   LayoutDashboard, 
   Trophy, 
@@ -8,14 +8,15 @@ import {
   Calendar, 
   Users, 
   Settings, 
-  LogOut, 
   Loader2, 
-  Gift 
+  Gift,
+  X,
+  ShieldCheck
 } from "lucide-react";
 import { useState, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLanLive } from "@/hooks/useLanLive";
-import { logout, getMe } from "@/lib/auth-client";
+import { getMe } from "@/lib/auth-client";
 import { listMembers } from "@/lib/hub-api";
 import { toast } from "sonner";
 import { Avatar, parseAvatarConfig } from "@/components/avatar/Avatar";
@@ -43,7 +44,6 @@ const ymd = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.ge
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
-  const navigate = useNavigate();
   const qc = useQueryClient();
   useLanLive(); 
 
@@ -105,27 +105,33 @@ export function AppShell({ children }: { children: ReactNode }) {
     }
   });
 
+  // Modal Triggers at ROOT LEVEL
+  const [showHeroPickerModal, setShowHeroPickerModal] = useState(false);
+  const [showPortraitHeroModal, setShowPortraitHeroModal] = useState(false);
   const [showAdminPortal, setShowAdminPortal] = useState(false);
   const [selectedAdmin, setSelectedAdmin] = useState<any>(null);
 
   const isAdmin = me.data?.role?.toLowerCase() === "admin";
   const idleTimerRef = useRef<any>(null);
 
+  // Return Admin to default kiosk screensaver after inactivity timeout
   const resetIdle = () => {
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
     
     const timeoutDuration = isAdmin ? 30000 : 60000;
     idleTimerRef.current = setTimeout(() => {
       if (isAdmin) {
-        signOut();
-        toast.info("Admin session expired for security");
-      } else {
-        setIsIdle(true);
-        isIdleRef.current = true;
-        setKioskMember(null);
-        setShowAdminPortal(false);
-        localStorage.removeItem("kiosk_active_member");
+        // Clear elevated admin cookie on timeout
+        fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
+        qc.invalidateQueries({ queryKey: ["me"] });
       }
+      setIsIdle(true);
+      isIdleRef.current = true;
+      setKioskMember(null);
+      setShowAdminPortal(false);
+      setShowHeroPickerModal(false);
+      setShowPortraitHeroModal(false);
+      localStorage.removeItem("kiosk_active_member");
     }, timeoutDuration);
   };
 
@@ -155,64 +161,11 @@ export function AppShell({ children }: { children: ReactNode }) {
     localStorage.setItem("kiosk_active_member", JSON.stringify(member));
     setIsIdle(false);
     isIdleRef.current = false;
+    setShowHeroPickerModal(false);
+    setShowPortraitHeroModal(false);
     resetIdle();
     toast.success(`Welcome back, ${member.name}! ⭐`, { position: "top-center" });
   };
-
-  async function signOut(isBypassKiosk = false) {
-    await qc.cancelQueries();
-    qc.clear();
-    
-    try {
-      await fetch('/api/auth/logout', { method: 'POST' });
-    } catch (err) {
-      console.warn("Direct logout call failed", err);
-    }
-
-    try { await logout(); } catch { /* ignore */ }
-
-    localStorage.removeItem('kiosk_active_member');
-    setKioskMember(null);
-    setShowAdminPortal(false);
-
-    if (isBypassKiosk) {
-      navigate({ to: "/auth", replace: true });
-      return;
-    }
-
-    try {
-      const loginPayload = { username: "kiosk_guest", password: "kiosk_guest_password" };
-      let res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(loginPayload)
-      });
-      
-      if (!res.ok) {
-        await fetch('/api/auth/register', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(loginPayload)
-        });
-        res = await fetch('/api/auth/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(loginPayload)
-        });
-      }
-      
-      if (res.ok) {
-        setIsIdle(true);
-        isIdleRef.current = true;
-        qc.invalidateQueries();
-        return;
-      }
-    } catch (e) {
-      console.warn("Failed to reactivate kiosk guest session:", e);
-    }
-
-    navigate({ to: "/auth", replace: true });
-  }
 
   const handleVerifyAdminPin = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -256,6 +209,8 @@ export function AppShell({ children }: { children: ReactNode }) {
         localStorage.setItem("kiosk_active_member", JSON.stringify(hero));
 
         setShowAdminPortal(false);
+        setShowHeroPickerModal(false);
+        setShowPortraitHeroModal(false);
         setSelectedAdmin(null);
         setPinInput("");
         setIsIdle(false);
@@ -263,9 +218,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         resetIdle();
 
         enforceFullscreenIfEnabled();
-
         await qc.invalidateQueries();
-        navigate({ to: "/dashboard" });
       } else {
         toast.error("Invalid Admin PIN Code!");
         setPinInput("");
@@ -294,7 +247,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     return true;
   });
 
-  // --- 1. GLOBAL LOADING STATE ---
+  // 1. Loading Guard
   if (deviceStatus.isLoading || me.isLoading || members.isLoading || events.isLoading) {
     return (
       <div className="fixed inset-0 bg-slate-50 flex flex-col items-center justify-center p-4">
@@ -306,7 +259,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     );
   }
 
-  // --- 2. DEVICE PAIRING GATEKEEPER ---
+  // 2. Device Pairing Gatekeeper
   if (deviceStatus.data?.is_trusted === false) {
     return (
       <DevicePairingScreen
@@ -318,7 +271,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     );
   }
 
-  // --- 3. ADMIN QUICK-PIN PORTAL (PRIORITY OVERLAY: CAN LAUNCH FROM ANYWHERE) ---
+  // 3. Admin PIN Portal (Priority Top Overlay)
   if (showAdminPortal) {
     return (
       <KioskPinPortal
@@ -342,7 +295,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     );
   }
 
-  // --- 4. EXPANDED WEEKLY HORIZON SCREENSAVER ---
+  // 4. Idle Screensaver View (Default Kiosk Standby)
   if (isIdle) {
     return (
       <KioskLockScreen
@@ -353,6 +306,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           enforceFullscreenIfEnabled();
           setIsIdle(false);
           isIdleRef.current = false;
+          setShowHeroPickerModal(true);
           resetIdle();
         }}
         onOpenAdmin={() => {
@@ -363,25 +317,26 @@ export function AppShell({ children }: { children: ReactNode }) {
     );
   }
 
-  // --- 5. GLOBAL CHARACTER SELECT ("Which Hero Are You?") ---
-  if (!kioskMember && !isAdmin && visibleKioskHeroes.length > 0) {
+  // 5. Hero Picker Overlay
+  if (showHeroPickerModal || (!kioskMember && !isAdmin && visibleKioskHeroes.length > 0)) {
     return (
       <KioskHeroSelect
-        heroes={visibleKioskHeroes}
+        heroes={visibleKioskHeroes.length > 0 ? visibleKioskHeroes : memberList}
         onSelectHero={handleSelectHero}
         onOpenAdmin={() => {
           enforceFullscreenIfEnabled();
           setShowAdminPortal(true);
         }}
+        onClose={kioskMember ? () => setShowHeroPickerModal(false) : undefined}
       />
     );
   }
 
-  // --- 6. MAIN APPLICATION LAYOUT ---
+  // 6. Main Dashboard Layout
   return (
-    <div className="min-h-screen bg-canvas">
+    <div className="min-h-[100dvh] bg-canvas flex flex-col justify-between relative">
       
-      {/* Desktop / Landscape Tablet Sidebar */}
+      {/* Desktop Sidebar */}
       <aside className="fixed left-0 top-0 h-screen w-64 flex flex-col border-r border-border bg-panel/70 backdrop-blur hidden md:flex z-40 overflow-y-auto scrollbar-thin">
         <Link to="/dashboard" className="flex items-center gap-2 px-6 py-6 shrink-0">
           <div className="grid size-9 place-items-center rounded-2xl bg-indigo-600 text-white font-display text-lg font-black italic">
@@ -410,6 +365,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           })}
         </nav>
         
+        {/* Dynamic Desktop Sidebar Hero Card */}
         {kioskMember && (
           <div className="p-4 mx-3 mb-2 bg-slate-50 border-2 border-slate-100 rounded-3xl flex items-center gap-3 shrink-0">
             <Avatar 
@@ -419,10 +375,8 @@ export function AppShell({ children }: { children: ReactNode }) {
             <div className="min-w-0 flex-1">
               <p className="text-xs font-black uppercase text-slate-800 truncate">{kioskMember.name}</p>
               <button 
-                onClick={() => {
-                  setKioskMember(null);
-                  localStorage.removeItem("kiosk_active_member");
-                }}
+                type="button"
+                onClick={() => setShowHeroPickerModal(true)}
                 className="text-[9px] font-black text-indigo-500 uppercase tracking-widest hover:text-indigo-600 leading-none cursor-pointer block mt-1"
               >
                 Switch Hero
@@ -431,21 +385,31 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
         )}
 
-        <div className="p-3 shrink-0 mb-2 border-t border-slate-100">
-          <button
-            onClick={() => signOut(true)}
-            className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-black uppercase tracking-wider text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer min-h-[44px]"
-          >
-            <LogOut className="size-4 shrink-0" />
-            Sign out
-          </button>
-        </div>
+        {/* Admin Return to Standby Button */}
+        {isAdmin && (
+          <div className="p-3 shrink-0 mb-2 border-t border-slate-100">
+            <button
+              type="button"
+              onClick={() => {
+                fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
+                qc.invalidateQueries({ queryKey: ["me"] });
+                setIsIdle(true);
+                setKioskMember(null);
+                localStorage.removeItem("kiosk_active_member");
+              }}
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-black uppercase tracking-wider text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer min-h-[44px]"
+            >
+              <ShieldCheck className="size-4 shrink-0" />
+              Lock Admin Session
+            </button>
+          </div>
+        )}
       </aside>
 
-      {/* Portrait / Mobile Top-Bar Hero Switcher */}
-      <div className="md:hidden sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-slate-100 px-3.5 py-2.5 flex items-center justify-between shadow-xs">
+      {/* Portrait / Mobile Top-Bar Header */}
+      <div className="md:hidden sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-slate-100 px-4 py-3 flex items-center justify-between shadow-xs pt-[max(env(safe-area-inset-top),0.75rem)]">
         <Link to="/dashboard" className="flex items-center gap-2">
-          <div className="grid size-8 place-items-center rounded-xl bg-indigo-600 text-white font-display text-sm font-black italic">
+          <div className="grid size-8 place-items-center rounded-xl bg-indigo-600 text-white font-display text-sm font-black italic shadow-xs">
             H
           </div>
           <span className="font-display text-base font-black uppercase italic tracking-tight text-slate-900">
@@ -455,18 +419,17 @@ export function AppShell({ children }: { children: ReactNode }) {
 
         <PortraitHeroSwitcher
           kioskMember={kioskMember}
-          visibleHeroes={visibleKioskHeroes}
-          onSelectHero={handleSelectHero}
-          onOpenAdmin={() => {
-            enforceFullscreenIfEnabled();
-            setShowAdminPortal(true);
-          }}
-          onSignOut={() => signOut(true)}
+          onOpenDrawer={() => setShowPortraitHeroModal(true)}
         />
       </div>
 
-      {/* Mobile / Mini-Tablet Bottom Navigation Bar */}
-      <nav className="fixed bottom-3 left-1/2 -translate-x-1/2 z-40 flex items-center gap-1 rounded-2xl border border-border bg-panel/95 backdrop-blur px-2 sm:px-3 py-2 shadow-2xl md:hidden w-[94%] max-w-md justify-between safe-area-inset-bottom">
+      {/* Main Content Area */}
+      <main className="md:ml-64 pb-28 md:pb-8 flex-1">
+        {children}
+      </main>
+
+      {/* Mobile Bottom Navigation Bar */}
+      <nav className="fixed bottom-3 left-1/2 -translate-x-1/2 z-40 flex items-center gap-1 rounded-2xl border border-border bg-panel/95 backdrop-blur px-2 sm:px-3 py-2 shadow-2xl md:hidden w-[94%] max-w-md justify-between safe-area-inset-bottom mb-[max(env(safe-area-inset-bottom),0px)]">
         {filteredNav.map((item) => {
           const active = pathname === item.to || (item.to !== "/dashboard" && pathname.startsWith(item.to));
           return (
@@ -484,9 +447,94 @@ export function AppShell({ children }: { children: ReactNode }) {
         })}
       </nav>
 
-      <main className="md:ml-64 pb-24 md:pb-8 min-h-screen">
-        {children}
-      </main>
+      {/* ROOT-LEVEL PORTRAIT HERO SWITCHER MODAL */}
+      {showPortraitHeroModal && (
+        <div 
+          className="fixed inset-0 z-[99999] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-150 select-none" 
+          onClick={() => setShowPortraitHeroModal(false)}
+        >
+          <div 
+            className="bg-white w-full max-w-md rounded-3xl sm:rounded-[3rem] p-5 sm:p-7 shadow-2xl border-4 border-slate-50 flex flex-col justify-between animate-in zoom-in-95 duration-200 my-auto max-h-[85vh] relative" 
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-100 shrink-0">
+              <div>
+                <h3 className="text-xl sm:text-2xl font-black uppercase italic tracking-tight text-slate-900 leading-tight">
+                  Switch Hero
+                </h3>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">
+                  Choose your character profile
+                </p>
+              </div>
+              <button 
+                type="button"
+                onClick={() => setShowPortraitHeroModal(false)}
+                className="p-2 bg-slate-100 hover:bg-rose-50 hover:text-rose-600 rounded-full transition-colors cursor-pointer min-h-[40px] min-w-[40px] flex items-center justify-center text-slate-500 active:scale-95"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Scrollable Hero Grid */}
+            <div className="max-h-[45vh] overflow-y-auto pr-1 my-2 scrollbar-thin flex-1">
+              {memberList.length === 0 ? (
+                <div className="text-center py-8 bg-slate-50 rounded-2xl border border-dashed border-slate-200 p-4">
+                  <p className="text-xs font-black text-slate-500 uppercase tracking-wider">No heroes found</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-2.5 pb-1">
+                  {(visibleKioskHeroes.length > 0 ? visibleKioskHeroes : memberList).map((m: any) => {
+                    const isCurrent = kioskMember?.id === m.id;
+                    const avatarConfig = parseAvatarConfig(m.avatar_config);
+
+                    return (
+                      <button
+                        type="button"
+                        key={m.id}
+                        onClick={() => handleSelectHero(m)}
+                        className={`p-3 rounded-2xl border-2 flex flex-col items-center gap-2 transition-all cursor-pointer active:scale-95 ${
+                          isCurrent 
+                            ? 'border-indigo-600 bg-indigo-50/70 shadow-sm ring-2 ring-indigo-500/20' 
+                            : 'border-slate-100 bg-slate-50 hover:bg-slate-100'
+                        }`}
+                      >
+                        <Avatar 
+                          config={avatarConfig} 
+                          className="size-14 sm:size-16 rounded-xl shadow-xs border-2 border-white shrink-0" 
+                        />
+                        <div className="min-w-0 w-full text-center">
+                          <span className="text-xs sm:text-sm font-black uppercase text-slate-800 truncate block">
+                            {m.name}
+                          </span>
+                          <span className="text-[9px] font-black text-indigo-600 uppercase tracking-widest block mt-0.5">
+                            Level {m.level || 1}
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Bottom Action Button */}
+            <div className="pt-3 border-t border-slate-100 shrink-0 flex items-center">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPortraitHeroModal(false);
+                  setShowAdminPortal(true);
+                }}
+                className="w-full py-3.5 bg-slate-900 hover:bg-indigo-600 active:scale-95 text-white rounded-2xl font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-md cursor-pointer min-h-[44px] transition-all"
+              >
+                <ShieldCheck size={18} /> Admin Login
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

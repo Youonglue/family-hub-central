@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>Family Hub</title>
 
-    <!-- Native PWA Fullscreen Kiosk Manifest & Meta Tags -->
+    <!-- Native PWA Fullscreen Kiosk Manifest & iOS Notch Meta Tags -->
     <link rel="manifest" href="/manifest.json" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -13,9 +13,8 @@
     <meta name="theme-color" content="#0f172a" />
     <link rel="icon" type="image/x-icon" href="/favicon.ico" />
   </head>
-  <body class="overflow-x-hidden select-none bg-canvas">
+  <body class="overflow-x-hidden select-none bg-canvas antialiased" style="padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right);">
     <div id="root"></div>
-    <!-- Entry point -->
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -1,8 +1,8 @@
 // src/components/kiosk/KioskLockScreen.tsx
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import { Calendar, ShieldCheck, Clock, UserCircle, X, Sword, Sparkles, MapPin, Briefcase, Heart } from "lucide-react";
 import { Avatar, parseAvatarConfig } from "@/components/avatar/Avatar";
-import { getScreensaverConfig } from "@/components/settings/ScreensaverCustomizer";
+import { getScreensaverConfig, ScreensaverConfig } from "@/components/settings/ScreensaverCustomizer";
 
 interface KioskLockScreenProps {
   now: Date;
@@ -28,11 +28,11 @@ function startOfWeek(d = new Date()) {
 const THEME_STYLES = {
   pastelPink: {
     bgCanvas: "bg-gradient-to-br from-pink-50 via-rose-50/80 to-purple-50 text-slate-900",
-    headerBg: "bg-white/80 border-pink-100 shadow-pink-200/40 text-slate-900",
+    headerBg: "bg-white/90 border-pink-100 shadow-pink-200/40 text-slate-900",
     clockColor: "text-slate-900",
     dateColor: "text-pink-600",
     subTextColor: "text-slate-500",
-    horizonCard: "bg-white/80 border-pink-100 shadow-pink-200/50",
+    horizonCard: "bg-white/85 border-pink-100 shadow-pink-200/50",
     cardToday: "rgba(253, 242, 248, 0.95)",
     cardTodayBorder: "#f472b6",
     cardDefault: "rgba(255, 255, 255, 0.70)",
@@ -47,7 +47,7 @@ const THEME_STYLES = {
   },
   cyberNebula: {
     bgCanvas: "bg-slate-950 text-white",
-    headerBg: "bg-slate-900/85 border-white/15 shadow-black/60 text-white",
+    headerBg: "bg-slate-900/90 border-white/15 shadow-black/60 text-white",
     clockColor: "text-white",
     dateColor: "text-indigo-400",
     subTextColor: "text-slate-400",
@@ -151,7 +151,16 @@ export function KioskLockScreen({
 }: KioskLockScreenProps) {
   const [selectedScreensaverDay, setSelectedScreensaverDay] = useState<Date | null>(null);
 
-  const config = getScreensaverConfig();
+  const [config, setConfig] = useState<ScreensaverConfig>(getScreensaverConfig);
+
+  useEffect(() => {
+    const handleConfigChange = (e: any) => {
+      if (e.detail) setConfig(e.detail);
+    };
+    window.addEventListener("screensaver-config-changed", handleConfigChange);
+    return () => window.removeEventListener("screensaver-config-changed", handleConfigChange);
+  }, []);
+
   const theme = THEME_STYLES[config.theme] || THEME_STYLES.pastelPink;
 
   const safeEvents = Array.isArray(eventsList) ? eventsList : [];
@@ -178,16 +187,15 @@ export function KioskLockScreen({
     config.fontFamily === "serif" ? "font-serif" :
     config.fontFamily === "comic" ? "font-sans tracking-wide" : "font-sans";
 
-  // Dynamic Column Height mapping based on Card Density setting
   const columnHeightClass = 
     config.cardDensity === "compact" ? "min-h-[110px] md:min-h-[140px]" :
     config.cardDensity === "normal" ? "min-h-[140px] md:min-h-[190px]" :
-    "min-h-[160px] md:min-h-[260px]"; // Massive
+    "min-h-[160px] md:min-h-[260px]";
 
   return (
     <div 
       id="kiosk-screensaver-root"
-      className={`fixed inset-0 z-[9999] ${theme.bgCanvas} ${fontClass} flex flex-col justify-between p-3 sm:p-5 select-none overflow-hidden animate-in fade-in duration-500`}
+      className={`fixed inset-0 z-[9999] ${theme.bgCanvas} ${fontClass} flex flex-col justify-between p-3.5 sm:p-5 select-none overflow-hidden h-[100dvh] max-h-[100dvh] pt-[max(env(safe-area-inset-top),0.875rem)] pb-[max(env(safe-area-inset-bottom),0.875rem)] pl-[max(env(safe-area-inset-left),0.875rem)] pr-[max(env(safe-area-inset-right),0.875rem)]`}
       onClick={(e) => e.stopPropagation()}
     >
       {/* Ambient Animated Glows */}
@@ -198,8 +206,10 @@ export function KioskLockScreen({
         </div>
       )}
 
-      {/* TOP HEADER: Clock & Actions */}
-      <header className={`relative z-10 flex items-center justify-between gap-3 ${theme.headerBg} backdrop-blur-2xl px-4 py-3 rounded-2xl sm:rounded-3xl border shadow-lg shrink-0`}>
+      {/* TOP HEADER: Notch & Dynamic Island Safe */}
+      <header className={`relative z-20 flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${theme.headerBg} backdrop-blur-2xl px-4 py-3 rounded-2xl sm:rounded-3xl border shadow-lg shrink-0`}>
+        
+        {/* Left: Clock & Date */}
         <div className="flex items-center gap-3">
           <div className="size-10 sm:size-11 rounded-2xl bg-indigo-500/10 border border-indigo-400/30 flex items-center justify-center text-indigo-500 shrink-0">
             <Clock size={20} className="animate-pulse" />
@@ -220,11 +230,12 @@ export function KioskLockScreen({
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        {/* Right: Action Buttons (iPhone Safe) */}
+        <div className="flex items-center gap-2 w-full sm:w-auto">
           <button 
             type="button"
             onClick={onOpenHeroSelect}
-            className={`${theme.btnChoose} hover:brightness-105 active:scale-95 px-5 sm:px-7 py-2.5 rounded-2xl font-black text-xs uppercase tracking-wider flex items-center gap-2 cursor-pointer shadow-lg transition-all min-h-[44px] border border-white/30`}
+            className={`flex-1 sm:flex-none ${theme.btnChoose} hover:brightness-105 active:scale-95 px-4 sm:px-6 py-2.5 rounded-2xl font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer shadow-lg transition-all min-h-[44px] border border-white/30`}
           >
             <UserCircle size={18} /> Choose Hero
           </button>
@@ -232,7 +243,7 @@ export function KioskLockScreen({
           <button 
             type="button"
             onClick={onOpenAdmin}
-            className={`${theme.btnAdmin} active:scale-95 border-2 px-4 sm:px-5 py-2.5 rounded-2xl font-black text-xs uppercase tracking-wider flex items-center gap-1.5 cursor-pointer transition-all min-h-[44px] shadow-xs`}
+            className={`flex-1 sm:flex-none ${theme.btnAdmin} active:scale-95 border-2 px-4 sm:px-5 py-2.5 rounded-2xl font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer transition-all min-h-[44px] shadow-xs`}
           >
             <ShieldCheck size={16} /> Admin
           </button>
@@ -240,10 +251,10 @@ export function KioskLockScreen({
       </header>
 
       {/* MAIN SCREEN AREA: 7-DAY HORIZON */}
-      <main className="relative z-10 flex-1 my-2.5 sm:my-3.5 flex flex-col min-h-0">
-        <div className={`${theme.horizonCard} backdrop-blur-3xl border-2 sm:border-4 rounded-3xl sm:rounded-[3rem] p-3.5 sm:p-5 shadow-xl flex-1 flex flex-col min-h-0`}>
+      <main className="relative z-10 flex-1 my-2 sm:my-3 flex flex-col min-h-0">
+        <div className={`${theme.horizonCard} backdrop-blur-3xl border-2 sm:border-4 rounded-3xl sm:rounded-[3rem] p-3 sm:p-5 shadow-xl flex-1 flex flex-col min-h-0`}>
           
-          <div className="flex items-center justify-between pb-2.5 border-b border-black/5 dark:border-white/10 shrink-0">
+          <div className="flex items-center justify-between pb-2 border-b border-black/5 dark:border-white/10 shrink-0">
             <div className="flex items-center gap-2">
               <Sparkles size={16} className={theme.dateColor} />
               <h2 className="text-xs sm:text-sm font-black uppercase italic tracking-tight">
@@ -255,7 +266,7 @@ export function KioskLockScreen({
             </span>
           </div>
 
-          {/* 7-Day Columns (Height Controlled by Density) */}
+          {/* 7-Day Columns */}
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-7 gap-2.5 sm:gap-3.5 flex-1 min-h-0 pt-3 overflow-y-auto md:overflow-hidden scrollbar-thin">
             {weekDays.map((dayDate) => {
               const dayKey = ymd(dayDate);
@@ -367,7 +378,7 @@ export function KioskLockScreen({
                     )}
                   </div>
 
-                  {/* Status Indicator */}
+                  {/* Bottom Day Status */}
                   <div className="pt-1.5 border-t border-black/5 dark:border-white/10 shrink-0 text-center">
                     {isToday ? (
                       <span className={`text-[8px] sm:text-[9px] font-black uppercase tracking-widest ${theme.todayText} flex items-center justify-center gap-1`}>

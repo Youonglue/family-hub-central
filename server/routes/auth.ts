@@ -92,12 +92,13 @@ export default async function authRoutes(app: any, opts: any) {
     };
   });
 
-  // --- DEVICE PAIRING & AUTHORIZATION SYSTEM ---
+  // --- DEVICE PAIRING & AUTHORIZATION SYSTEM (DE-DUPLICATED) ---
 
-  // 1. Check if the current device is authorized
-  app.get("/device-status", async (req: any) => {
+  // 1. Check if device is trusted (checks header, query, and permanent cookie)
+  app.get("/device-status", async (req: any, reply: any) => {
     const rawHeader = req.headers["x-device-token"];
-    const deviceToken = typeof rawHeader === "string" ? rawHeader : (req.query?.token as string);
+    const cookieToken = req.headers.cookie?.match(/fh_dev_token=([^;]+)/)?.[1];
+    const deviceToken = typeof rawHeader === "string" ? rawHeader : cookieToken || (req.query?.token as string);
 
     if (!deviceToken) {
       return { is_trusted: false };
@@ -106,20 +107,26 @@ export default async function authRoutes(app: any, opts: any) {
     const device = db.prepare("SELECT * FROM trusted_devices WHERE device_token = ? AND is_trusted = 1").get(deviceToken) as any;
     if (device) {
       db.prepare("UPDATE trusted_devices SET last_active = datetime('now') WHERE id = ?").run(device.id);
+      // Refresh 10-year permanent device cookie
+      reply.header("Set-Cookie", `fh_dev_token=${device.device_token}; Path=/; Max-Age=315360000; SameSite=Strict`);
       return { is_trusted: true, device_name: device.device_name };
     }
 
     return { is_trusted: false };
   });
 
-  // 2. Request a new 6-character Pairing Code
+  // 2. Request a new 6-character Pairing Code (De-duplicates pending requests per IP)
   app.post("/request-pairing", async (req: any) => {
     const { deviceName } = req.body;
+    const ip = req.ip || req.socket.remoteAddress || "Local";
+    const userAgent = req.headers["user-agent"] || "Unknown Device";
+
+    // Clean up any stale pending requests for this IP to prevent duplicate rows
+    db.prepare("DELETE FROM pairing_requests WHERE ip_address = ? AND status = 'pending'").run(ip);
+
     const rawCode = randomBytes(3).toString("hex").toUpperCase();
     const pairingCode = `HUB-${rawCode}`;
     const requestId = randomUUID();
-    const ip = req.ip || req.socket.remoteAddress || "Local";
-    const userAgent = req.headers["user-agent"] || "Unknown Device";
 
     db.prepare(`
       INSERT INTO pairing_requests (id, pairing_code, device_name, ip_address, user_agent, status, created_at)
@@ -130,13 +137,14 @@ export default async function authRoutes(app: any, opts: any) {
     return { success: true, pairingCode, requestId };
   });
 
-  // 3. Poll pairing status from the waiting device (Publicly Accessible)
+  // 3. Poll pairing status
   app.get("/check-pairing/:requestId", async (req: any, reply: any) => {
     const { requestId } = req.params;
     const request = db.prepare("SELECT * FROM pairing_requests WHERE id = ?").get(requestId) as any;
     if (!request) return reply.code(404).send({ error: "Request not found" });
 
     if (request.status === "approved" && request.device_token) {
+      reply.header("Set-Cookie", `fh_dev_token=${request.device_token}; Path=/; Max-Age=315360000; SameSite=Strict`);
       return { status: "approved", deviceToken: request.device_token };
     }
 
@@ -158,13 +166,16 @@ export default async function authRoutes(app: any, opts: any) {
     const ip = req.ip || req.socket.remoteAddress || "Local";
     const userAgent = req.headers["user-agent"] || "Trusted Device";
 
+    // Deduplicate: replace any older device record for this exact IP
+    db.prepare("DELETE FROM trusted_devices WHERE ip_address = ?").run(ip);
+
     db.prepare(`
       INSERT INTO trusted_devices (id, device_name, device_token, ip_address, user_agent, paired_by, is_trusted, last_active, created_at)
       VALUES (?, ?, ?, ?, ?, ?, 1, datetime('now'), datetime('now'))
     `).run(deviceId, (deviceName || "Kitchen Wall Tablet").trim(), deviceToken, ip, userAgent, admin.username);
 
     if (requestId) {
-      db.prepare("UPDATE pairing_requests SET status = 'approved', device_token = ? WHERE id = ?").run(deviceToken, requestId);
+      db.prepare("DELETE FROM pairing_requests WHERE id = ?").run(requestId);
     }
 
     if (broadcast) {
@@ -172,10 +183,11 @@ export default async function authRoutes(app: any, opts: any) {
       broadcast("pairing-request");
     }
 
+    reply.header("Set-Cookie", `fh_dev_token=${deviceToken}; Path=/; Max-Age=315360000; SameSite=Strict`);
     return { success: true, deviceToken, deviceName: deviceName || "Kitchen Wall Tablet" };
   });
 
-  // 5. Admin Approve Device from Settings (Broadcasting Realtime Approval)
+  // 5. Admin Approve Device from Settings (Atomic Approval & Cleanup)
   app.post("/approve-device", async (req: any, reply: any) => {
     const user = getSessionUser(req);
     if (!user || user.role !== "admin") return reply.code(403).send({ error: "Admin only" });
@@ -186,6 +198,9 @@ export default async function authRoutes(app: any, opts: any) {
 
     const deviceToken = randomBytes(64).toString("hex");
     const deviceId = randomUUID();
+
+    // Deduplicate: Remove old trusted records from this IP
+    db.prepare("DELETE FROM trusted_devices WHERE ip_address = ?").run(request.ip_address);
 
     db.prepare(`
       INSERT INTO trusted_devices (id, device_name, device_token, ip_address, user_agent, paired_by, is_trusted, last_active, created_at)
@@ -522,7 +537,6 @@ export default async function authRoutes(app: any, opts: any) {
     }
   });
 
-  // Set PIN Endpoint
   app.post("/set-pin", async (req: any, reply: any) => {
     const user = getSessionUser(req);
     if (!user) return reply.code(401).send({ error: "Unauthorized" });
