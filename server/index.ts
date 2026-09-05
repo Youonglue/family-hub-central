@@ -162,7 +162,8 @@ app.addHook("preHandler", async (req, reply) => {
     "/api/auth/request-pairing",
     "/api/auth/check-pairing",
     "/api/auth/pair-with-pin",
-    "/api/events/calendar.ics"
+    "/api/events/calendar.ics",
+    "/api/events/paperless-webhook"
   ];
 
   if (publicPaths.some(p => url.startsWith(p))) {
@@ -209,20 +210,18 @@ app.get("/api/notifications", async () => {
     }
 });
 
-// --- SERVE FRONTEND (With Instant Cache-Busting for HTML) ---
+// --- SERVE FRONTEND (Instant Cache-Busting for HTML) ---
 const distPath = path.resolve(__dirname, "../dist");
 
 app.register(fastifyStatic, { 
   root: distPath, 
   prefix: "/",
   setHeaders: (res, pathName) => {
-    // If serving HTML, never cache it so new bundle hashes are loaded immediately!
     if (pathName.endsWith(".html")) {
       res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
       res.setHeader("Pragma", "no-cache");
       res.setHeader("Expires", "0");
     } else {
-      // Static assets with hashed filenames (js/css) can be cached safely
       res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
     }
   }
@@ -232,7 +231,6 @@ app.setNotFoundHandler((req, reply) => {
   if (req.url.startsWith("/api")) {
     return reply.code(404).send({ error: "Check modular route mapping" });
   }
-  // Send index.html with no-cache headers
   reply.header("Cache-Control", "no-cache, no-store, must-revalidate");
   reply.header("Pragma", "no-cache");
   reply.header("Expires", "0");
@@ -240,5 +238,5 @@ app.setNotFoundHandler((req, reply) => {
 });
 
 app.listen({ port: 3000, host: "0.0.0.0" }, () => {
-    console.log(`🚀 FORTRESS ONLINE | http://192.168.1.210:3000 (Air-Gapped & Instant Cache-Buster)`);
+    console.log(`🚀 FORTRESS ONLINE | http://192.168.10.195:3000 (Air-Gapped)`);
 });

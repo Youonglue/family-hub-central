@@ -1,6 +1,89 @@
 // server/routes/calendar.ts
 import { randomUUID } from "node:crypto";
 import { db } from "../db.js";
+import { encryptField, decryptField, decryptRows } from "../lib/crypto.js";
+
+// Helper: Smart NLP Date & Time Extractor from OCR Text
+function extractAppointmentDetails(text: string, title: string) {
+  const combined = `${title}\n${text}`;
+  const now = new Date();
+  const todayStr = now.toISOString().slice(0, 10);
+
+  // 1. Regex Matchers for common UK/US date formats:
+  // e.g. 14/10/2026, 14-10-2026, 2026-10-14, 14th October 2026, Oct 14 2026
+  const datePatterns = [
+    /\b(\d{4})[-/](\d{1,2})[-/](\d{1,2})\b/, // YYYY-MM-DD
+    /\b(\d{1,2})[-/](\d{1,2})[-/](\d{4})\b/, // DD/MM/YYYY or MM/DD/YYYY
+    /\b(\d{1,2})(?:st|nd|rd|th)?\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{4})\b/i, // 14th October 2026
+    /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{1,2})(?:st|nd|rd|th)?,\s*(\d{4})\b/i // October 14, 2026
+  ];
+
+  const monthMap: Record<string, string> = {
+    jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06",
+    jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12"
+  };
+
+  let extractedDate: string | null = null;
+
+  for (const pattern of datePatterns) {
+    const match = combined.match(pattern);
+    if (match) {
+      try {
+        if (pattern === datePatterns[0]) {
+          // YYYY-MM-DD
+          extractedDate = `${match[1]}-${match[2].padStart(2, "0")}-${match[3].padStart(2, "0")}`;
+        } else if (pattern === datePatterns[1]) {
+          // DD/MM/YYYY
+          extractedDate = `${match[3]}-${match[2].padStart(2, "0")}-${match[1].padStart(2, "0")}`;
+        } else if (pattern === datePatterns[2]) {
+          // 14th October 2026
+          const m = monthMap[match[2].slice(0, 3).toLowerCase()] || "01";
+          extractedDate = `${match[3]}-${m}-${match[1].padStart(2, "0")}`;
+        } else if (pattern === datePatterns[3]) {
+          // October 14, 2026
+          const m = monthMap[match[1].slice(0, 3).toLowerCase()] || "01";
+          extractedDate = `${match[3]}-${m}-${match[2].padStart(2, "0")}`;
+        }
+
+        // Validate date validity
+        const parsed = new Date(`${extractedDate}T00:00:00`);
+        if (!isNaN(parsed.getTime()) && extractedDate >= todayStr) {
+          break; // Found valid future date!
+        } else {
+          extractedDate = null; // Discard past dates!
+        }
+      } catch (e) {
+        extractedDate = null;
+      }
+    }
+  }
+
+  // 2. Time Extractor (e.g. 14:30, 2:30pm, 09:15 AM)
+  let extractedTime = "";
+  const timeMatch = combined.match(/\b(\d{1,2}):(\d{2})\s*(am|pm)?\b/i) || combined.match(/\b(\d{1,2})\s*(am|pm)\b/i);
+  if (timeMatch) {
+    let hrs = parseInt(timeMatch[1]);
+    const mins = timeMatch[2] && !isNaN(parseInt(timeMatch[2])) ? timeMatch[2] : "00";
+    const meridiem = (timeMatch[3] || timeMatch[2] || "").toLowerCase();
+
+    if (meridiem === "pm" && hrs < 12) hrs += 12;
+    if (meridiem === "am" && hrs === 12) hrs = 0;
+    extractedTime = `${String(hrs).padStart(2, "0")}:${mins.padStart(2, "0")}`;
+  }
+
+  // 3. Location Extractor
+  let location = "Clinic / Base";
+  const locMatch = combined.match(/(?:at|location|venue|hospital|surgery|school|centre|center):\s*([^\n,.]+)/i);
+  if (locMatch) {
+    location = locMatch[1].trim();
+  }
+
+  return {
+    date: extractedDate,
+    time: extractedTime,
+    location
+  };
+}
 
 export default async function calendarRoutes(app: any, opts: any) {
   const { broadcast } = opts;
@@ -18,25 +101,29 @@ export default async function calendarRoutes(app: any, opts: any) {
     inject("is_recurring", "INTEGER DEFAULT 0");
     inject("recurrence_rule", "TEXT");
     inject("tile_color", "TEXT");
+    inject("source", "TEXT DEFAULT 'manual'");
   };
 
-  // GET: /api/events (Public/Kiosk Read-Only)
+  // GET: /api/events
   app.get("/", async () => {
     ensureColumnsExist();
-    return db.prepare("SELECT * FROM events ORDER BY starts_at ASC, time_from ASC").all();
+    const rows = db.prepare("SELECT * FROM events ORDER BY starts_at ASC, time_from ASC").all() as any[];
+    return decryptRows(rows, ["title", "location", "category"]);
   });
 
   // GET: /api/events/upcoming
   app.get("/upcoming", async () => {
     ensureColumnsExist();
-    return db.prepare("SELECT * FROM events WHERE starts_at >= date('now') ORDER BY starts_at ASC, time_from ASC LIMIT 5").all();
+    const rows = db.prepare("SELECT * FROM events WHERE starts_at >= date('now') ORDER BY starts_at ASC, time_from ASC LIMIT 5").all() as any[];
+    return decryptRows(rows, ["title", "location", "category"]);
   });
 
-  // iCalendar (.ics) Feed: Optimized for Apple & Google Calendar
+  // iCalendar (.ics) Feed
   app.get("/calendar.ics", async (req: any, reply: any) => {
     try {
       ensureColumnsExist();
-      const list = db.prepare("SELECT e.*, m.name as member_name FROM events e LEFT JOIN family_members m ON e.member_id = m.id").all() as any[];
+      const rawList = db.prepare("SELECT e.*, m.name as member_name FROM events e LEFT JOIN family_members m ON e.member_id = m.id").all() as any[];
+      const list = decryptRows(rawList, ["title", "location", "category", "member_name"]);
       
       let ics = "BEGIN:VCALENDAR\r\n";
       ics += "VERSION:2.0\r\n";
@@ -126,7 +213,101 @@ export default async function calendarRoutes(app: any, opts: any) {
     }
   });
 
-  // POST: /api/events (Admin Only)
+  // --- 4. NEW: PAPERLESS-NGX DOCUMENT CONSUMPTION WEBHOOK ---
+  app.post("/paperless-webhook", async (req: any, reply: any) => {
+    try {
+      ensureColumnsExist();
+      const body = req.body || {};
+
+      // Paperless-ngx payload extraction (supports title, content, custom_fields)
+      const docTitle = body.title || body.document?.title || "Scanned Document";
+      const docContent = body.content || body.document?.content || "";
+
+      // Extract details
+      const parsed = extractAppointmentDetails(docContent, docTitle);
+
+      // Check if a future valid appointment date was found
+      if (!parsed.date) {
+        return { 
+          success: true, 
+          action: "ignored", 
+          reason: "No future appointment date found in document or date is in the past." 
+        };
+      }
+
+      // Check if any hero name is mentioned in the document for auto-assignment
+      const members = db.prepare("SELECT id, name, avatar_color FROM family_members").all() as any[];
+      let matchedMemberId: string | null = null;
+      let matchedMemberColor = "#0284c7";
+
+      for (const m of members) {
+        const plainName = decryptField(m.name).toLowerCase();
+        if (plainName.length > 2 && (docTitle.toLowerCase().includes(plainName) || docContent.toLowerCase().includes(plainName))) {
+          matchedMemberId = m.id;
+          matchedMemberColor = m.avatar_color || "#0284c7";
+          break;
+        }
+      }
+
+      // Determine category (e.g. School vs Hospital/Medical vs General)
+      let category = "General";
+      const lower = `${docTitle} ${docContent}`.toLowerCase();
+      if (lower.includes("dentist") || lower.includes("doctor") || lower.includes("hospital") || lower.includes("clinic") || lower.includes("nhs") || lower.includes("medical")) {
+        category = "General";
+      } else if (lower.includes("school") || lower.includes("class") || lower.includes("teacher") || lower.includes("tuition")) {
+        category = "School";
+      }
+
+      const questTitle = `📄 ${docTitle}`;
+      const eventId = randomUUID();
+
+      db.prepare(`
+        INSERT INTO events (id, title, location, member_id, color, starts_at, time_from, time_to, category, is_recurring, source, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, 0, 'paperless-ngx', datetime('now'))
+      `).run(
+        eventId,
+        encryptField(questTitle),
+        encryptField(parsed.location),
+        matchedMemberId,
+        matchedMemberColor,
+        parsed.date,
+        parsed.time,
+        encryptField(category)
+      );
+
+      // Log notification to Adventure Log
+      try {
+        db.prepare(`
+          INSERT INTO notifications (id, member_id, title, message, type, created_at)
+          VALUES (?, ?, ?, ?, 'calendar', datetime('now'))
+        `).run(
+          randomUUID(),
+          matchedMemberId,
+          encryptField("Paperless Scanned Quest! 📄"),
+          encryptField(`Auto-scheduled "${questTitle}" on ${parsed.date}${parsed.time ? ` at ${parsed.time}` : ""}`),
+          "calendar"
+        );
+      } catch (e) {}
+
+      broadcast("calendar");
+      broadcast("notifications");
+
+      console.log(`📄 Paperless-ngx Event Auto-Created: "${questTitle}" on ${parsed.date}`);
+      return { 
+        success: true, 
+        action: "created", 
+        eventId, 
+        title: questTitle, 
+        date: parsed.date, 
+        time: parsed.time 
+      };
+    } catch (error) {
+      console.error("❌ Paperless Webhook Error:", error);
+      return reply.code(500).send({ error: (error as Error).message });
+    }
+  });
+
+  // POST: /api/events
   app.post("/", async (req: any, reply: any) => {
     ensureColumnsExist();
     if (!req.user || req.user.role !== "admin") {
@@ -143,18 +324,22 @@ export default async function calendarRoutes(app: any, opts: any) {
     const isRecur = is_recurring ? 1 : 0;
     const finalTileColor = tile_color || (isRecur ? color : null);
 
+    const encryptedTitle = encryptField(title.trim());
+    const encryptedLocation = encryptField(location ? location.trim() : "");
+    const encryptedCategory = encryptField(category || "General");
+
     db.transaction(() => {
       for (const date of dates) { 
         stmt.run(
           randomUUID(), 
-          title.trim(), 
-          location ? location.trim() : "", 
+          encryptedTitle, 
+          encryptedLocation, 
           member_id || null, 
           color, 
           date, 
           time_from || "", 
           time_to || "", 
-          category || "General",
+          encryptedCategory,
           isRecur,
           finalTileColor
         ); 
@@ -165,7 +350,7 @@ export default async function calendarRoutes(app: any, opts: any) {
     return { success: true };
   });
 
-  // DELETE: /api/events/:id (Admin Only)
+  // DELETE: /api/events/:id
   app.delete("/:id", async (req: any, reply: any) => {
     if (!req.user || req.user.role !== "admin") {
       return reply.code(403).send({ error: "Only administrators can delete calendar quests" });
@@ -176,8 +361,8 @@ export default async function calendarRoutes(app: any, opts: any) {
     return { success: true };
   });
 
-  // DELETE: /api/events/range (Admin Only)
-  app.delete("/range", async (req: any, reply: any) => {
+  // DELETE: /api/events/range
+  app.delete("/range", async (req: any) => {
     if (!req.user || req.user.role !== "admin") {
       return reply.code(403).send({ error: "Only administrators can clear calendar ranges" });
     }
