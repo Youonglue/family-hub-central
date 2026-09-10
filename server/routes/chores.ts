@@ -16,6 +16,8 @@ export default async function choreRoutes(app: any, opts: any) {
           active INTEGER DEFAULT 1,
           is_boss INTEGER DEFAULT 0,
           is_coop INTEGER DEFAULT 0,
+          member_id TEXT,
+          category TEXT DEFAULT 'General',
           created_at TEXT
         )
       `).run();
@@ -57,6 +59,8 @@ export default async function choreRoutes(app: any, opts: any) {
     injectChore("xp", "INTEGER");
     injectChore("is_boss", "INTEGER DEFAULT 0");
     injectChore("is_coop", "INTEGER DEFAULT 0");
+    injectChore("member_id", "TEXT");
+    injectChore("category", "TEXT DEFAULT 'General'");
 
     const injectComp = (col: string, type: string) => {
       try {
@@ -103,41 +107,118 @@ export default async function choreRoutes(app: any, opts: any) {
     }
   };
 
-  // 1. GET ALL ACTIVE CHORES
+  // 1. GET CHORES (Filters strictly by memberId if provided, plus Co-Op/Shared)
   app.get("/", async (req: any, reply: any) => {
     try {
       ensureTablesExist();
-      return db.prepare("SELECT * FROM chores WHERE active = 1 ORDER BY points DESC").all();
+      const { memberId } = req.query || {};
+
+      if (memberId) {
+        return db.prepare(`
+          SELECT c.*, m.name as assigned_member_name 
+          FROM chores c
+          LEFT JOIN family_members m ON c.member_id = m.id
+          WHERE c.active = 1 
+            AND (c.member_id = ? OR c.member_id IS NULL OR c.member_id = '' OR c.is_coop = 1)
+          ORDER BY c.points DESC
+        `).all(memberId);
+      }
+
+      return db.prepare(`
+        SELECT c.*, m.name as assigned_member_name 
+        FROM chores c
+        LEFT JOIN family_members m ON c.member_id = m.id
+        WHERE c.active = 1 
+        ORDER BY c.points DESC
+      `).all();
     } catch (e) {
       console.error("❌ GET CHORES ERROR:", e);
       return [];
     }
   });
 
-  // 2. ADD NEW CHORE
+  // 2. ADD CHORE (With Hero Assignment & Category)
   app.post("/", async (req: any) => {
     ensureTablesExist();
-    const { title, points, xp, is_boss, is_coop } = req.body;
+    const { title, points, xp, is_boss, is_coop, member_id, category } = req.body;
     const finalPoints = parseInt(points) || 10;
     const finalXp = xp !== undefined && xp !== "" ? (parseInt(xp) || 0) : finalPoints;
+    const targetMember = member_id ? String(member_id).trim() : null;
+    const choreCategory = category ? String(category).trim() : "General";
 
     db.prepare(`
-      INSERT INTO chores (id, title, points, xp, active, is_boss, is_coop, created_at) 
-      VALUES (?, ?, ?, ?, 1, ?, ?, datetime('now'))
+      INSERT INTO chores (id, title, points, xp, active, is_boss, is_coop, member_id, category, created_at) 
+      VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, datetime('now'))
     `).run(
       randomUUID(), 
       title.trim(), 
       finalPoints, 
       finalXp, 
       is_boss ? 1 : 0, 
-      is_coop ? 1 : 0
+      is_coop ? 1 : 0,
+      targetMember,
+      choreCategory
     );
     
     broadcast("chores"); 
     return { success: true };
   });
 
-  // 3. DELETE CHORE
+  // 3. AWARD BEHAVIOUR SPARK (Instant positive points without a pre-made chore)
+  app.post("/award-spark", async (req: any, reply: any) => {
+    try {
+      ensureTablesExist();
+      if (!req.user || req.user.role !== 'admin') {
+        return reply.code(403).send({ error: "Only administrators can award sparks" });
+      }
+
+      const { memberId, points, xp, reason } = req.body;
+      const pts = Math.max(1, parseInt(points) || 10);
+      const exp = xp !== undefined && xp !== "" ? Math.max(0, parseInt(xp) || 0) : pts;
+      const sparkReason = reason?.trim() || "Positive Behaviour & Kindness";
+
+      const member = db.prepare("SELECT name FROM family_members WHERE id = ?").get(memberId) as any;
+      if (!member) return reply.code(404).send({ error: "Member not found" });
+
+      db.transaction(() => {
+        const choreId = randomUUID();
+        db.prepare(`
+          INSERT INTO chores (id, title, points, xp, active, is_boss, is_coop, member_id, category, created_at)
+          VALUES (?, ?, ?, ?, 0, 0, 0, ?, 'Behaviour Spark', datetime('now'))
+        `).run(choreId, `✨ ${sparkReason}`, pts, exp, memberId);
+
+        db.prepare(`
+          INSERT INTO chore_completions (id, chore_id, member_id, points_awarded, xp_awarded, status, completed_at, approved_at)
+          VALUES (?, ?, ?, ?, ?, 'approved', datetime('now'), datetime('now'))
+        `).run(randomUUID(), choreId, memberId, pts, exp);
+
+        db.prepare(`
+          UPDATE family_members 
+          SET xp = xp + ?, 
+              level = 1 + ((xp + ?) / 100)
+          WHERE id = ?
+        `).run(exp, exp, memberId);
+
+        logNotification(
+          memberId, 
+          "Behaviour Spark! ✨", 
+          `"${member.name}" earned +${pts} PTS & +${exp} XP for "${sparkReason}"!`, 
+          "chore"
+        );
+      })();
+
+      broadcast("points");
+      broadcast("completions");
+      broadcast("members");
+      broadcast("notifications");
+      return { success: true, points: pts, xp: exp };
+    } catch (error) {
+      console.error("❌ AWARD SPARK ERROR:", error);
+      return reply.code(500).send({ error: (error as Error).message });
+    }
+  });
+
+  // 4. DELETE CHORE
   app.delete("/:id", async (req: any) => {
     ensureTablesExist();
     db.prepare("UPDATE chores SET active = 0 WHERE id = ?").run(req.params.id);
@@ -145,7 +226,7 @@ export default async function choreRoutes(app: any, opts: any) {
     return { success: true };
   });
 
-  // 4. COMPLETE CHORE
+  // 5. COMPLETE CHORE
   app.post("/:id/complete", async (req: any) => {
     ensureTablesExist();
     const chore = db.prepare("SELECT points, xp, is_boss, is_coop FROM chores WHERE id = ?").get(req.params.id) as any;
@@ -161,7 +242,7 @@ export default async function choreRoutes(app: any, opts: any) {
     return { success: true };
   });
 
-  // 5. GET PENDING APPROVALS
+  // 6. GET PENDING APPROVALS
   app.get("/completions/pending", async () => {
     ensureTablesExist();
     return db.prepare(`
@@ -173,7 +254,7 @@ export default async function choreRoutes(app: any, opts: any) {
     `).all();
   });
 
-  // 6. APPROVE CHORE (Boss: x3 Points & 1x XP; Co-Op: x2 Points & x2 XP)
+  // 7. APPROVE CHORE
   app.post("/completions/:id/approve", async (req: any, reply: any) => {
     ensureTablesExist();
     const completionId = req.params.id;
@@ -263,7 +344,7 @@ export default async function choreRoutes(app: any, opts: any) {
     return { success: true, pointsAwarded, xpAwarded };
   });
 
-  // 7. POINTS LEADERBOARD (STRICTLY FILTERS OUT HIDDEN HEROES)
+  // 8. POINTS LEADERBOARD
   app.get("/points", async (req: any, reply: any) => {
     try {
       ensureTablesExist();
@@ -292,7 +373,7 @@ export default async function choreRoutes(app: any, opts: any) {
     }
   });
 
-  // 8. DEDUCT POINTS
+  // 9. DEDUCT POINTS
   app.post("/deduct-points", async (req: any, reply: any) => {
     try {
       ensureTablesExist();
@@ -356,7 +437,7 @@ export default async function choreRoutes(app: any, opts: any) {
     }
   });
 
-  // 9. REJECT/DECLINE CHORE COMPLETION
+  // 10. REJECT CHORE COMPLETION
   app.post("/completions/:id/reject", async (req: any, reply: any) => {
     try {
       ensureTablesExist();

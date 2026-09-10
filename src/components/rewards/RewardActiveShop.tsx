@@ -2,7 +2,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useMemo } from "react";
 import { toast } from "sonner";
-import { ArrowLeft, ShieldCheck, Star, Gift, Lock, X } from "lucide-react";
+import { ArrowLeft, ShieldCheck, Star, Gift, Lock, X, Users, Sparkles } from "lucide-react";
 import { Avatar, parseAvatarConfig } from "@/components/avatar/Avatar";
 
 interface RewardActiveShopProps {
@@ -34,6 +34,8 @@ export function RewardActiveShop({
 }: RewardActiveShopProps) {
   const qc = useQueryClient();
 
+  // DEFAULT: "mine" strictly shows rewards relevant to activeMember + Family Shared
+  const [selectedFilter, setSelectedFilter] = useState<string>("mine");
   const [pooledContributors, setPooledContributors] = useState<Record<string, string[]>>({});
   const [confirmingPurchase, setConfirmingPurchase] = useState<{ reward: any, contributors: any[], splitCost: number } | null>(null);
 
@@ -113,7 +115,7 @@ export function RewardActiveShop({
   const rawMemberList = Array.isArray(pointsData.data) ? pointsData.data : [];
   const rewardList = Array.isArray(rewards.data) ? rewards.data : [];
 
-  // FILTER: Eligible Co-Op contributing siblings (visible in Rewards)
+  // Eligible Co-Op contributing siblings
   const eligibleSiblings = useMemo(() => {
     return rawMemberList.filter((m: any) => {
       const id = m.member_id || m.id;
@@ -121,8 +123,26 @@ export function RewardActiveShop({
     });
   }, [rawMemberList, activeMember.id]);
 
+  // DYNAMIC REWARDS FILTERING (Defaults to "mine", with browsing options)
+  const filteredRewards = useMemo(() => {
+    if (selectedFilter === "mine") {
+      // Current hero's rewards + Shared/Co-Op family rewards
+      return rewardList.filter((r: any) => !r.member_id || r.member_id === activeMember.id);
+    }
+    if (selectedFilter === "shared") {
+      // Only Shared / All-Family rewards
+      return rewardList.filter((r: any) => !r.member_id || r.member_id === "");
+    }
+    if (selectedFilter === "all") {
+      // Entire catalog
+      return rewardList;
+    }
+    // Filter by specific sibling ID
+    return rewardList.filter((r: any) => r.member_id === selectedFilter);
+  }, [rewardList, selectedFilter, activeMember.id]);
+
   return (
-    <div className="space-y-5 sm:space-y-8 animate-in slide-in-from-bottom-5 duration-300">
+    <div className="space-y-4 sm:space-y-6 md:space-y-8 animate-in slide-in-from-bottom-5 duration-300 safe-area-inset-bottom">
       
       {/* TOP HEADER CONTROLS */}
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 bg-white p-3.5 sm:p-4 rounded-2xl sm:rounded-3xl shadow-sm border-2 sm:border-4 border-slate-50">
@@ -134,12 +154,14 @@ export function RewardActiveShop({
         </button>
         
         <div className="flex items-center justify-between sm:justify-end gap-3 w-full sm:w-auto">
-          <p className="font-black uppercase italic text-slate-800 tracking-tight text-sm sm:text-base">{activeMember.name}</p>
+          <p className="font-black uppercase italic text-slate-800 tracking-tight text-sm sm:text-base truncate max-w-[180px] sm:max-w-xs">
+            {activeMember.name}
+          </p>
           {canAccessAdmin && (
             <button 
               onClick={() => setIsAdminView(!isAdminView)} 
-              className={`px-4 py-2.5 sm:px-6 sm:py-3 rounded-2xl font-black text-xs flex items-center justify-center gap-2 shadow-md transition-all w-full sm:w-auto cursor-pointer min-h-[44px] ${
-                isAdminView ? 'bg-slate-900 text-white' : 'bg-indigo-50 text-indigo-600'
+              className={`px-4 py-2.5 sm:px-6 sm:py-3 rounded-2xl font-black text-xs flex items-center justify-center gap-2 shadow-md transition-all w-full sm:w-auto cursor-pointer min-h-[44px] shrink-0 active:scale-95 ${
+                isAdminView ? 'bg-slate-900 text-white' : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'
               }`}
             >
               <ShieldCheck size={18} /> {isAdminView ? "Exit Customization" : "Customize Shop"}
@@ -149,18 +171,18 @@ export function RewardActiveShop({
       </div>
 
       {/* GIANT HIGH-CONTRAST POINTS BANNER */}
-      <div className="bg-white p-5 sm:p-8 md:p-10 rounded-3xl sm:rounded-[3rem] shadow-xl border-2 sm:border-4 border-slate-50 flex flex-col md:flex-row items-center gap-4 sm:gap-8 relative overflow-hidden text-center md:text-left">
+      <div className="bg-white p-4 sm:p-6 md:p-8 lg:p-10 rounded-3xl sm:rounded-[3rem] shadow-xl border-2 sm:border-4 border-slate-50 flex flex-col md:flex-row items-center gap-4 sm:gap-6 md:gap-8 relative overflow-hidden text-center md:text-left">
          <Avatar 
            config={avatarConfig} 
-           className="size-20 sm:size-32 md:size-36 rounded-2xl sm:rounded-[2.5rem] shadow-xl border-4 sm:border-8 border-white shrink-0 mx-auto md:mx-0" 
+           className="size-20 sm:size-28 md:size-32 rounded-2xl sm:rounded-[2.5rem] shadow-xl border-4 sm:border-8 border-white shrink-0 mx-auto md:mx-0" 
          />
 
-         <div className="flex-1 w-full space-y-2 sm:space-y-3">
+         <div className="flex-1 w-full min-w-0 space-y-1.5 sm:space-y-2">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-              <h2 className="text-2xl sm:text-4xl font-black tracking-tighter uppercase italic text-slate-900 truncate max-w-full">
+              <h2 className="text-xl sm:text-3xl md:text-4xl font-black tracking-tight uppercase italic text-slate-900 truncate max-w-full">
                 {activeMember.name}'s Stash
               </h2>
-              <div className="bg-indigo-600 text-white px-3 py-1 rounded-full text-[9px] sm:text-[10px] font-black flex items-center justify-center gap-1 shadow-md w-max mx-auto md:mx-0 select-none">
+              <div className="bg-indigo-600 text-white px-3 py-1 rounded-full text-[9px] sm:text-[10px] font-black flex items-center justify-center gap-1 shadow-md w-max mx-auto md:mx-0 select-none shrink-0">
                 <Star className="size-3.5 animate-pulse" /> SHOP UNLOCKED
               </div>
             </div>
@@ -173,9 +195,82 @@ export function RewardActiveShop({
          </div>
       </div>
 
+      {/* DYNAMIC REWARD BROWSER & FILTER PILLS */}
+      <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none select-none">
+        {/* Default Filter: Mine */}
+        <button
+          type="button"
+          onClick={() => setSelectedFilter("mine")}
+          className={`px-3.5 py-2 rounded-2xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition-all cursor-pointer shrink-0 min-h-[40px] ${
+            selectedFilter === "mine"
+              ? "bg-slate-900 text-white shadow-md scale-105"
+              : "bg-white text-slate-500 hover:bg-slate-100 border border-slate-200"
+          }`}
+        >
+          <Star size={13} className="text-yellow-400 fill-yellow-400" /> My Rewards
+        </button>
+
+        {/* Shared / Family Co-Op Filter */}
+        <button
+          type="button"
+          onClick={() => setSelectedFilter("shared")}
+          className={`px-3.5 py-2 rounded-2xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition-all cursor-pointer shrink-0 min-h-[40px] ${
+            selectedFilter === "shared"
+              ? "bg-slate-900 text-white shadow-md scale-105"
+              : "bg-white text-slate-500 hover:bg-slate-100 border border-slate-200"
+          }`}
+        >
+          <Users size={13} /> 👥 Family Co-Op
+        </button>
+
+        {/* Browse Siblings */}
+        {eligibleSiblings.map((m: any) => {
+          const mId = m.member_id || m.id;
+          const isSelected = selectedFilter === mId;
+          const siblingAvatar = parseAvatarConfig(m.avatar_config);
+
+          return (
+            <button
+              type="button"
+              key={mId}
+              onClick={() => setSelectedFilter(mId)}
+              className={`px-3.5 py-2 rounded-2xl text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer shrink-0 min-h-[40px] ${
+                isSelected
+                  ? "bg-indigo-600 text-white shadow-md scale-105"
+                  : "bg-white text-slate-500 hover:bg-slate-100 border border-slate-200"
+              }`}
+            >
+              <Avatar config={siblingAvatar} className="size-4 rounded-md shadow-xs" />
+              <span>{m.name}'s Goals</span>
+            </button>
+          );
+        })}
+
+        {/* View All Filter */}
+        <button
+          type="button"
+          onClick={() => setSelectedFilter("all")}
+          className={`px-3.5 py-2 rounded-2xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition-all cursor-pointer shrink-0 min-h-[40px] ${
+            selectedFilter === "all"
+              ? "bg-slate-900 text-white shadow-md scale-105"
+              : "bg-white text-slate-500 hover:bg-slate-100 border border-slate-200"
+          }`}
+        >
+          <Sparkles size={13} /> All Rewards
+        </button>
+      </div>
+
       {/* CATALOG GRID */}
-      <div className="grid gap-4 md:gap-6 grid-cols-1 sm:grid-cols-2">
-         {rewardList.map((r: any) => {
+      <div className="grid gap-3 sm:gap-4 md:gap-6 grid-cols-1 sm:grid-cols-2">
+         {filteredRewards.length === 0 && (
+           <div className="col-span-full py-12 bg-white rounded-3xl border-2 border-dashed border-slate-100 text-center p-6">
+             <p className="font-black uppercase tracking-wider text-slate-400 text-xs sm:text-sm">
+               No rewards found in this section.
+             </p>
+           </div>
+         )}
+
+         {filteredRewards.map((r: any) => {
            const rewardColor = getQuestColor(r.title);
            const isPoolingActive = pooledContributors[r.id] !== undefined;
            const activeContributors = [activeMember.id, ...(pooledContributors[r.id] ?? [])];
@@ -190,30 +285,49 @@ export function RewardActiveShop({
            return (
              <div 
                key={r.id} 
-               className="bg-white p-5 sm:p-7 rounded-3xl sm:rounded-[3rem] border-2 sm:border-4 border-slate-50 shadow-md flex flex-col justify-between min-h-[280px] sm:min-h-[320px] relative overflow-visible group hover:shadow-xl transition-all"
+               className="bg-white p-4 sm:p-6 md:p-7 rounded-3xl sm:rounded-[3rem] border-2 sm:border-4 border-slate-50 shadow-md flex flex-col justify-between min-h-[260px] sm:min-h-[300px] h-auto relative group hover:shadow-xl transition-all"
                style={{ borderLeftColor: rewardColor, borderLeftWidth: '10px' }}
              >
-               <div className="flex justify-between items-start gap-4">
-                 <div className="p-3 bg-slate-50 rounded-2xl group-hover:rotate-6 transition-transform shadow-sm text-slate-800">
-                     <Gift size={28} />
+               {/* Card Top: Icon, Badges, Points */}
+               <div className="flex justify-between items-start gap-3">
+                 <div className="p-2.5 sm:p-3 bg-slate-50 rounded-2xl group-hover:rotate-6 transition-transform shadow-sm text-slate-800 shrink-0">
+                     <Gift size={24} className="sm:size-7" />
                  </div>
-                 <div className="text-right shrink-0">
-                   <div className="bg-slate-900 text-white px-3.5 py-1.5 rounded-2xl font-black italic shadow-md inline-block text-xs sm:text-sm">
+                 
+                 <div className="text-right shrink-0 space-y-1">
+                   <div className="bg-slate-900 text-white px-3 py-1.5 sm:px-4 sm:py-2 rounded-2xl font-black italic shadow-md inline-block text-xs sm:text-sm">
                      {r.points} PTS
                    </div>
+                   
+                   {/* Target Hero or Shared Badge */}
+                   <div>
+                     {r.assigned_member_name ? (
+                       <span className="px-2 py-0.5 bg-indigo-50 text-indigo-600 border border-indigo-200 text-[8px] sm:text-[9px] font-black uppercase rounded-md block">
+                         {r.assigned_member_name}'s Goal
+                       </span>
+                     ) : (
+                       <span className="px-2 py-0.5 bg-emerald-50 text-emerald-600 border border-emerald-200 text-[8px] sm:text-[9px] font-black uppercase rounded-md block">
+                         Family Shared
+                       </span>
+                     )}
+                   </div>
+
                    {isPoolingActive && (
-                     <p className="text-[9px] font-black text-indigo-600 uppercase tracking-widest mt-1">Split: {splitCost} pts each</p>
+                     <p className="text-[9px] font-black text-indigo-600 uppercase tracking-widest">
+                       Split: {splitCost} pts each
+                     </p>
                    )}
                  </div>
                </div>
                
-               <div className="space-y-3 sm:space-y-4 mt-3">
-                 <h4 className="text-lg sm:text-2xl font-black text-slate-800 leading-tight uppercase tracking-tight truncate max-w-full">
+               {/* Card Bottom: Title, Pooling, Claim */}
+               <div className="space-y-3 mt-3 w-full min-w-0">
+                 <h4 className="text-base sm:text-lg md:text-xl font-black text-slate-800 leading-snug uppercase tracking-tight break-words line-clamp-2">
                    {r.title}
                  </h4>
 
                  {/* CO-OP POOLING SECTION */}
-                 <div className="border-t border-slate-100 pt-3 space-y-2">
+                 <div className="border-t border-slate-100 pt-2.5 space-y-2">
                    <label className="flex items-center gap-2 text-[9px] sm:text-[10px] font-black uppercase text-slate-400 tracking-wider cursor-pointer select-none min-h-[32px]">
                      <input
                        type="checkbox"
@@ -234,9 +348,9 @@ export function RewardActiveShop({
                      👥 Pool Points (Co-Op Purchase)
                    </label>
 
-                   {/* Contributors Selector checklist (Filtered against show_on_rewards) */}
+                   {/* Contributors Selector checklist */}
                    {isPoolingActive && (
-                     <div className="space-y-2 animate-in slide-in-from-top-2 duration-200">
+                     <div className="space-y-1.5 animate-in slide-in-from-top-2 duration-200">
                        <p className="text-[8px] sm:text-[9px] font-bold text-slate-400 uppercase tracking-widest">Select contributing siblings:</p>
                        <div className="flex flex-wrap gap-1.5">
                          {eligibleSiblings.map((m: any) => {
@@ -251,11 +365,11 @@ export function RewardActiveShop({
                                type="button"
                                key={mId}
                                onClick={() => handleToggleContributor(r.id, mId)}
-                               className={`px-2.5 py-1.5 rounded-xl text-[9px] sm:text-[10px] font-black uppercase border-2 flex items-center gap-1.5 transition-all cursor-pointer active:scale-95 min-h-[36px] ${
+                               className={`px-2 py-1 rounded-xl text-[9px] sm:text-[10px] font-black uppercase border flex items-center gap-1.5 transition-all cursor-pointer active:scale-95 min-h-[34px] ${
                                  isChecked 
                                    ? isShort 
-                                     ? 'bg-rose-50 border-rose-200 text-rose-600 shadow-sm' 
-                                     : 'bg-indigo-50 border-indigo-200 text-indigo-600 shadow-sm'
+                                     ? 'bg-rose-50 border-rose-200 text-rose-600 shadow-xs' 
+                                     : 'bg-indigo-50 border-indigo-200 text-indigo-600 shadow-xs'
                                    : 'bg-slate-50 border-transparent text-slate-400 hover:bg-slate-100'
                                }`}
                              >
@@ -280,14 +394,14 @@ export function RewardActiveShop({
                          splitCost
                        });
                      }}
-                     className="w-full py-3 sm:py-3.5 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white rounded-2xl font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-md cursor-pointer transition-all min-h-[44px]"
+                     className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white rounded-2xl font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-md cursor-pointer transition-all min-h-[44px]"
                    >
                      <Gift size={14} /> {isPoolingActive ? `Request Co-Op (${splitCost} pts each)` : "Claim Reward"}
                    </button>
                  ) : (
                    <button
                      disabled
-                     className="w-full py-3 sm:py-3.5 bg-slate-100 text-slate-400 rounded-2xl font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 cursor-not-allowed border-2 border-dashed border-slate-200 min-h-[44px]"
+                     className="w-full py-3 bg-slate-100 text-slate-400 rounded-2xl font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 cursor-not-allowed border-2 border-dashed border-slate-200 min-h-[44px]"
                    >
                      <Lock size={14} /> Insufficient Points
                    </button>
@@ -306,19 +420,19 @@ export function RewardActiveShop({
 
         return (
           <div className="fixed inset-0 z-[100] grid place-items-center bg-slate-900/60 backdrop-blur-md p-4" onClick={() => setConfirmingPurchase(null)}>
-            <div className="w-full max-w-md bg-white rounded-3xl sm:rounded-[3.5rem] p-6 sm:p-8 shadow-2xl border-4 sm:border-8 border-slate-50 text-center animate-in zoom-in-95 duration-200 my-auto" onClick={e => e.stopPropagation()}>
-              <div className="size-14 sm:size-16 bg-indigo-100 rounded-2xl flex items-center justify-center mx-auto mb-4 text-indigo-600 shadow-inner">
+            <div className="w-full max-w-md bg-white rounded-3xl sm:rounded-[3.5rem] p-5 sm:p-8 shadow-2xl border-4 sm:border-8 border-slate-50 text-center animate-in zoom-in-95 duration-200 my-auto" onClick={e => e.stopPropagation()}>
+              <div className="size-14 sm:size-16 bg-indigo-100 rounded-2xl flex items-center justify-center mx-auto mb-3 text-indigo-600 shadow-inner">
                 <Gift size={28} />
               </div>
               
-              <h3 className="text-xl sm:text-2xl font-black uppercase italic tracking-tight text-slate-900 mb-1">
+              <h3 className="text-lg sm:text-2xl font-black uppercase italic tracking-tight text-slate-900 mb-1">
                 {isCoOp ? "Co-Op Request" : "Confirm Purchase"}
               </h3>
               <p className="text-slate-400 font-bold text-[10px] uppercase tracking-widest mb-4">
                 Redeem <span className="text-slate-900 font-black">"{r.title}"</span>?
               </p>
 
-              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 mb-5 space-y-2">
+              <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 mb-4 space-y-2 text-left">
                 <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Points Pooling Details:</p>
                 <div className="flex flex-col gap-1.5 max-h-[140px] overflow-y-auto pr-1">
                   {contributors.map((mId) => {
@@ -328,7 +442,7 @@ export function RewardActiveShop({
                     return (
                       <div key={mId} className="flex justify-between items-center bg-white p-2 rounded-xl border border-slate-200">
                         <div className="flex items-center gap-2">
-                          <Avatar config={contributorAvatar} className="size-5 rounded-md shadow-sm" />
+                          <Avatar config={contributorAvatar} className="size-5 rounded-md shadow-xs" />
                           <span className="text-xs font-black uppercase text-slate-700">{memberObj?.name}</span>
                         </div>
                         <span className="text-xs font-black text-rose-600">-{confirmingPurchase.splitCost} pts</span>
@@ -343,13 +457,13 @@ export function RewardActiveShop({
                 )}
               </div>
 
-              <div className="space-y-2.5">
+              <div className="space-y-2">
                 <button
                   onClick={() => {
                     claimReward.mutate({ rewardId: r.id, memberIds: contributors });
                   }}
                   disabled={claimReward.isPending}
-                  className="w-full py-4 bg-slate-900 hover:bg-indigo-600 text-white rounded-2xl font-black text-sm uppercase tracking-widest transition-all shadow-xl disabled:opacity-20 cursor-pointer active:scale-95 min-h-[48px]"
+                  className="w-full py-3.5 bg-slate-900 hover:bg-indigo-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest transition-all shadow-xl disabled:opacity-20 cursor-pointer active:scale-95 min-h-[44px]"
                 >
                   {claimReward.isPending ? "CONFIRMING..." : isCoOp ? "SUBMIT REQUEST" : "YES, REDEEM!"}
                 </button>

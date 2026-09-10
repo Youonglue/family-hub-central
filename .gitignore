@@ -33,3 +33,10 @@ yarn-error.log*
 data/
 dist/
 .output/
+data/
+*.db
+*.db-wal
+*.db-shm
+master.key
+.env
+.env.local

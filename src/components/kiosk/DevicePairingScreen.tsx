@@ -1,6 +1,16 @@
 // src/components/kiosk/DevicePairingScreen.tsx
 import React, { useState, useEffect, useRef } from "react";
-import { ShieldCheck, Smartphone, Lock, RefreshCcw, CheckCircle2, Loader2, KeyRound } from "lucide-react";
+import { 
+  ShieldCheck, 
+  Smartphone, 
+  Lock, 
+  RefreshCcw, 
+  CheckCircle2, 
+  Loader2, 
+  KeyRound, 
+  Clock, 
+  AlertTriangle 
+} from "lucide-react";
 import { toast } from "sonner";
 
 interface DevicePairingScreenProps {
@@ -15,12 +25,30 @@ export function DevicePairingScreen({ onPairedSuccess }: DevicePairingScreenProp
     return sessionStorage.getItem("fh_active_pairing_req_id") || "";
   });
   
+  // Detect if this device had a previous authorization that timed out after 5 days
+  const [isExpiredSession] = useState<boolean>(() => {
+    try {
+      return Boolean(localStorage.getItem("fh_device_token"));
+    } catch {
+      return false;
+    }
+  });
+
   const [deviceName, setDeviceName] = useState<string>("Kitchen Tablet / Phone");
   const [showPinInput, setShowPinInput] = useState(false);
   const [pin, setPin] = useState("");
   const [isVerifyingPin, setIsVerifyingPin] = useState(false);
 
   const hasApprovedRef = useRef(false);
+
+  // Clean stale expired token from localStorage on mount
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("fh_device_token")) {
+        localStorage.removeItem("fh_device_token");
+      }
+    } catch {}
+  }, []);
 
   // 1. Generate or Restore Single Persistent Pairing Request
   useEffect(() => {
@@ -122,16 +150,40 @@ export function DevicePairingScreen({ onPairedSuccess }: DevicePairingScreenProp
     <div className="fixed inset-0 z-[9999] bg-slate-950 text-white flex flex-col items-center justify-center p-4 sm:p-6 overflow-y-auto">
       <div className="w-full max-w-md bg-slate-900 border-2 sm:border-4 border-slate-800 rounded-3xl sm:rounded-[3.5rem] p-6 sm:p-8 text-center space-y-6 shadow-2xl animate-in zoom-in-95 duration-300 my-auto">
         
-        <div className="size-16 sm:size-20 bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 rounded-3xl flex items-center justify-center mx-auto shadow-inner">
-          <Smartphone size={36} />
+        {/* Device Icon */}
+        <div className={`size-16 sm:size-20 rounded-3xl flex items-center justify-center mx-auto shadow-inner border ${
+          isExpiredSession 
+            ? "bg-amber-600/20 text-amber-400 border-amber-500/30" 
+            : "bg-indigo-600/20 text-indigo-400 border-indigo-500/30"
+        }`}>
+          {isExpiredSession ? <Clock size={36} /> : <Smartphone size={36} />}
         </div>
 
         <div>
-          <h2 className="text-2xl sm:text-3xl font-black uppercase italic tracking-tight">Pair New Device</h2>
+          <h2 className="text-2xl sm:text-3xl font-black uppercase italic tracking-tight">
+            {isExpiredSession ? "Re-Authorize Device" : "Pair New Device"}
+          </h2>
           <p className="text-xs text-slate-400 font-bold uppercase tracking-widest mt-1">
-            Authorize this device to access Family Hub
+            {isExpiredSession 
+              ? "Inactive for over 5 days • Re-pairing required" 
+              : "Authorize this device to access Family Hub"}
           </p>
         </div>
+
+        {/* 5-Day Inactivity Security Banner */}
+        {isExpiredSession && (
+          <div className="bg-amber-950/50 border-2 border-amber-500/30 text-amber-200 text-xs p-3.5 rounded-2xl flex items-start gap-2.5 text-left animate-in fade-in duration-200">
+            <AlertTriangle className="size-4 text-amber-400 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-black uppercase tracking-wider text-[10px] text-amber-300">
+                5-Day Inactivity Timeout
+              </p>
+              <p className="text-[10px] text-amber-200/80 font-medium leading-tight mt-0.5">
+                For home security, devices inactive for more than 5 days must re-authenticate with the Admin PIN or parent approval.
+              </p>
+            </div>
+          </div>
+        )}
 
         {!showPinInput ? (
           <div className="space-y-5">

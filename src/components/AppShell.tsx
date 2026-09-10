@@ -111,20 +111,30 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [showAdminPortal, setShowAdminPortal] = useState(false);
   const [selectedAdmin, setSelectedAdmin] = useState<any>(null);
 
-  const isAdmin = me.data?.role?.toLowerCase() === "admin";
+  // PRIVILEGE ESCALATION SHIELD: Admin is ONLY elevated if the current active kiosk member is explicitly Admin
+  const isAdmin = me.data?.role?.toLowerCase() === "admin" && kioskMember?.role?.toLowerCase() === "admin";
   const idleTimerRef = useRef<any>(null);
 
-  // Return Admin to default kiosk screensaver after inactivity timeout
+  // ZERO-TRUST KIOSK BOOT: Clear any orphaned elevated admin cookie on refresh/boot if no active admin is selected
+  useEffect(() => {
+    if (!kioskMember && me.data?.role?.toLowerCase() === "admin") {
+      fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
+      qc.invalidateQueries({ queryKey: ["me"] });
+    }
+  }, [kioskMember, me.data?.role]);
+
+  // Return to default kiosk screensaver after 1 minute of inactivity
   const resetIdle = () => {
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
     
-    const timeoutDuration = isAdmin ? 30000 : 60000;
+    // Strict 1-minute (60,000ms) inactivity timeout
+    const timeoutDuration = 60 * 1000;
+
     idleTimerRef.current = setTimeout(() => {
-      if (isAdmin) {
-        // Clear elevated admin cookie on timeout
-        fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
-        qc.invalidateQueries({ queryKey: ["me"] });
-      }
+      // Clear elevated admin cookie on timeout
+      fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
+      qc.invalidateQueries({ queryKey: ["me"] });
+
       setIsIdle(true);
       isIdleRef.current = true;
       setKioskMember(null);
@@ -205,8 +215,10 @@ export function AppShell({ children }: { children: ReactNode }) {
           level: 1
         };
 
-        setKioskMember(hero);
-        localStorage.setItem("kiosk_active_member", JSON.stringify(hero));
+        // Explicitly stamp the active kiosk member as admin
+        const adminHero = { ...hero, role: 'admin' };
+        setKioskMember(adminHero);
+        localStorage.setItem("kiosk_active_member", JSON.stringify(adminHero));
 
         setShowAdminPortal(false);
         setShowHeroPickerModal(false);
@@ -317,8 +329,8 @@ export function AppShell({ children }: { children: ReactNode }) {
     );
   }
 
-  // 5. Hero Picker Overlay
-  if (showHeroPickerModal || (!kioskMember && !isAdmin && visibleKioskHeroes.length > 0)) {
+  // 5. Hero Picker Overlay (ALWAYS FORCED IF NO ACTIVE HERO, PREVENTING ADMIN BYPASS)
+  if (showHeroPickerModal || (!kioskMember && visibleKioskHeroes.length > 0)) {
     return (
       <KioskHeroSelect
         heroes={visibleKioskHeroes.length > 0 ? visibleKioskHeroes : memberList}

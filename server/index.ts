@@ -37,7 +37,7 @@ function runAutoSnapshot() {
 
     if (!alreadyBackedUpToday || existingFiles.length === 0) {
       try {
-        db.pragma("wal_checkpoint(TRUNCATE)");
+        db.pragma("wal_checkpoint(PASSIVE)");
       } catch (e) {}
 
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -83,16 +83,20 @@ await app.register(fastifyHelmet, {
   frameguard: { action: "deny" }
 });
 
+// Whitelist local home network from aggressive rate limiting
 await app.register(fastifyRateLimit, {
-  max: 180,
+  max: 300,
   timeWindow: "1 minute",
-  allowList: ["127.0.0.1"]
+  allowList: (req) => {
+    const rawIp = (req.ip || req.socket.remoteAddress || "").split(",")[0].trim().replace(/^::ffff:/, "");
+    return rawIp === "127.0.0.1" || rawIp === "::1" || rawIp.startsWith("192.168.") || rawIp.startsWith("10.");
+  }
 });
 
 // --- LOCAL HOME NETWORK AIR-GAP GUARD ---
 app.addHook("onRequest", async (req, reply) => {
-  const ip = req.ip || req.socket.remoteAddress || "";
-  const cleanIp = ip.replace(/^::ffff:/, "");
+  const rawIp = req.ip || req.socket.remoteAddress || "";
+  const cleanIp = rawIp.split(",")[0].trim().replace(/^::ffff:/, "");
 
   const isLocalSubnet = 
     cleanIp === "127.0.0.1" || 
@@ -152,6 +156,7 @@ app.addHook("preHandler", async (req, reply) => {
     return;
   }
 
+  // FIXED: Added /api/auth/verify-pin and /api/auth/pin-status so unauthenticated PIN logins are permitted
   const publicPaths = [
     "/api/auth/login", 
     "/api/auth/register", 
@@ -162,6 +167,8 @@ app.addHook("preHandler", async (req, reply) => {
     "/api/auth/request-pairing",
     "/api/auth/check-pairing",
     "/api/auth/pair-with-pin",
+    "/api/auth/verify-pin",
+    "/api/auth/pin-status",
     "/api/events/calendar.ics",
     "/api/events/paperless-webhook"
   ];
@@ -170,7 +177,7 @@ app.addHook("preHandler", async (req, reply) => {
     return;
   }
 
-  if (method === "GET" && (url.startsWith("/api/members") || url.startsWith("/api/events") || url.startsWith("/api/notifications") || url.startsWith("/api/auth/users"))) {
+  if (method === "GET" && (url.startsWith("/api/members") || url.startsWith("/api/events") || url.startsWith("/api/notifications") || url.startsWith("/api/auth/users") || url.startsWith("/api/points"))) {
     return;
   }
 

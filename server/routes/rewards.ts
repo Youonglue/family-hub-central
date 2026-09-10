@@ -1,10 +1,10 @@
+// server/routes/rewards.ts
 import crypto from "node:crypto";
 import { db } from "../db.js";
 
 export default async function rewardRoutes(app: any, opts: any) {
   const { broadcast } = opts;
 
-  // Self-heal utility to ensure rewards and redemptions tables exist
   const ensureTablesExist = () => {
     try {
       db.prepare(`
@@ -13,6 +13,8 @@ export default async function rewardRoutes(app: any, opts: any) {
           title TEXT,
           points INTEGER,
           active INTEGER DEFAULT 1,
+          member_id TEXT,
+          category TEXT DEFAULT 'General',
           created_at TEXT
         )
       `).run();
@@ -31,6 +33,12 @@ export default async function rewardRoutes(app: any, opts: any) {
     } catch (e) {}
 
     try {
+      db.prepare("ALTER TABLE rewards ADD COLUMN member_id TEXT").run();
+    } catch (e) {}
+    try {
+      db.prepare("ALTER TABLE rewards ADD COLUMN category TEXT DEFAULT 'General'").run();
+    } catch (e) {}
+    try {
       db.prepare("ALTER TABLE redemptions ADD COLUMN status TEXT DEFAULT 'approved'").run();
     } catch (e) {}
     try {
@@ -40,7 +48,6 @@ export default async function rewardRoutes(app: any, opts: any) {
       db.prepare("ALTER TABLE redemptions ADD COLUMN approved_at TEXT").run();
     } catch (e) {}
 
-    // Self-heal: ensure notifications table exists
     try {
       db.prepare(`
         CREATE TABLE IF NOT EXISTS notifications (
@@ -55,7 +62,6 @@ export default async function rewardRoutes(app: any, opts: any) {
     } catch (e) {}
   };
 
-  // Helper to write live notifications directly to the Adventure database log
   const logNotification = (memberId: string | null, title: string, message: string, type: string) => {
     try {
       db.prepare(`
@@ -77,18 +83,37 @@ export default async function rewardRoutes(app: any, opts: any) {
     return member ? member.balance : 0;
   };
 
-  // 1. GET ALL ACTIVE REWARDS
+  // 1. GET REWARDS (Filters by memberId if provided, or returns all active rewards)
   app.get("/", async (req: any, reply: any) => {
     try {
       ensureTablesExist();
-      return db.prepare("SELECT * FROM rewards WHERE active = 1 ORDER BY points ASC").all();
+      const { memberId } = req.query || {};
+
+      if (memberId) {
+        return db.prepare(`
+          SELECT r.*, m.name as assigned_member_name
+          FROM rewards r
+          LEFT JOIN family_members m ON r.member_id = m.id
+          WHERE r.active = 1 
+            AND (r.member_id = ? OR r.member_id IS NULL OR r.member_id = '')
+          ORDER BY r.points ASC
+        `).all(memberId);
+      }
+
+      return db.prepare(`
+        SELECT r.*, m.name as assigned_member_name
+        FROM rewards r
+        LEFT JOIN family_members m ON r.member_id = m.id
+        WHERE r.active = 1 
+        ORDER BY r.points ASC
+      `).all();
     } catch (error) {
       console.error("❌ GET REWARDS ERROR:", error);
       return reply.code(500).send({ error: (error as Error).message });
     }
   });
 
-  // 2. CREATE NEW REWARD
+  // 2. CREATE REWARD (With Target Hero & Category)
   app.post("/", async (req: any, reply: any) => {
     try {
       ensureTablesExist();
@@ -96,15 +121,20 @@ export default async function rewardRoutes(app: any, opts: any) {
         return reply.code(403).send({ error: "Only administrators can create shop rewards" });
       }
 
-      const { title, points } = req.body;
+      const { title, points, member_id, category } = req.body;
       const pointsCost = parseInt(points);
 
       if (isNaN(pointsCost) || pointsCost <= 0) {
         return reply.code(400).send({ error: "Invalid points cost value" });
       }
 
-      db.prepare("INSERT INTO rewards (id, title, points, active, created_at) VALUES (?, ?, ?, 1, datetime('now'))")
-        .run(crypto.randomUUID(), title.trim(), pointsCost);
+      const targetMember = member_id ? String(member_id).trim() : null;
+      const rewardCategory = category ? String(category).trim() : "General";
+
+      db.prepare(`
+        INSERT INTO rewards (id, title, points, active, member_id, category, created_at) 
+        VALUES (?, ?, ?, 1, ?, ?, datetime('now'))
+      `).run(crypto.randomUUID(), title.trim(), pointsCost, targetMember, rewardCategory);
 
       broadcast("rewards");
       return { success: true };
@@ -132,7 +162,7 @@ export default async function rewardRoutes(app: any, opts: any) {
     }
   });
 
-  // 4. CLAIM/REDEEM REWARD (Now always creates a PENDING claim requiring Admin approval)
+  // 4. CLAIM REWARD
   app.post("/:id/claim", async (req: any, reply: any) => {
     try {
       ensureTablesExist();
@@ -151,7 +181,6 @@ export default async function rewardRoutes(app: any, opts: any) {
       const splitCost = Math.ceil(reward.points / memberIds.length);
       const isCoOp = memberIds.length > 1;
 
-      // Verify that every single contributor has enough points
       for (const memberId of memberIds) {
         const balance = getApprovedBalance(memberId);
         const memberName = (db.prepare("SELECT name FROM family_members WHERE id = ?").get(memberId) as any)?.name || "Hero";
@@ -162,7 +191,6 @@ export default async function rewardRoutes(app: any, opts: any) {
         }
       }
 
-      // Assign a unique groupId to EVERY redemption (even single ones) to make approval a breeze!
       const groupId = crypto.randomUUID();
 
       db.transaction(() => {
@@ -174,8 +202,8 @@ export default async function rewardRoutes(app: any, opts: any) {
         }
       })();
 
-      // Log the purchase milestones to the Adventure log as pending
       const contributorsNames = memberIds.map(mId => (db.prepare("SELECT name FROM family_members WHERE id = ?").get(mId) as any)?.name || "Hero").join(" & ");
+      
       if (isCoOp) {
         logNotification(
           null, 
@@ -204,7 +232,7 @@ export default async function rewardRoutes(app: any, opts: any) {
     }
   });
 
-  // 5. GET ALL PENDING REDEMPTIONS (Fetches both Single and Co-Op pending claims)
+  // 5. GET PENDING REDEMPTIONS
   app.get("/redemptions/pending", async (req: any, reply: any) => {
     try {
       ensureTablesExist();
@@ -229,7 +257,7 @@ export default async function rewardRoutes(app: any, opts: any) {
     }
   });
 
-  // 6. APPROVE PENDING REDEMPTION (Supports both Single and Co-Op groups)
+  // 6. APPROVE REDEMPTION
   app.post("/redemptions/:groupId/approve", async (req: any, reply: any) => {
     try {
       ensureTablesExist();
@@ -239,8 +267,13 @@ export default async function rewardRoutes(app: any, opts: any) {
 
       const { groupId } = req.params;
 
-      // Fetch details before approving to write log
-      const pendingClaims = db.prepare("SELECT r.*, w.title as reward_title, m.name as member_name FROM redemptions r JOIN rewards w ON r.reward_id = w.id JOIN family_members m ON r.member_id = m.id WHERE r.group_id = ?").all(groupId) as any[];
+      const pendingClaims = db.prepare(`
+        SELECT r.*, w.title as reward_title, m.name as member_name 
+        FROM redemptions r 
+        JOIN rewards w ON r.reward_id = w.id 
+        JOIN family_members m ON r.member_id = m.id 
+        WHERE r.group_id = ?
+      `).all(groupId) as any[];
 
       if (pendingClaims.length > 0) {
         db.prepare("UPDATE redemptions SET status = 'approved', approved_at = datetime('now') WHERE group_id = ?").run(groupId);
@@ -270,7 +303,7 @@ export default async function rewardRoutes(app: any, opts: any) {
     }
   });
 
-  // 7. REJECT PENDING REDEMPTION (Supports both Single and Co-Op groups)
+  // 7. REJECT REDEMPTION
   app.post("/redemptions/:groupId/reject", async (req: any, reply: any) => {
     try {
       ensureTablesExist();
@@ -280,7 +313,13 @@ export default async function rewardRoutes(app: any, opts: any) {
 
       const { groupId } = req.params;
 
-      const pendingClaims = db.prepare("SELECT r.*, w.title as reward_title, m.name as member_name FROM redemptions r JOIN rewards w ON r.reward_id = w.id JOIN family_members m ON r.member_id = m.id WHERE r.group_id = ?").all(groupId) as any[];
+      const pendingClaims = db.prepare(`
+        SELECT r.*, w.title as reward_title, m.name as member_name 
+        FROM redemptions r 
+        JOIN rewards w ON r.reward_id = w.id 
+        JOIN family_members m ON r.member_id = m.id 
+        WHERE r.group_id = ?
+      `).all(groupId) as any[];
 
       if (pendingClaims.length > 0) {
         db.prepare("DELETE FROM redemptions WHERE group_id = ? AND status = 'pending'").run(groupId);

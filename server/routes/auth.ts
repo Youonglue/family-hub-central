@@ -45,6 +45,13 @@ function verifySecret(secret: string, storedHashString: string): boolean {
   }
 }
 
+// Run migrations once on boot, never inside app.get("/me")
+function ensureRecoverySchema() {
+  try { db.prepare("ALTER TABLE users ADD COLUMN recovery_key_hash TEXT").run(); } catch (e) {}
+  try { db.prepare("ALTER TABLE users ADD COLUMN needs_pin_setup INTEGER DEFAULT 0").run(); } catch (e) {}
+}
+ensureRecoverySchema();
+
 function pruneExpiredSessions() {
   try {
     db.prepare("DELETE FROM sessions WHERE expires_at <= datetime('now')").run();
@@ -68,17 +75,7 @@ export default async function authRoutes(app: any, opts: any) {
     `).get(token) as any;
   };
 
-  const ensureRecoverySchema = () => {
-    try {
-      db.prepare("ALTER TABLE users ADD COLUMN recovery_key_hash TEXT").run();
-    } catch (e) {}
-    try {
-      db.prepare("ALTER TABLE users ADD COLUMN needs_pin_setup INTEGER DEFAULT 0").run();
-    } catch (e) {}
-  };
-
   app.get("/me", async (req: any) => {
-    ensureRecoverySchema();
     const user = getSessionUser(req);
     const userCount = (db.prepare("SELECT COUNT(*) as n FROM users").get() as any).n;
     if (!user) return { id: null, role: 'guest', first_run: userCount === 0 };
@@ -92,9 +89,8 @@ export default async function authRoutes(app: any, opts: any) {
     };
   });
 
-  // --- DEVICE PAIRING & AUTHORIZATION SYSTEM (DE-DUPLICATED) ---
+  // --- DEVICE PAIRING & AUTHORIZATION SYSTEM ---
 
-  // 1. Check if device is trusted (checks header, query, and permanent cookie)
   app.get("/device-status", async (req: any, reply: any) => {
     const rawHeader = req.headers["x-device-token"];
     const cookieToken = req.headers.cookie?.match(/fh_dev_token=([^;]+)/)?.[1];
@@ -107,21 +103,18 @@ export default async function authRoutes(app: any, opts: any) {
     const device = db.prepare("SELECT * FROM trusted_devices WHERE device_token = ? AND is_trusted = 1").get(deviceToken) as any;
     if (device) {
       db.prepare("UPDATE trusted_devices SET last_active = datetime('now') WHERE id = ?").run(device.id);
-      // Refresh 10-year permanent device cookie
-      reply.header("Set-Cookie", `fh_dev_token=${device.device_token}; Path=/; Max-Age=315360000; SameSite=Strict`);
+      reply.header("Set-Cookie", `fh_dev_token=${device.device_token}; Path=/; Max-Age=315360000; SameSite=Lax`);
       return { is_trusted: true, device_name: device.device_name };
     }
 
     return { is_trusted: false };
   });
 
-  // 2. Request a new 6-character Pairing Code (De-duplicates pending requests per IP)
   app.post("/request-pairing", async (req: any) => {
     const { deviceName } = req.body;
     const ip = req.ip || req.socket.remoteAddress || "Local";
     const userAgent = req.headers["user-agent"] || "Unknown Device";
 
-    // Clean up any stale pending requests for this IP to prevent duplicate rows
     db.prepare("DELETE FROM pairing_requests WHERE ip_address = ? AND status = 'pending'").run(ip);
 
     const rawCode = randomBytes(3).toString("hex").toUpperCase();
@@ -137,27 +130,31 @@ export default async function authRoutes(app: any, opts: any) {
     return { success: true, pairingCode, requestId };
   });
 
-  // 3. Poll pairing status
   app.get("/check-pairing/:requestId", async (req: any, reply: any) => {
     const { requestId } = req.params;
     const request = db.prepare("SELECT * FROM pairing_requests WHERE id = ?").get(requestId) as any;
     if (!request) return reply.code(404).send({ error: "Request not found" });
 
     if (request.status === "approved" && request.device_token) {
-      reply.header("Set-Cookie", `fh_dev_token=${request.device_token}; Path=/; Max-Age=315360000; SameSite=Strict`);
+      reply.header("Set-Cookie", `fh_dev_token=${request.device_token}; Path=/; Max-Age=315360000; SameSite=Lax`);
       return { status: "approved", deviceToken: request.device_token };
     }
 
     return { status: request.status };
   });
 
-  // 4. Instant On-Device PIN Pairing
   app.post("/pair-with-pin", async (req: any, reply: any) => {
     const { pin, requestId, deviceName } = req.body;
     if (!pin || pin.length !== 6) return reply.code(400).send({ error: "6-digit PIN required" });
 
-    const admin = db.prepare("SELECT * FROM users WHERE (is_admin = 1 OR role = 'admin') AND pin_hash IS NOT NULL LIMIT 1").get() as any;
-    if (!admin || !verifySecret(pin, admin.pin_hash)) {
+    const admins = db.prepare("SELECT * FROM users WHERE (is_admin = 1 OR role = 'admin') AND pin_hash IS NOT NULL").all() as any[];
+    
+    if (!admins || admins.length === 0) {
+      return reply.code(400).send({ error: "No admin PIN configured. Please set a PIN in admin settings first." });
+    }
+
+    const matchedAdmin = admins.find(admin => verifySecret(pin, admin.pin_hash));
+    if (!matchedAdmin) {
       return reply.code(401).send({ error: "Invalid Admin PIN" });
     }
 
@@ -166,13 +163,12 @@ export default async function authRoutes(app: any, opts: any) {
     const ip = req.ip || req.socket.remoteAddress || "Local";
     const userAgent = req.headers["user-agent"] || "Trusted Device";
 
-    // Deduplicate: replace any older device record for this exact IP
     db.prepare("DELETE FROM trusted_devices WHERE ip_address = ?").run(ip);
 
     db.prepare(`
       INSERT INTO trusted_devices (id, device_name, device_token, ip_address, user_agent, paired_by, is_trusted, last_active, created_at)
       VALUES (?, ?, ?, ?, ?, ?, 1, datetime('now'), datetime('now'))
-    `).run(deviceId, (deviceName || "Kitchen Wall Tablet").trim(), deviceToken, ip, userAgent, admin.username);
+    `).run(deviceId, (deviceName || "Kitchen Wall Tablet").trim(), deviceToken, ip, userAgent, matchedAdmin.username);
 
     if (requestId) {
       db.prepare("DELETE FROM pairing_requests WHERE id = ?").run(requestId);
@@ -183,11 +179,10 @@ export default async function authRoutes(app: any, opts: any) {
       broadcast("pairing-request");
     }
 
-    reply.header("Set-Cookie", `fh_dev_token=${deviceToken}; Path=/; Max-Age=315360000; SameSite=Strict`);
+    reply.header("Set-Cookie", `fh_dev_token=${deviceToken}; Path=/; Max-Age=315360000; SameSite=Lax`);
     return { success: true, deviceToken, deviceName: deviceName || "Kitchen Wall Tablet" };
   });
 
-  // 5. Admin Approve Device from Settings (Atomic Approval & Cleanup)
   app.post("/approve-device", async (req: any, reply: any) => {
     const user = getSessionUser(req);
     if (!user || user.role !== "admin") return reply.code(403).send({ error: "Admin only" });
@@ -199,7 +194,6 @@ export default async function authRoutes(app: any, opts: any) {
     const deviceToken = randomBytes(64).toString("hex");
     const deviceId = randomUUID();
 
-    // Deduplicate: Remove old trusted records from this IP
     db.prepare("DELETE FROM trusted_devices WHERE ip_address = ?").run(request.ip_address);
 
     db.prepare(`
@@ -217,7 +211,6 @@ export default async function authRoutes(app: any, opts: any) {
     return { success: true };
   });
 
-  // 6. List Paired Devices & Pending Requests
   app.get("/devices", async (req: any, reply: any) => {
     const user = getSessionUser(req);
     if (!user || user.role !== "admin") return reply.code(403).send({ error: "Admin only" });
@@ -228,7 +221,6 @@ export default async function authRoutes(app: any, opts: any) {
     return { trusted, pending };
   });
 
-  // 7. Rename Paired Device
   app.patch("/devices/:id", async (req: any, reply: any) => {
     const user = getSessionUser(req);
     if (!user || user.role !== "admin") return reply.code(403).send({ error: "Admin only" });
@@ -242,7 +234,6 @@ export default async function authRoutes(app: any, opts: any) {
     return { success: true, message: "Device renamed successfully" };
   });
 
-  // 8. Revoke Paired Device
   app.delete("/devices/:id", async (req: any, reply: any) => {
     const user = getSessionUser(req);
     if (!user || user.role !== "admin") return reply.code(403).send({ error: "Admin only" });
@@ -255,30 +246,34 @@ export default async function authRoutes(app: any, opts: any) {
   // Standard Auth Endpoints
   app.post("/register", async (req: any, reply: any) => {
     const { username, password } = req.body;
+    if (!username || !password) return reply.code(400).send({ error: "Username and password required" });
+
     const isFirst = (db.prepare("SELECT COUNT(*) as n FROM users").get() as any).n === 0;
     const salt = randomBytes(16).toString("hex");
     const hash = hashSecret(password, salt);
     const id = randomUUID();
     
     db.prepare(`INSERT INTO users (id, username, password_hash, is_admin, role, needs_pin_setup, created_at) VALUES (?,?,?,?,?,1,datetime('now'))`)
-      .run(id, username, `scrypt$${salt}$${hash}`, isFirst ? 1 : 0, isFirst ? 'admin' : 'user');
+      .run(id, username.trim(), `scrypt$${salt}$${hash}`, isFirst ? 1 : 0, isFirst ? 'admin' : 'user');
     
     const token = randomBytes(64).toString("hex");
     db.prepare("INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, datetime('now', '+30 days'))").run(token, id);
-    reply.header("Set-Cookie", `fh_sid=${token}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Strict`);
+    reply.header("Set-Cookie", `fh_sid=${token}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax`);
     return { success: true };
   });
 
   app.post("/login", async (req: any, reply: any) => {
     const { username, password } = req.body;
-    const user = db.prepare("SELECT * FROM users WHERE username = ?").get(username) as any;
+    if (!username || !password) return reply.code(400).send({ error: "Username and password required" });
+
+    const user = db.prepare("SELECT * FROM users WHERE LOWER(username) = LOWER(?)").get(username.trim()) as any;
     
     if (user && user.password_hash) {
       const isValid = verifySecret(password, user.password_hash);
       if (isValid) {
         const token = randomBytes(64).toString("hex");
         db.prepare("INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, datetime('now', '+30 days'))").run(token, user.id);
-        reply.header("Set-Cookie", `fh_sid=${token}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Strict`);
+        reply.header("Set-Cookie", `fh_sid=${token}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax`);
         return { success: true };
       }
     }
@@ -290,7 +285,7 @@ export default async function authRoutes(app: any, opts: any) {
     if (token) {
       db.prepare("DELETE FROM sessions WHERE token = ?").run(token);
     }
-    reply.header("Set-Cookie", "fh_sid=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict");
+    reply.header("Set-Cookie", "fh_sid=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax");
     return { success: true };
   });
 
@@ -312,11 +307,11 @@ export default async function authRoutes(app: any, opts: any) {
       db.prepare("UPDATE users SET pin_hash = ?, needs_pin_setup = 0 WHERE id = ?").run(`scrypt$${salt}$${hash}`, user.id);
       
       const token = randomBytes(64).toString("hex");
-      db.prepare("INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, datetime('now', '+30 minutes'))").run(token, user.id);
+      db.prepare("INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, datetime('now', '+7 days'))").run(token, user.id);
       
       const linkedHero = db.prepare("SELECT * FROM family_members WHERE user_id = ? OR LOWER(name) = LOWER(?)").get(user.id, user.username) as any;
 
-      reply.header("Set-Cookie", `fh_sid=${token}; Path=/; Max-Age=1800; HttpOnly; SameSite=Strict`);
+      reply.header("Set-Cookie", `fh_sid=${token}; Path=/; Max-Age=604800; HttpOnly; SameSite=Lax`);
       return { 
         success: true, 
         setupComplete: true,
@@ -328,11 +323,11 @@ export default async function authRoutes(app: any, opts: any) {
     const isValid = verifySecret(pin, user.pin_hash);
     if (isValid) {
       const token = randomBytes(64).toString("hex");
-      db.prepare("INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, datetime('now', '+30 minutes'))").run(token, user.id);
+      db.prepare("INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, datetime('now', '+7 days'))").run(token, user.id);
       
       const linkedHero = db.prepare("SELECT * FROM family_members WHERE user_id = ? OR LOWER(name) = LOWER(?)").get(user.id, user.username) as any;
 
-      reply.header("Set-Cookie", `fh_sid=${token}; Path=/; Max-Age=1800; HttpOnly; SameSite=Strict`);
+      reply.header("Set-Cookie", `fh_sid=${token}; Path=/; Max-Age=604800; HttpOnly; SameSite=Lax`);
       return { 
         success: true, 
         user: { id: user.id, username: user.username, role: user.role },
@@ -343,7 +338,6 @@ export default async function authRoutes(app: any, opts: any) {
     return reply.code(401).send({ error: "Wrong PIN" });
   });
 
-  // Master Recovery Key Routes
   app.post("/generate-recovery-key", async (req: any, reply: any) => {
     try {
       const user = getSessionUser(req);
@@ -369,7 +363,7 @@ export default async function authRoutes(app: any, opts: any) {
         return reply.code(400).send({ error: "Username, Recovery Key, and New Password required" });
       }
 
-      const user = db.prepare("SELECT * FROM users WHERE username = ?").get(username.trim()) as any;
+      const user = db.prepare("SELECT * FROM users WHERE LOWER(username) = LOWER(?)").get(username.trim()) as any;
       if (!user || !user.recovery_key_hash) {
         return reply.code(400).send({ error: "No recovery key active for this account" });
       }
@@ -394,7 +388,7 @@ export default async function authRoutes(app: any, opts: any) {
 
       const token = randomBytes(64).toString("hex");
       db.prepare("INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, datetime('now', '+30 days'))").run(token, user.id);
-      reply.header("Set-Cookie", `fh_sid=${token}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Strict`);
+      reply.header("Set-Cookie", `fh_sid=${token}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax`);
 
       return { success: true, message: "Account recovered successfully!" };
     } catch (error) {
@@ -402,7 +396,6 @@ export default async function authRoutes(app: any, opts: any) {
     }
   });
 
-  // Snapshots
   app.get("/snapshots", async (req: any, reply: any) => {
     try {
       const user = getSessionUser(req);
@@ -438,7 +431,7 @@ export default async function authRoutes(app: any, opts: any) {
       const backupDir = path.resolve("./data/backups");
       mkdirSync(backupDir, { recursive: true });
 
-      try { db.pragma("wal_checkpoint(TRUNCATE)"); } catch (e) {}
+      try { db.pragma("wal_checkpoint(PASSIVE)"); } catch (e) {}
 
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
       const backupFilename = `familyhub-snap-${timestamp}.db`;

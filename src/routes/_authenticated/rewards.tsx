@@ -1,3 +1,4 @@
+// src/routes/_authenticated/rewards.tsx
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useState, useEffect, useCallback } from "react";
@@ -19,20 +20,49 @@ export const Route = createFileRoute("/_authenticated/rewards")({
 function RewardsShop() {
   const me = useQuery({ queryKey: ["me"], queryFn: () => getMe() });
 
-  // Core Shop States
-  const [activeMember, setActiveMember] = useState<any>(null);
+  // FIXED: Automatically initialize from the active kiosk hero so they don't have to re-select
+  const [activeMember, setActiveMember] = useState<any>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("kiosk_active_member") || "null");
+    } catch {
+      return null;
+    }
+  });
+
   const [lastActivity, setLastActivity] = useState(Date.now());
   const [isAdminView, setIsAdminView] = useState(false);
 
   const isSystemAdmin = me.data?.role?.toLowerCase() === "admin";
 
-  // --- INACTIVITY TIMEOUT (Resets active character after 60 seconds of idle time) ---
+  // --- KIOSK STATE SYNCER ---
+  useEffect(() => {
+    const syncMember = () => {
+      try {
+        const stored = localStorage.getItem("kiosk_active_member");
+        const parsed = stored ? JSON.parse(stored) : null;
+        if (JSON.stringify(parsed) !== JSON.stringify(activeMember)) {
+          setActiveMember(parsed);
+        }
+      } catch (e) {}
+    };
+
+    const t = setInterval(syncMember, 500);
+    window.addEventListener("storage", syncMember);
+
+    return () => {
+      clearInterval(t);
+      window.removeEventListener("storage", syncMember);
+    };
+  }, [activeMember]);
+
+  // --- INACTIVITY TIMEOUT ---
   useEffect(() => {
     if (!activeMember) return;
     const interval = setInterval(() => {
       if (Date.now() - lastActivity > 60000) {
         setActiveMember(null);
         setIsAdminView(false);
+        localStorage.removeItem("kiosk_active_member");
         toast("Shop Reset for Safety", { icon: <Timer className="size-4" /> });
       }
     }, 1000);
@@ -41,15 +71,15 @@ function RewardsShop() {
 
   const recordActivity = useCallback(() => setLastActivity(Date.now()), []);
 
-  // Determine if active character is a parent OR if logged in user is a system admin
   const canAccessAdmin = isSystemAdmin || activeMember?.is_parent === 1 || activeMember?.is_parent === true;
 
-  // --- SESSION LOADING GUARD ---
   if (me.isLoading) {
     return (
       <AppShell>
         <div className="flex flex-col items-center justify-center min-h-[85vh] p-6">
-          <p className="font-black text-slate-400 uppercase tracking-widest text-xs italic animate-pulse text-center">Synchronizing Vault...</p>
+          <p className="font-black text-slate-400 uppercase tracking-widest text-xs italic animate-pulse text-center">
+            Synchronizing Vault...
+          </p>
         </div>
       </AppShell>
     );
@@ -84,6 +114,7 @@ function RewardsShop() {
             onBack={() => {
               setActiveMember(null);
               setIsAdminView(false);
+              localStorage.removeItem("kiosk_active_member");
             }}
             isAdminView={isAdminView}
             setIsAdminView={setIsAdminView}
@@ -94,6 +125,7 @@ function RewardsShop() {
           <RewardCharacterSelect
             onSelectMember={(m) => {
               setActiveMember(m);
+              localStorage.setItem("kiosk_active_member", JSON.stringify(m));
               recordActivity();
             }}
             onOpenAdmin={() => {

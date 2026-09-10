@@ -2,7 +2,18 @@
 import React, { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Smartphone, ShieldCheck, Check, Trash2, Edit3, X, AlertTriangle, Loader2 } from "lucide-react";
+import { 
+  Smartphone, 
+  ShieldCheck, 
+  Check, 
+  Trash2, 
+  Edit3, 
+  X, 
+  AlertTriangle, 
+  Loader2, 
+  Clock, 
+  ShieldAlert 
+} from "lucide-react";
 
 export function TrustedDevices() {
   const qc = useQueryClient();
@@ -68,21 +79,57 @@ export function TrustedDevices() {
     renameDevice.mutate({ id, deviceName: editName.trim() });
   };
 
+  // Calculate days remaining before 5-day expiration
+  const getExpirationStatus = (lastActiveDateStr: string) => {
+    const lastActive = new Date(lastActiveDateStr || Date.now()).getTime();
+    const now = Date.now();
+    const elapsedDays = (now - lastActive) / (1000 * 60 * 60 * 24);
+    const daysRemaining = Math.max(0, 5 - elapsedDays);
+
+    if (daysRemaining <= 1) {
+      const hoursRemaining = Math.max(1, Math.round(daysRemaining * 24));
+      return {
+        label: `Expires in ~${hoursRemaining}h`,
+        color: "bg-rose-50 text-rose-700 border-rose-200",
+        isUrgent: true
+      };
+    } else if (daysRemaining <= 2) {
+      return {
+        label: `Expires in ${Math.ceil(daysRemaining)} days`,
+        color: "bg-amber-50 text-amber-700 border-amber-200",
+        isUrgent: false
+      };
+    } else {
+      return {
+        label: `Active • ${Math.ceil(daysRemaining)}d left`,
+        color: "bg-emerald-50 text-emerald-700 border-emerald-200",
+        isUrgent: false
+      };
+    }
+  };
+
   return (
     <section className="rounded-3xl sm:rounded-[3rem] border-2 sm:border-4 border-slate-50 bg-white p-5 sm:p-8 shadow-sm space-y-6 animate-in fade-in duration-300">
       
       {/* Header */}
-      <div className="flex items-center gap-3">
-        <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl">
-          <Smartphone className="size-5" />
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-3">
+          <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl">
+            <Smartphone className="size-5" />
+          </div>
+          <div>
+            <h2 className="font-display text-base sm:text-lg font-black uppercase italic tracking-tight text-slate-900">
+              Trusted Devices & Pairing
+            </h2>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+              Zero-Trust Local Access • Auto-revokes after 5 days of inactivity
+            </p>
+          </div>
         </div>
-        <div>
-          <h2 className="font-display text-base sm:text-lg font-black uppercase italic tracking-tight text-slate-900">
-            Trusted Devices & Pairing
-          </h2>
-          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-            Authorize & Rename Home Tablets & Phones (Zero-Trust Local Access)
-          </p>
+
+        {/* 5-Day Policy Badge */}
+        <div className="flex items-center gap-1.5 px-3 py-1 bg-slate-100 rounded-xl text-[10px] font-black uppercase tracking-wider text-slate-500 border border-slate-200">
+          <Clock size={13} className="text-slate-400" /> 5-Day Auto-Revoke
         </div>
       </div>
 
@@ -123,16 +170,22 @@ export function TrustedDevices() {
 
       {/* 2. Active Trusted Devices List */}
       <div className="space-y-3">
-        <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-          Authorized Devices ({trusted.length})
-        </span>
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+            Authorized Devices ({trusted.length})
+          </span>
+          <span className="text-[9px] font-bold text-slate-400 uppercase">
+            Must connect every 5 days to stay authorized
+          </span>
+        </div>
 
         {trusted.length === 0 ? (
           <p className="text-xs font-bold text-slate-400 uppercase py-4 text-center">No paired devices recorded yet</p>
         ) : (
-          <div className="divide-y divide-slate-100 bg-slate-50 rounded-2xl p-2 border border-slate-100 max-h-[280px] overflow-y-auto scrollbar-thin">
+          <div className="divide-y divide-slate-100 bg-slate-50 rounded-2xl p-2 border border-slate-100 max-h-[320px] overflow-y-auto scrollbar-thin">
             {trusted.map((d: any) => {
               const isEditingThis = editingDeviceId === d.id;
+              const expiration = getExpirationStatus(d.last_active || d.created_at);
 
               return (
                 <div key={d.id} className="p-3 flex items-center justify-between gap-3 flex-wrap">
@@ -164,8 +217,14 @@ export function TrustedDevices() {
                     </div>
                   ) : (
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <p className="text-xs font-black uppercase text-slate-800 truncate">{d.device_name}</p>
+                        
+                        {/* 5-Day Expiration Badge */}
+                        <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md border ${expiration.color}`}>
+                          {expiration.label}
+                        </span>
+
                         <button
                           onClick={() => handleStartRename(d)}
                           className="p-1 text-slate-400 hover:text-indigo-600 transition-colors cursor-pointer"
@@ -175,7 +234,7 @@ export function TrustedDevices() {
                         </button>
                       </div>
                       <p className="text-[9px] font-bold text-slate-400 mt-0.5">
-                        Paired by {d.paired_by} • Last active: {new Date(d.last_active || d.created_at).toLocaleDateString()}
+                        Paired by {d.paired_by} • Last active: {new Date(d.last_active || d.created_at).toLocaleDateString()} at {new Date(d.last_active || d.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </p>
                     </div>
                   )}
