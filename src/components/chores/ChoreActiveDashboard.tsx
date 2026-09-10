@@ -1,8 +1,8 @@
 // src/components/chores/ChoreActiveDashboard.tsx
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useMemo } from "react";
+import { useState, useMemo } from "react";
 import { toast } from "sonner";
-import { ArrowLeft, ShieldCheck, Flame, Sword } from "lucide-react";
+import { ArrowLeft, ShieldCheck, Flame, Sword, Users, Star, Sparkles } from "lucide-react";
 import { Avatar, parseAvatarConfig } from "@/components/avatar/Avatar";
 
 interface ChoreActiveDashboardProps {
@@ -22,7 +22,9 @@ export function ChoreActiveDashboard({
 }: ChoreActiveDashboardProps) {
   const qc = useQueryClient();
 
-  // STRICT FILTER: Fetches only this active hero's assigned chores + shared/Co-Op chores!
+  // DEFAULT: "mine" shows only this hero's assigned tasks (Co-Op separated into its own filter!)
+  const [activeTab, setActiveTab] = useState<"mine" | "coop" | "all">("mine");
+
   const chores = useQuery({ 
     queryKey: ["chores", activeMember?.id], 
     queryFn: () => fetch(`/api/chores?memberId=${activeMember.id}`).then(res => res.json()) 
@@ -65,7 +67,24 @@ export function ChoreActiveDashboard({
     }
   });
 
-  const choreList = Array.isArray(chores.data) ? chores.data : [];
+  const rawChoreList = Array.isArray(chores.data) ? chores.data : [];
+
+  // FILTER LOGIC: Default to personal chores only, with separate Co-Op view!
+  const filteredChores = useMemo(() => {
+    if (activeTab === "mine") {
+      // Personal assigned chores only (not Co-Op)
+      return rawChoreList.filter((c: any) => c.is_coop !== 1);
+    }
+    if (activeTab === "coop") {
+      // Co-Op quests only
+      return rawChoreList.filter((c: any) => c.is_coop === 1);
+    }
+    // All
+    return rawChoreList;
+  }, [rawChoreList, activeTab]);
+
+  const personalCount = rawChoreList.filter((c: any) => c.is_coop !== 1).length;
+  const coopCount = rawChoreList.filter((c: any) => c.is_coop === 1).length;
 
   return (
     <div className="space-y-4 sm:space-y-6 md:space-y-8 animate-in slide-in-from-bottom-5 duration-300 safe-area-inset-bottom">
@@ -147,17 +166,61 @@ export function ChoreActiveDashboard({
          </div>
       </div>
 
+      {/* CO-OP SEPARATION FILTER BAR */}
+      <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none select-none">
+        {/* Default: Personal Quests Only */}
+        <button
+          type="button"
+          onClick={() => setActiveTab("mine")}
+          className={`px-4 py-2.5 rounded-2xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition-all cursor-pointer shrink-0 min-h-[42px] ${
+            activeTab === "mine"
+              ? "bg-slate-900 text-white shadow-md scale-105"
+              : "bg-white text-slate-500 hover:bg-slate-100 border border-slate-200"
+          }`}
+        >
+          <Star size={13} className="text-yellow-400 fill-yellow-400" /> My Quests ({personalCount})
+        </button>
+
+        {/* Co-Op Quests Toggle */}
+        <button
+          type="button"
+          onClick={() => setActiveTab("coop")}
+          className={`px-4 py-2.5 rounded-2xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition-all cursor-pointer shrink-0 min-h-[42px] ${
+            activeTab === "coop"
+              ? "bg-indigo-600 text-white shadow-md scale-105"
+              : "bg-white text-slate-500 hover:bg-slate-100 border border-slate-200"
+          }`}
+        >
+          <Users size={13} /> 👥 Co-Op Quests ({coopCount})
+        </button>
+
+        {/* View All */}
+        <button
+          type="button"
+          onClick={() => setActiveTab("all")}
+          className={`px-4 py-2.5 rounded-2xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition-all cursor-pointer shrink-0 min-h-[42px] ${
+            activeTab === "all"
+              ? "bg-slate-900 text-white shadow-md scale-105"
+              : "bg-white text-slate-500 hover:bg-slate-100 border border-slate-200"
+          }`}
+        >
+          <Sparkles size={13} /> All ({rawChoreList.length})
+        </button>
+      </div>
+
       {/* ACTIVE QUEST CARDS GRID */}
       <div className="grid gap-3 sm:gap-4 lg:gap-6 grid-cols-1 sm:grid-cols-2">
-         {choreList.length === 0 && (
+         {filteredChores.length === 0 && (
            <div className="col-span-full py-12 bg-white rounded-3xl border-2 border-dashed border-slate-100 text-center p-6">
              <p className="font-black uppercase tracking-wider text-slate-400 text-xs sm:text-sm">
-               All quests complete for {activeMember.name}! Take a rest, hero. 🌟
+               {activeTab === "coop" 
+                 ? "No active Co-Op quests right now. Check back soon!" 
+                 : `All personal quests complete for ${activeMember.name}! Great job, hero. 🌟`}
              </p>
            </div>
          )}
 
-         {choreList.map((c: any) => {
+         {filteredChores.map((c: any) => {
            const isBoss = c.is_boss === 1;
            const isCoop = c.is_coop === 1;
 
@@ -210,7 +273,7 @@ export function ChoreActiveDashboard({
                    </div>
                 </div>
 
-                {/* Card Title & Call to Action (Fixed text overflow) */}
+                {/* Card Title & Call to Action */}
                 <div className="mt-3 sm:mt-4 w-full min-w-0 flex-1 flex flex-col justify-end">
                   <h4 className="text-base sm:text-lg md:text-xl font-black text-slate-800 leading-snug mb-1 uppercase tracking-tight break-words line-clamp-2">
                     {c.title}

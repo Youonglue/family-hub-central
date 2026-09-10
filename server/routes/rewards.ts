@@ -14,6 +14,8 @@ export default async function rewardRoutes(app: any, opts: any) {
           points INTEGER,
           active INTEGER DEFAULT 1,
           member_id TEXT,
+          member_ids TEXT,
+          is_shared INTEGER DEFAULT 0,
           category TEXT DEFAULT 'General',
           created_at TEXT
         )
@@ -32,12 +34,17 @@ export default async function rewardRoutes(app: any, opts: any) {
       `).run();
     } catch (e) {}
 
-    try {
-      db.prepare("ALTER TABLE rewards ADD COLUMN member_id TEXT").run();
-    } catch (e) {}
-    try {
-      db.prepare("ALTER TABLE rewards ADD COLUMN category TEXT DEFAULT 'General'").run();
-    } catch (e) {}
+    const injectReward = (col: string, type: string) => {
+      try {
+        db.prepare(`ALTER TABLE rewards ADD COLUMN ${col} ${type}`).run();
+      } catch (e) {}
+    };
+
+    injectReward("member_id", "TEXT");
+    injectReward("member_ids", "TEXT");
+    injectReward("is_shared", "INTEGER DEFAULT 0");
+    injectReward("category", "TEXT DEFAULT 'General'");
+
     try {
       db.prepare("ALTER TABLE redemptions ADD COLUMN status TEXT DEFAULT 'approved'").run();
     } catch (e) {}
@@ -83,23 +90,29 @@ export default async function rewardRoutes(app: any, opts: any) {
     return member ? member.balance : 0;
   };
 
-  // 1. GET REWARDS (Filters by memberId if provided, or returns all active rewards)
+  // 1. GET REWARDS (FIXED: When memberId is provided, UNASSIGNED rewards are HIDDEN from kids!)
   app.get("/", async (req: any, reply: any) => {
     try {
       ensureTablesExist();
       const { memberId } = req.query || {};
 
       if (memberId) {
+        // Kid View: Only rewards assigned directly to this hero OR marked as Shared/Co-Op
         return db.prepare(`
           SELECT r.*, m.name as assigned_member_name
           FROM rewards r
           LEFT JOIN family_members m ON r.member_id = m.id
           WHERE r.active = 1 
-            AND (r.member_id = ? OR r.member_id IS NULL OR r.member_id = '')
+            AND (
+              r.member_id = ? 
+              OR r.member_ids LIKE '%' || ? || '%' 
+              OR r.is_shared = 1
+            )
           ORDER BY r.points ASC
-        `).all(memberId);
+        `).all(memberId, memberId);
       }
 
+      // Admin View: All template & assigned rewards
       return db.prepare(`
         SELECT r.*, m.name as assigned_member_name
         FROM rewards r
@@ -113,7 +126,7 @@ export default async function rewardRoutes(app: any, opts: any) {
     }
   });
 
-  // 2. CREATE REWARD (With Target Hero & Category)
+  // 2. CREATE REWARD (With Multi-Hero & Shared Support)
   app.post("/", async (req: any, reply: any) => {
     try {
       ensureTablesExist();
@@ -121,20 +134,38 @@ export default async function rewardRoutes(app: any, opts: any) {
         return reply.code(403).send({ error: "Only administrators can create shop rewards" });
       }
 
-      const { title, points, member_id, category } = req.body;
+      const { title, points, member_id, member_ids, is_shared, category } = req.body;
       const pointsCost = parseInt(points);
 
       if (isNaN(pointsCost) || pointsCost <= 0) {
         return reply.code(400).send({ error: "Invalid points cost value" });
       }
 
-      const targetMember = member_id ? String(member_id).trim() : null;
+      let singleMember: string | null = null;
+      let jsonMemberIds: string | null = null;
+
+      if (Array.isArray(member_ids) && member_ids.length > 0) {
+        jsonMemberIds = JSON.stringify(member_ids);
+        singleMember = member_ids.length === 1 ? member_ids[0] : null;
+      } else if (member_id) {
+        singleMember = String(member_id).trim();
+        jsonMemberIds = JSON.stringify([singleMember]);
+      }
+
       const rewardCategory = category ? String(category).trim() : "General";
 
       db.prepare(`
-        INSERT INTO rewards (id, title, points, active, member_id, category, created_at) 
-        VALUES (?, ?, ?, 1, ?, ?, datetime('now'))
-      `).run(crypto.randomUUID(), title.trim(), pointsCost, targetMember, rewardCategory);
+        INSERT INTO rewards (id, title, points, active, member_id, member_ids, is_shared, category, created_at) 
+        VALUES (?, ?, ?, 1, ?, ?, ?, ?, datetime('now'))
+      `).run(
+        crypto.randomUUID(), 
+        title.trim(), 
+        pointsCost, 
+        singleMember, 
+        jsonMemberIds, 
+        is_shared ? 1 : 0, 
+        rewardCategory
+      );
 
       broadcast("rewards");
       return { success: true };
@@ -144,7 +175,61 @@ export default async function rewardRoutes(app: any, opts: any) {
     }
   });
 
-  // 3. DELETE REWARD
+  // 3. EDIT / MULTI-ASSIGN REWARD
+  app.patch("/:id", async (req: any, reply: any) => {
+    try {
+      ensureTablesExist();
+      if (!req.user || req.user.role !== 'admin') {
+        return reply.code(403).send({ error: "Only administrators can edit rewards" });
+      }
+
+      const { title, points, member_id, member_ids, is_shared, category } = req.body;
+      const rewardId = req.params.id;
+
+      let singleMember: string | null = null;
+      let jsonMemberIds: string | null = null;
+
+      if (Array.isArray(member_ids)) {
+        if (member_ids.length > 0) {
+          jsonMemberIds = JSON.stringify(member_ids);
+          singleMember = member_ids.length === 1 ? member_ids[0] : null;
+        } else {
+          jsonMemberIds = null;
+          singleMember = null;
+        }
+      } else if (member_id !== undefined) {
+        singleMember = member_id ? String(member_id).trim() : null;
+        jsonMemberIds = singleMember ? JSON.stringify([singleMember]) : null;
+      }
+
+      db.prepare(`
+        UPDATE rewards 
+        SET title = COALESCE(?, title),
+            points = COALESCE(?, points),
+            member_id = ?,
+            member_ids = ?,
+            is_shared = COALESCE(?, is_shared),
+            category = COALESCE(?, category)
+        WHERE id = ?
+      `).run(
+        title ? title.trim() : null,
+        points !== undefined ? Number(points) : null,
+        singleMember,
+        jsonMemberIds,
+        is_shared !== undefined ? (is_shared ? 1 : 0) : null,
+        category ? category.trim() : null,
+        rewardId
+      );
+
+      broadcast("rewards");
+      return { success: true };
+    } catch (error) {
+      console.error("❌ EDIT REWARD ERROR:", error);
+      return reply.code(500).send({ error: (error as Error).message });
+    }
+  });
+
+  // 4. DELETE REWARD
   app.delete("/:id", async (req: any, reply: any) => {
     try {
       ensureTablesExist();
@@ -162,7 +247,7 @@ export default async function rewardRoutes(app: any, opts: any) {
     }
   });
 
-  // 4. CLAIM REWARD
+  // 5. CLAIM REWARD
   app.post("/:id/claim", async (req: any, reply: any) => {
     try {
       ensureTablesExist();
@@ -232,7 +317,7 @@ export default async function rewardRoutes(app: any, opts: any) {
     }
   });
 
-  // 5. GET PENDING REDEMPTIONS
+  // 6. GET PENDING REDEMPTIONS
   app.get("/redemptions/pending", async (req: any, reply: any) => {
     try {
       ensureTablesExist();
@@ -257,7 +342,7 @@ export default async function rewardRoutes(app: any, opts: any) {
     }
   });
 
-  // 6. APPROVE REDEMPTION
+  // 7. APPROVE REDEMPTION
   app.post("/redemptions/:groupId/approve", async (req: any, reply: any) => {
     try {
       ensureTablesExist();
@@ -303,7 +388,7 @@ export default async function rewardRoutes(app: any, opts: any) {
     }
   });
 
-  // 7. REJECT REDEMPTION
+  // 8. REJECT REDEMPTION
   app.post("/redemptions/:groupId/reject", async (req: any, reply: any) => {
     try {
       ensureTablesExist();

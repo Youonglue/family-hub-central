@@ -34,11 +34,12 @@ export function RewardActiveShop({
 }: RewardActiveShopProps) {
   const qc = useQueryClient();
 
-  // DEFAULT: "mine" strictly shows rewards relevant to activeMember + Family Shared
+  // DEFAULT: "mine" shows only this hero's assigned rewards + family shared prizes
   const [selectedFilter, setSelectedFilter] = useState<string>("mine");
   const [pooledContributors, setPooledContributors] = useState<Record<string, string[]>>({});
   const [confirmingPurchase, setConfirmingPurchase] = useState<{ reward: any, contributors: any[], splitCost: number } | null>(null);
 
+  // Queries all rewards for browsing
   const rewards = useQuery({ 
     queryKey: ["rewards"], 
     queryFn: () => fetch('/api/rewards').then(res => res.json()) 
@@ -115,7 +116,6 @@ export function RewardActiveShop({
   const rawMemberList = Array.isArray(pointsData.data) ? pointsData.data : [];
   const rewardList = Array.isArray(rewards.data) ? rewards.data : [];
 
-  // Eligible Co-Op contributing siblings
   const eligibleSiblings = useMemo(() => {
     return rawMemberList.filter((m: any) => {
       const id = m.member_id || m.id;
@@ -123,22 +123,34 @@ export function RewardActiveShop({
     });
   }, [rawMemberList, activeMember.id]);
 
-  // DYNAMIC REWARDS FILTERING (Defaults to "mine", with browsing options)
+  // Helper to check if a reward is assigned to a hero
+  const isRewardAssignedToHero = (r: any, heroId: string) => {
+    if (r.member_id === heroId) return true;
+    if (r.member_ids) {
+      try {
+        const ids = JSON.parse(r.member_ids);
+        if (Array.isArray(ids) && ids.includes(heroId)) return true;
+      } catch (e) {}
+    }
+    return false;
+  };
+
+  // DYNAMIC REWARDS FILTERING (Default: ONLY this hero's assigned rewards + explicit shared)
   const filteredRewards = useMemo(() => {
     if (selectedFilter === "mine") {
-      // Current hero's rewards + Shared/Co-Op family rewards
-      return rewardList.filter((r: any) => !r.member_id || r.member_id === activeMember.id);
+      // Personal assigned rewards + explicit Shared rewards ONLY (Unassigned templates are excluded!)
+      return rewardList.filter((r: any) => isRewardAssignedToHero(r, activeMember.id) || r.is_shared === 1);
     }
     if (selectedFilter === "shared") {
-      // Only Shared / All-Family rewards
-      return rewardList.filter((r: any) => !r.member_id || r.member_id === "");
+      // Only explicit Family Co-Op / Shared rewards
+      return rewardList.filter((r: any) => r.is_shared === 1);
     }
     if (selectedFilter === "all") {
-      // Entire catalog
-      return rewardList;
+      // View all active assigned or shared rewards
+      return rewardList.filter((r: any) => r.member_id || (r.member_ids && r.member_ids !== "[]") || r.is_shared === 1);
     }
     // Filter by specific sibling ID
-    return rewardList.filter((r: any) => r.member_id === selectedFilter);
+    return rewardList.filter((r: any) => isRewardAssignedToHero(r, selectedFilter));
   }, [rewardList, selectedFilter, activeMember.id]);
 
   return (
@@ -260,12 +272,14 @@ export function RewardActiveShop({
         </button>
       </div>
 
-      {/* CATALOG GRID */}
+      {/* CATALOG GRID (Optimized with line-clamp-2 so text never bursts out of cards) */}
       <div className="grid gap-3 sm:gap-4 md:gap-6 grid-cols-1 sm:grid-cols-2">
          {filteredRewards.length === 0 && (
            <div className="col-span-full py-12 bg-white rounded-3xl border-2 border-dashed border-slate-100 text-center p-6">
              <p className="font-black uppercase tracking-wider text-slate-400 text-xs sm:text-sm">
-               No rewards found in this section.
+               {selectedFilter === "mine" 
+                 ? `No rewards assigned to ${activeMember.name} yet. Ask an admin to assign goals in the Shop Customizer!` 
+                 : "No rewards found in this section."}
              </p>
            </div>
          )}
@@ -301,13 +315,17 @@ export function RewardActiveShop({
                    
                    {/* Target Hero or Shared Badge */}
                    <div>
-                     {r.assigned_member_name ? (
+                     {r.is_shared === 1 ? (
+                       <span className="px-2 py-0.5 bg-emerald-50 text-emerald-600 border border-emerald-200 text-[8px] sm:text-[9px] font-black uppercase rounded-md block">
+                         Family Shared
+                       </span>
+                     ) : r.assigned_member_name ? (
                        <span className="px-2 py-0.5 bg-indigo-50 text-indigo-600 border border-indigo-200 text-[8px] sm:text-[9px] font-black uppercase rounded-md block">
                          {r.assigned_member_name}'s Goal
                        </span>
                      ) : (
-                       <span className="px-2 py-0.5 bg-emerald-50 text-emerald-600 border border-emerald-200 text-[8px] sm:text-[9px] font-black uppercase rounded-md block">
-                         Family Shared
+                       <span className="px-2 py-0.5 bg-indigo-50 text-indigo-600 border border-indigo-200 text-[8px] sm:text-[9px] font-black uppercase rounded-md block">
+                         Hero Goal
                        </span>
                      )}
                    </div>
@@ -320,7 +338,7 @@ export function RewardActiveShop({
                  </div>
                </div>
                
-               {/* Card Bottom: Title, Pooling, Claim */}
+               {/* Card Bottom: Title with line-clamp-2, Pooling, Claim */}
                <div className="space-y-3 mt-3 w-full min-w-0">
                  <h4 className="text-base sm:text-lg md:text-xl font-black text-slate-800 leading-snug uppercase tracking-tight break-words line-clamp-2">
                    {r.title}
@@ -351,7 +369,7 @@ export function RewardActiveShop({
                    {/* Contributors Selector checklist */}
                    {isPoolingActive && (
                      <div className="space-y-1.5 animate-in slide-in-from-top-2 duration-200">
-                       <p className="text-[8px] sm:text-[9px] font-bold text-slate-400 uppercase tracking-widest">Select contributing siblings:</p>
+                       <p className="text-[8px] sm:text-[9px] font-bold text-slate-400 uppercase tracking-widest">Select contributing heroes:</p>
                        <div className="flex flex-wrap gap-1.5">
                          {eligibleSiblings.map((m: any) => {
                            const mId = m.member_id || m.id;
