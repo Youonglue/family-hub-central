@@ -1,146 +1,154 @@
-import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+// src/routes/index.tsx
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Calendar, Trophy, ShoppingCart, ChefHat, Home, Sparkles, LogIn, MonitorPlay, Loader2 } from "lucide-react";
-import { getMe, login, register } from "@/lib/auth-client";
+import { ShieldCheck, UserPlus, Loader2, Sparkles, Lock } from "lucide-react";
+import { getMe, register } from "@/lib/auth-client";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/")({
   ssr: false,
-  component: Landing,
+  component: EntryGatekeeper,
 });
 
-function Feature({ icon: Icon, title, desc, tint }: { icon: typeof Calendar; title: string; desc: string; tint: string }) {
-  return (
-    <div className="rounded-[2.5rem] bg-panel border-4 border-slate-50 p-6 md:p-8 shadow-xl flex flex-col items-center sm:items-start text-center sm:text-left gap-3">
-      <div
-        className="inline-flex size-12 items-center justify-center rounded-2xl shadow-inner shrink-0"
-        style={{ background: `var(--kid-${tint}-soft)`, color: `var(--kid-${tint})` }}
-      >
-        <Icon className="size-6" />
-      </div>
-      <div>
-        <h3 className="font-display text-xl font-black uppercase italic tracking-tight text-slate-800">{title}</h3>
-        <p className="mt-1 text-sm font-medium text-slate-400 leading-relaxed uppercase text-[11px]">{desc}</p>
-      </div>
-    </div>
-  );
-}
-
-function Landing() {
+function EntryGatekeeper() {
   const navigate = useNavigate();
-  const qc = useQueryClient();
-  const [checkingSession, setCheckingSession] = useState(true);
-  const [busy, setBusy] = useState(false);
+
+  const [loading, setLoading] = useState(true);
+  const [isFirstRun, setIsFirstRun] = useState(false);
+
+  // First Run Setup States
+  const [adminUsername, setAdminUsername] = useState("");
+  const [adminPassword, setAdminPassword] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    // Session Guard: If a login session already exists, bypass landing and go straight to dashboard
-    getMe().then((me) => {
-      if (me && "id" in me && me.id) {
+    // Check if system has users or if it's the first ever boot
+    getMe()
+      .then((me: any) => {
+        if (me?.first_run === true) {
+          // 0 users in database -> Show First-Time Admin Initialization Screen
+          setIsFirstRun(true);
+          setLoading(false);
+        } else {
+          // Normal state -> Bypass landing page completely and boot straight into Kiosk!
+          navigate({ to: "/dashboard", replace: true });
+        }
+      })
+      .catch(() => {
+        // Fallback directly to kiosk dashboard
         navigate({ to: "/dashboard", replace: true });
-      }
-    }).catch(() => {
-      // Stay on page if offline
-    }).finally(() => {
-      setCheckingSession(false);
-    });
+      });
   }, [navigate]);
 
-  // Safe unprivileged guest bypass for shared tablet kiosk mode (matches auth.tsx)
-  const handleEnterKioskMode = async () => {
-    setBusy(true);
+  // Handle First-Ever Admin Account Creation (Automatically assigned Admin privileges)
+  const handleCreateFirstAdmin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!adminUsername.trim() || adminPassword.length < 4) {
+      toast.error("Password must be at least 4 characters");
+      return;
+    }
+
+    setIsSubmitting(true);
     try {
-      try {
-        await login("kiosk_guest", "kiosk_guest_password");
-      } catch {
-        await register("kiosk_guest", "kiosk_guest_password");
-        await login("kiosk_guest", "kiosk_guest_password");
-      }
-      toast.success("Kiosk Mode Activated");
+      await register(adminUsername.trim(), adminPassword);
+      toast.success("Primary Administrator Created! Welcome to Family Hub! 🛡️", { position: "top-center" });
       navigate({ to: "/dashboard", replace: true });
-    } catch (err) {
-      toast.error("Failed to activate Kiosk Mode");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to initialize admin account");
     } finally {
-      setBusy(false);
+      setIsSubmitting(false);
     }
   };
 
-  // --- SESSION CHECKING LOADER ---
-  if (checkingSession) {
+  // 1. Loading Spinner during Instant Kiosk Boot
+  if (loading) {
     return (
-      <main className="grid min-h-screen place-items-center bg-canvas">
-        <div className="text-center space-y-4">
-          <Loader2 className="size-10 text-indigo-500 animate-spin mx-auto" />
-          <p className="font-black text-slate-400 uppercase tracking-widest text-[10px] italic">Securing Portal...</p>
+      <main className="grid min-h-[100dvh] place-items-center bg-canvas">
+        <div className="text-center space-y-3 animate-pulse">
+          <Loader2 className="size-10 text-indigo-600 animate-spin mx-auto" />
+          <p className="font-black text-slate-400 uppercase tracking-widest text-[10px] italic">
+            Launching Kiosk...
+          </p>
         </div>
       </main>
     );
   }
 
-  return (
-    <main className="min-h-screen bg-canvas flex flex-col justify-between">
-      
-      {/* Header */}
-      <header className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-8 shrink-0">
-        <div className="flex items-center gap-2">
-          <div className="grid size-11 place-items-center rounded-2xl bg-indigo-600 text-white font-display text-xl font-black italic">
-            H
+  // 2. First-Ever Boot Screen (Only visible if 0 users exist in the database)
+  if (isFirstRun) {
+    return (
+      <main className="min-h-[100dvh] bg-slate-950 flex items-center justify-center p-4 sm:p-6 select-none">
+        <div className="w-full max-w-md bg-slate-900 border-2 sm:border-4 border-slate-800 rounded-3xl sm:rounded-[3.5rem] p-6 sm:p-8 text-center space-y-6 shadow-2xl animate-in zoom-in-95 duration-300 my-auto text-white">
+          
+          <div className="size-16 sm:size-20 bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 rounded-3xl flex items-center justify-center mx-auto shadow-inner">
+            <ShieldCheck size={36} />
           </div>
-          <span className="font-display text-2xl font-black uppercase italic tracking-tight text-slate-900">Family Hub</span>
-        </div>
-        <div>
-          <Link
-            to="/auth"
-            className="rounded-2xl border-4 border-slate-50 bg-white px-6 py-3 text-xs font-black uppercase tracking-wider text-slate-500 hover:text-slate-900 transition-all shadow-sm"
-          >
-            Sign In / Register
-          </Link>
-        </div>
-      </header>
 
-      {/* Hero Welcome Section */}
-      <section className="mx-auto max-w-4xl px-6 pt-10 pb-16 text-center space-y-6">
-        <div className="mx-auto inline-flex items-center gap-2 rounded-full border-2 border-slate-100 bg-white px-4 py-1.5 text-[10px] font-black uppercase tracking-widest text-slate-400 shadow-sm">
-          <Sparkles className="size-3.5 text-indigo-500 animate-pulse" /> Self-Hosted Family Portal
-        </div>
-        
-        <h1 className="mx-auto max-w-3xl font-display text-5xl md:text-6xl font-black italic uppercase leading-[1.05] tracking-tighter text-slate-900">
-          The warm, kid-friendly dashboard for your family.
-        </h1>
-        
-        <p className="mx-auto max-w-xl text-sm md:text-base font-bold text-slate-400 uppercase tracking-widest leading-relaxed">
-          Shared calendar, gamified chores with points and a leaderboard, meal planner, and shopping list. Made to sit on your shared kitchen tablet.
-        </p>
+          <div>
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-500/20 text-indigo-300 text-[10px] font-black uppercase tracking-widest border border-indigo-500/30 mb-2">
+              <Sparkles size={12} /> First-Time Setup
+            </div>
+            <h1 className="text-2xl sm:text-3xl font-black uppercase italic tracking-tight text-white">
+              Initialize Family Hub
+            </h1>
+            <p className="text-xs text-slate-400 font-bold uppercase tracking-widest mt-1">
+              Create your primary administrator account
+            </p>
+          </div>
 
-        {/* Tablet-friendly large button actions */}
-        <div className="pt-4 flex flex-wrap items-center justify-center gap-4">
-          <Link
-            to="/auth"
-            className="w-full sm:w-auto py-5 px-10 bg-slate-900 hover:bg-indigo-600 text-white rounded-[2.5rem] font-black uppercase text-sm tracking-wider shadow-lg flex items-center justify-center gap-3 transition-all cursor-pointer min-h-[48px]"
-          >
-            <LogIn size={18} /> Enter Fortress
-          </Link>
-          <button
-            onClick={handleEnterKioskMode}
-            disabled={busy}
-            className="w-full sm:w-auto py-5 px-10 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-[2.5rem] font-black uppercase text-sm tracking-wider shadow-sm flex items-center justify-center gap-3 transition-all cursor-pointer min-h-[48px] disabled:opacity-50"
-          >
-            <MonitorPlay size={18} /> {busy ? "Loading..." : "Launch Kiosk"}
-          </button>
-        </div>
-      </section>
+          <form onSubmit={handleCreateFirstAdmin} className="space-y-4 text-left">
+            <div className="space-y-1">
+              <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 ml-2">
+                Admin Username
+              </label>
+              <input
+                type="text"
+                required
+                value={adminUsername}
+                onChange={e => setAdminUsername(e.target.value)}
+                placeholder="e.g. Mum or Dad"
+                className="w-full p-4 bg-slate-950 border-2 border-slate-800 focus:border-indigo-500 rounded-2xl text-sm font-black outline-none text-white min-h-[48px]"
+                autoFocus
+              />
+            </div>
 
-      {/* Features Grid (Optimized responsive columns for Tablet/Mobile) */}
-      <section className="mx-auto max-w-6xl px-6 pb-24 w-full">
-        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-          <Feature icon={Trophy} title="Chores & points" tint="amber" desc="Kids tap to complete, earn points, and unlock rewards you set." />
-          <Feature icon={Calendar} title="Shared calendar" tint="sky" desc="Every family member colour-coded. Add events and see today at a glance." />
-          <Feature icon={ShoppingCart} title="Shopping list" tint="emerald" desc="Categorised, live for everyone. Auto-fills ingredients from your meal plan." />
-          <Feature icon={ChefHat} title="Meal planner" tint="rose" desc="Plan the week, save recipes, and one-click generate the shopping list." />
-          <Feature icon={Trophy} title="Leaderboard" tint="pink" desc="Weekly ranking, streaks, and badges — big satisfying numbers." />
-          <Feature icon={Home} title="Home Assistant ready" tint="violet" desc="Publishes chore events so you can trigger smart home automations." />
+            <div className="space-y-1">
+              <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 ml-2">
+                Admin Password
+              </label>
+              <input
+                type="password"
+                required
+                value={adminPassword}
+                onChange={e => setAdminPassword(e.target.value)}
+                placeholder="Choose Password (4+ characters)"
+                className="w-full p-4 bg-slate-950 border-2 border-slate-800 focus:border-indigo-500 rounded-2xl text-sm font-black outline-none text-white min-h-[48px]"
+              />
+            </div>
+
+            <div className="pt-2">
+              <button
+                type="submit"
+                disabled={isSubmitting || !adminUsername.trim() || adminPassword.length < 4}
+                className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl transition-all cursor-pointer min-h-[48px] flex items-center justify-center gap-2 disabled:opacity-40"
+              >
+                {isSubmitting ? (
+                  <Loader2 className="animate-spin size-4" />
+                ) : (
+                  <UserPlus size={16} />
+                )}
+                {isSubmitting ? "Creating Admin..." : "Initialize Fortress"}
+              </button>
+            </div>
+          </form>
+
+          <p className="text-[9px] text-slate-500 font-bold uppercase tracking-wider">
+            This account receives automatic primary admin privileges. Additional heroes can be added in Settings.
+          </p>
         </div>
-      </section>
-    </main>
-  );
+      </main>
+    );
+  }
+
+  return null;
 }

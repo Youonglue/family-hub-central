@@ -58,20 +58,37 @@ function CalendarPage() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [dayViewDate, setDayViewDate] = useState<Date | null>(null);
 
-  const isAdmin = me.data?.role?.toLowerCase() === "admin";
+  // Read active hero from kiosk
+  const activeMember = useMemo(() => {
+    try {
+      return JSON.parse(localStorage.getItem("kiosk_active_member") || "null");
+    } catch {
+      return null;
+    }
+  }, []);
+
+  // SECURITY FIX: Children accounts NEVER have admin privileges!
+  const isSystemAdmin = me.data?.role?.toLowerCase() === "admin";
+  const isParentCharacter = (activeMember?.is_parent === 1 || activeMember?.is_parent === true || activeMember?.role?.toLowerCase() === "admin") && activeMember?.is_kid !== 1;
+  const isAdmin = Boolean(isSystemAdmin && (isParentCharacter || !activeMember));
+
   const eventList = Array.isArray(events.data) ? events.data : [];
   const memberList = Array.isArray(members.data) ? members.data : [];
 
   const inv = () => { qc.invalidateQueries({ queryKey: ["events"] }); };
 
   const del = useMutation({ 
-    mutationFn: (id: string) => deleteEvent({ data: { id } }), 
+    mutationFn: (id: string) => {
+      if (!isAdmin) throw new Error("Only Admins can delete calendar events");
+      return deleteEvent({ data: { id } });
+    }, 
     onSuccess: () => { toast.success("Quest Removed"); inv(); },
     onError: () => { toast.error("Only Admins can delete calendar events"); }
   });
   
   const wipeViewMutation = useMutation({
     mutationFn: async (range: { start: string, end: string }) => {
+      if (!isAdmin) throw new Error("Admin authorization required");
       const res = await fetch(`/api/events/range?start=${range.start}&end=${range.end}`, { method: 'DELETE' });
       if (!res.ok) throw new Error("Admin authorization required");
       return res.json();
@@ -167,7 +184,7 @@ function CalendarPage() {
 
   return (
     <AppShell>
-      <div className="mx-auto max-w-7xl px-3 py-4 sm:px-6 sm:py-6 space-y-4 sm:space-y-5 animate-in fade-in duration-300">
+      <div className="mx-auto max-w-7xl px-3 py-4 sm:px-6 sm:py-6 space-y-4 sm:space-y-5 animate-in fade-in duration-300 safe-area-inset-bottom">
         
         {/* HEADER */}
         <header className="flex flex-wrap items-center justify-between gap-3 pb-1 border-b border-slate-100">
@@ -185,6 +202,7 @@ function CalendarPage() {
              </div>
           </div>
           
+          {/* Action Buttons: Strictly Admin / Parent Only */}
           {isAdmin && (
             <div className="flex items-center gap-2">
               <button 
@@ -204,7 +222,7 @@ function CalendarPage() {
           )}
         </header>
 
-        {/* HERO FILTER BAR */}
+        {/* HERO FILTER BAR (Kids can browse freely) */}
         <div className="bg-white p-3 sm:p-4 rounded-2xl sm:rounded-3xl border-2 border-slate-50 shadow-xs space-y-2.5">
           <CalendarHeroFilter
             memberList={memberList}
@@ -334,7 +352,7 @@ function CalendarPage() {
           </aside>
         </div>
 
-        {/* DAY DETAIL / DELETE MODAL */}
+        {/* DAY DETAIL MODAL (Delete button strictly hidden if non-admin) */}
         {dayViewDate && (
           <CalendarDayViewModal
             dayViewDate={dayViewDate}
@@ -345,7 +363,7 @@ function CalendarPage() {
           />
         )}
 
-        {/* ADD QUEST MODAL (Admin Only) */}
+        {/* ADD QUEST MODAL (Admin / Parent Only) */}
         {showAddModal && isAdmin && (
           <CalendarAddQuestModal
             anchor={anchor}

@@ -11,7 +11,8 @@ import {
   Loader2, 
   Gift,
   X,
-  ShieldCheck
+  ShieldCheck,
+  RefreshCw
 } from "lucide-react";
 import { useState, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -111,11 +112,11 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [showAdminPortal, setShowAdminPortal] = useState(false);
   const [selectedAdmin, setSelectedAdmin] = useState<any>(null);
 
-  // PRIVILEGE ESCALATION SHIELD: Admin is ONLY elevated if the current active kiosk member is explicitly Admin
+  // PRIVILEGE SHIELD: Admin is ONLY elevated if the current active kiosk member is explicitly Admin
   const isAdmin = me.data?.role?.toLowerCase() === "admin" && kioskMember?.role?.toLowerCase() === "admin";
   const idleTimerRef = useRef<any>(null);
 
-  // ZERO-TRUST KIOSK BOOT: Clear any orphaned elevated admin cookie on refresh/boot if no active admin is selected
+  // ZERO-TRUST KIOSK BOOT
   useEffect(() => {
     if (!kioskMember && me.data?.role?.toLowerCase() === "admin") {
       fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
@@ -127,11 +128,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   const resetIdle = () => {
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
     
-    // Strict 1-minute (60,000ms) inactivity timeout
     const timeoutDuration = 60 * 1000;
 
     idleTimerRef.current = setTimeout(() => {
-      // Clear elevated admin cookie on timeout
       fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
       qc.invalidateQueries({ queryKey: ["me"] });
 
@@ -152,7 +151,6 @@ export function AppShell({ children }: { children: ReactNode }) {
     const activityEvents = ["mousemove", "mousedown", "touchstart", "click", "keypress"];
     const handleActivity = () => {
       if (isIdleRef.current) return;
-      enforceFullscreenIfEnabled();
       resetIdle();
     };
 
@@ -215,7 +213,6 @@ export function AppShell({ children }: { children: ReactNode }) {
           level: 1
         };
 
-        // Explicitly stamp the active kiosk member as admin
         const adminHero = { ...hero, role: 'admin' };
         setKioskMember(adminHero);
         localStorage.setItem("kiosk_active_member", JSON.stringify(adminHero));
@@ -283,7 +280,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     );
   }
 
-  // 3. Admin PIN Portal (Priority Top Overlay)
+  // 3. Admin PIN Portal
   if (showAdminPortal) {
     return (
       <KioskPinPortal
@@ -307,7 +304,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     );
   }
 
-  // 4. Idle Screensaver View (Default Kiosk Standby)
+  // 4. Idle Screensaver View
   if (isIdle) {
     return (
       <KioskLockScreen
@@ -329,7 +326,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     );
   }
 
-  // 5. Hero Picker Overlay (ALWAYS FORCED IF NO ACTIVE HERO, PREVENTING ADMIN BYPASS)
+  // 5. Hero Picker Overlay
   if (showHeroPickerModal || (!kioskMember && visibleKioskHeroes.length > 0)) {
     return (
       <KioskHeroSelect
@@ -348,7 +345,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-[100dvh] bg-canvas flex flex-col justify-between relative">
       
-      {/* Desktop Sidebar */}
+      {/* Desktop & Tablet Landscape Sidebar */}
       <aside className="fixed left-0 top-0 h-screen w-64 flex flex-col border-r border-border bg-panel/70 backdrop-blur hidden md:flex z-40 overflow-y-auto scrollbar-thin">
         <Link to="/dashboard" className="flex items-center gap-2 px-6 py-6 shrink-0">
           <div className="grid size-9 place-items-center rounded-2xl bg-indigo-600 text-white font-display text-lg font-black italic">
@@ -377,23 +374,27 @@ export function AppShell({ children }: { children: ReactNode }) {
           })}
         </nav>
         
-        {/* Dynamic Desktop Sidebar Hero Card */}
+        {/* RESPONSIVE TABLET TOUCH TARGET: Entire Card is an instant 1-tap trigger */}
         {kioskMember && (
-          <div className="p-4 mx-3 mb-2 bg-slate-50 border-2 border-slate-100 rounded-3xl flex items-center gap-3 shrink-0">
-            <Avatar 
-              config={parseAvatarConfig(kioskMember.avatar_config)} 
-              className="size-10 rounded-xl shadow-inner shrink-0" 
-            />
-            <div className="min-w-0 flex-1">
-              <p className="text-xs font-black uppercase text-slate-800 truncate">{kioskMember.name}</p>
-              <button 
-                type="button"
-                onClick={() => setShowHeroPickerModal(true)}
-                className="text-[9px] font-black text-indigo-500 uppercase tracking-widest hover:text-indigo-600 leading-none cursor-pointer block mt-1"
-              >
-                Switch Hero
-              </button>
-            </div>
+          <div className="mx-3 mb-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => setShowHeroPickerModal(true)}
+              className="w-full p-3 bg-slate-50 hover:bg-indigo-50/70 active:bg-indigo-100 border-2 border-slate-200 hover:border-indigo-300 rounded-2xl flex items-center gap-3 transition-all cursor-pointer active:scale-95 shadow-xs touch-manipulation min-h-[56px] text-left group select-none"
+              title="Tap to switch character profile"
+            >
+              <Avatar 
+                config={parseAvatarConfig(kioskMember.avatar_config)} 
+                className="size-11 rounded-xl shadow-xs border border-white shrink-0 group-hover:scale-105 transition-transform" 
+              />
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-black uppercase text-slate-800 truncate leading-tight">{kioskMember.name}</p>
+                <div className="flex items-center gap-1 mt-1 text-[10px] font-black text-indigo-600 uppercase tracking-wider">
+                  <RefreshCw size={11} className="group-hover:rotate-180 transition-transform duration-300" />
+                  <span>Switch Hero</span>
+                </div>
+              </div>
+            </button>
           </div>
         )}
 
@@ -409,7 +410,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 setKioskMember(null);
                 localStorage.removeItem("kiosk_active_member");
               }}
-              className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-black uppercase tracking-wider text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer min-h-[44px]"
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-black uppercase tracking-wider text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer min-h-[44px] touch-manipulation"
             >
               <ShieldCheck className="size-4 shrink-0" />
               Lock Admin Session
@@ -505,7 +506,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                         type="button"
                         key={m.id}
                         onClick={() => handleSelectHero(m)}
-                        className={`p-3 rounded-2xl border-2 flex flex-col items-center gap-2 transition-all cursor-pointer active:scale-95 ${
+                        className={`p-3 rounded-2xl border-2 flex flex-col items-center gap-2 transition-all cursor-pointer active:scale-95 touch-manipulation ${
                           isCurrent 
                             ? 'border-indigo-600 bg-indigo-50/70 shadow-sm ring-2 ring-indigo-500/20' 
                             : 'border-slate-100 bg-slate-50 hover:bg-slate-100'
@@ -538,7 +539,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                   setShowPortraitHeroModal(false);
                   setShowAdminPortal(true);
                 }}
-                className="w-full py-3.5 bg-slate-900 hover:bg-indigo-600 active:scale-95 text-white rounded-2xl font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-md cursor-pointer min-h-[44px] transition-all"
+                className="w-full py-3.5 bg-slate-900 hover:bg-indigo-600 active:scale-95 text-white rounded-2xl font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-md cursor-pointer min-h-[44px] transition-all touch-manipulation"
               >
                 <ShieldCheck size={18} /> Admin Login
               </button>

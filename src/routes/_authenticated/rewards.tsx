@@ -1,5 +1,5 @@
 // src/routes/_authenticated/rewards.tsx
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
@@ -7,8 +7,7 @@ import { AppShell } from "@/components/AppShell";
 import { getMe } from "@/lib/auth-client";
 import { Timer } from "lucide-react";
 
-// Sub-component Imports (Compartmentalized)
-import { RewardCharacterSelect } from "@/components/rewards/RewardCharacterSelect";
+// Sub-component Imports (CharacterSelect removed entirely)
 import { RewardActiveShop } from "@/components/rewards/RewardActiveShop";
 import { RewardAdminCatalog } from "@/components/rewards/RewardAdminCatalog";
 
@@ -18,9 +17,10 @@ export const Route = createFileRoute("/_authenticated/rewards")({
 });
 
 function RewardsShop() {
+  const navigate = useNavigate();
   const me = useQuery({ queryKey: ["me"], queryFn: () => getMe() });
 
-  // FIXED: Automatically initialize from the active kiosk hero so they don't have to re-select
+  // STRICTLY LINKED TO GLOBAL KIOSK HERO: No local character select screen
   const [activeMember, setActiveMember] = useState<any>(() => {
     try {
       return JSON.parse(localStorage.getItem("kiosk_active_member") || "null");
@@ -35,6 +35,7 @@ function RewardsShop() {
   const isSystemAdmin = me.data?.role?.toLowerCase() === "admin";
 
   // --- KIOSK STATE SYNCER ---
+  // Keeps the active hero strictly in sync with the kiosk selection
   useEffect(() => {
     const syncMember = () => {
       try {
@@ -55,6 +56,13 @@ function RewardsShop() {
     };
   }, [activeMember]);
 
+  // If no hero has been chosen on the kiosk, return to dashboard where kiosk handles selection
+  useEffect(() => {
+    if (!activeMember && !isAdminView && !me.isLoading) {
+      navigate({ to: "/dashboard" });
+    }
+  }, [activeMember, isAdminView, me.isLoading, navigate]);
+
   // --- INACTIVITY TIMEOUT ---
   useEffect(() => {
     if (!activeMember) return;
@@ -63,15 +71,24 @@ function RewardsShop() {
         setActiveMember(null);
         setIsAdminView(false);
         localStorage.removeItem("kiosk_active_member");
-        toast("Shop Reset for Safety", { icon: <Timer className="size-4" /> });
+        toast("Vault Standby", { icon: <Timer className="size-4" /> });
+        navigate({ to: "/dashboard" });
       }
     }, 1000);
     return () => clearInterval(interval);
-  }, [activeMember, lastActivity]);
+  }, [activeMember, lastActivity, navigate]);
 
   const recordActivity = useCallback(() => setLastActivity(Date.now()), []);
 
-  const canAccessAdmin = isSystemAdmin || activeMember?.is_parent === 1 || activeMember?.is_parent === true;
+  // SECURITY: Only parent characters with admin credentials can customize the shop
+  const isParentCharacter = (activeMember?.is_parent === 1 || activeMember?.is_parent === true || activeMember?.role?.toLowerCase() === "admin") && activeMember?.is_kid !== 1;
+  const canAccessAdmin = Boolean(isSystemAdmin && (isParentCharacter || !activeMember));
+
+  useEffect(() => {
+    if (!canAccessAdmin && isAdminView) {
+      setIsAdminView(false);
+    }
+  }, [canAccessAdmin, isAdminView]);
 
   if (me.isLoading) {
     return (
@@ -92,48 +109,27 @@ function RewardsShop() {
         onMouseMove={recordActivity} 
         onClick={recordActivity}
       >
-        {/* Render SCREEN A: Admin Panel Catalog View */}
-        {isAdminView ? (
+        {/* Render SCREEN A: Admin Panel Catalog View (Admin Only) */}
+        {isAdminView && canAccessAdmin ? (
           <RewardAdminCatalog
             activeMember={activeMember}
-            onBack={() => {
-              if (activeMember) {
-                setIsAdminView(false);
-              } else {
-                setIsAdminView(false);
-                setActiveMember(null);
-              }
-            }}
+            onBack={() => setIsAdminView(false)}
             isAdminView={isAdminView}
             setIsAdminView={setIsAdminView}
           />
         ) : activeMember ? (
-          // Render SCREEN B: Active Kid Shop View
+          // Render SCREEN B: Active Kid Shop View (Strictly uses the kiosk-selected hero)
           <RewardActiveShop
             activeMember={activeMember}
             onBack={() => {
-              setActiveMember(null);
-              setIsAdminView(false);
-              localStorage.removeItem("kiosk_active_member");
+              // Exiting Vault cleanly returns to Dashboard without popping open extra pickers
+              navigate({ to: "/dashboard" });
             }}
             isAdminView={isAdminView}
             setIsAdminView={setIsAdminView}
             canAccessAdmin={canAccessAdmin}
           />
-        ) : (
-          // Render SCREEN C: Character Select View
-          <RewardCharacterSelect
-            onSelectMember={(m) => {
-              setActiveMember(m);
-              localStorage.setItem("kiosk_active_member", JSON.stringify(m));
-              recordActivity();
-            }}
-            onOpenAdmin={() => {
-              setIsAdminView(true);
-              recordActivity();
-            }}
-          />
-        )}
+        ) : null}
 
         <footer className="pt-20 text-center">
           <p className="text-[10px] font-black text-slate-300 uppercase tracking-[0.5em] flex items-center justify-center gap-2 opacity-50">

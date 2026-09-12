@@ -69,6 +69,14 @@ export function AvatarGradientsDef() {
         <stop offset="50%" stopColor="#c084fc" />
         <stop offset="100%" stopColor="#fef08a" />
       </linearGradient>
+
+      {/* CHUU & LOONA PEACH GRADIENT */}
+      <linearGradient id="chuuPeachGrad" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stopColor="#fb7185" />
+        <stop offset="45%" stopColor="#f472b6" />
+        <stop offset="80%" stopColor="#fdba74" />
+        <stop offset="100%" stopColor="#fef08a" />
+      </linearGradient>
     </defs>
   );
 }
@@ -83,6 +91,20 @@ export function AvatarBackdropLayer({ bg }: { bg: string }) {
       {bg === "sky" && <rect width="100" height="100" fill="#0ea5e9" />}
       {bg === "rose" && <rect width="100" height="100" fill="#f43f5e" />}
       {bg === "violet" && <rect width="100" height="100" fill="#8b5cf6" />}
+
+      {/* Chuu LOONA Crescent Moon & Peach Sparkles */}
+      {bg === "chuuPeach" && (
+        <g>
+          <rect width="100" height="100" fill="url(#chuuPeachGrad)" />
+          {/* LOONA Crescent Moon */}
+          <path d="M78 12 A16 16 0 1 0 78 44 A13 13 0 1 1 78 12 Z" fill="#ffffff" opacity="0.85" />
+          {/* Sparkle Stars & Little Hearts */}
+          <polygon points="25,18 26.5,22 31,22 27.5,25 29,29 25,26.5 21,29 22.5,25 19,22 23.5,22" fill="#ffffff" opacity="0.9" />
+          <polygon points="15,45 16,48 19,48 16.5,50 17.5,53 15,51 12.5,53 13.5,50 11,48 14,48" fill="#ffffff" opacity="0.75" />
+          <path d="M85 68 Q88 64 91 68 Q94 72 88 77 Q82 72 85 68 Z" fill="#ffffff" opacity="0.7" />
+          <path d="M18 78 Q20 75 22 78 Q24 81 20 84 Q16 81 18 78 Z" fill="#ffffff" opacity="0.6" />
+        </g>
+      )}
 
       {/* Marvel Themed Backdrops */}
       {bg === "spiderVerse" && (

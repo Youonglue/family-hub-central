@@ -13,6 +13,29 @@ export function AvatarFaceLayer({ face, isSpider }: { face: string; isSpider?: b
 
   return (
     <>
+      {/* Chuu Signature Pop-Idol Wink & Coral Blush */}
+      {face === "chuuWink" && (
+        <g>
+          {/* Big Sparkling Right Eye */}
+          <ellipse cx="42" cy="41" rx="3" ry="4.5" fill="#1e293b" />
+          <circle cx="41" cy="39" r="1.2" fill="#ffffff" />
+          <circle cx="43" cy="43" r="0.6" fill="#ffffff" />
+
+          {/* Expressive Left Wink Curve with Eyelash */}
+          <path d="M54 42 Q58 37 63 42" stroke="#1e293b" strokeWidth="2.5" strokeLinecap="round" fill="none" />
+          <path d="M62 40 L65 38" stroke="#1e293b" strokeWidth="2" strokeLinecap="round" />
+
+          {/* Rosy Strawberry-Coral Blush with Catchlights */}
+          <circle cx="36" cy="46" r="3.5" fill="#fb7185" opacity="0.6" />
+          <circle cx="35" cy="45" r="0.8" fill="#ffffff" opacity="0.8" />
+          <circle cx="64" cy="46" r="3.5" fill="#fb7185" opacity="0.6" />
+          <circle cx="63" cy="45" r="0.8" fill="#ffffff" opacity="0.8" />
+
+          {/* Open Joyful Idol Smile */}
+          <path d="M44 49 Q50 56 56 49 Z" fill="#f43f5e" stroke="#1e293b" strokeWidth="1.5" />
+        </g>
+      )}
+
       {face === "happy" && (
         <g>
           <ellipse cx="42" cy="41" rx="2.5" ry="4" fill="#1e293b" />
@@ -82,6 +105,27 @@ export function AvatarFaceLayer({ face, isSpider }: { face: string; isSpider?: b
 export function AvatarHairLayer({ hair }: { hair: string }) {
   return (
     <>
+      {/* Chuu Idol Straight Bangs & Twin Ribbon Pigtails */}
+      {hair === "chuuPigtails" && (
+        <g>
+          {/* Chestnut Hair Crown & Bangs */}
+          <path d="M30 36 C30 20, 70 20, 70 36 C64 36, 61 31, 56 31 C51 31, 48 35, 44 32 C40 35, 36 36, 30 36 Z" fill="#78350f" />
+          <path d="M31 34 Q50 24 69 34 L67 38 Q50 29 33 38 Z" fill="#92400e" opacity="0.6" />
+
+          {/* Left Pigtail & Pink Ribbon */}
+          <ellipse cx="23" cy="45" rx="5" ry="11" fill="#78350f" transform="rotate(-15 23 45)" />
+          <polygon points="26,35 20,31 22,37" fill="#fb7185" />
+          <polygon points="26,35 22,41 20,35" fill="#fb7185" />
+          <circle cx="24.5" cy="35.5" r="1.5" fill="#f43f5e" />
+
+          {/* Right Pigtail & Pink Ribbon */}
+          <ellipse cx="77" cy="45" rx="5" ry="11" fill="#78350f" transform="rotate(15 77 45)" />
+          <polygon points="74,35 80,31 78,37" fill="#fb7185" />
+          <polygon points="74,35 78,41 80,35" fill="#fb7185" />
+          <circle cx="75.5" cy="35.5" r="1.5" fill="#f43f5e" />
+        </g>
+      )}
+
       {hair === "blueyEars" && (
         <g fill="#1e3a8a">
           <polygon points="32,30 20,8 38,18" stroke="#1e40af" strokeWidth="1" />
@@ -157,6 +201,22 @@ export function AvatarHairLayer({ hair }: { hair: string }) {
 export function AvatarAccessoryLayer({ accessory }: { accessory: string }) {
   return (
     <>
+      {/* Iconic "Chuu Apple Heart" Pose */}
+      {accessory === "chuuHeart" && (
+        <g>
+          {/* Floating Strawberry Heart Sparkle */}
+          <path d="M74 54 C74 50, 68 50, 68 54 C68 58, 74 62, 74 62 C74 62, 80 58, 80 54 C80 50, 74 50, 74 54 Z" fill="#f43f5e" stroke="#ffffff" strokeWidth="1" />
+          <polygon points="74,48 75,51 77,51 75.5,52.5 76,55 74,53.5 72,55 72.5,52.5 71,51 73,51" fill="#fef08a" />
+
+          {/* Cute Apple-Heart Hands at Chest */}
+          <g transform="translate(0, 4)">
+            <ellipse cx="44" cy="74" rx="4" ry="3" fill="#fdedd3" stroke="#fbcfe8" strokeWidth="0.8" transform="rotate(-20 44 74)" />
+            <ellipse cx="56" cy="74" rx="4" ry="3" fill="#fdedd3" stroke="#fbcfe8" strokeWidth="0.8" transform="rotate(20 56 74)" />
+            <path d="M50 72 C48 69, 44 69, 44 72 C44 76, 50 79, 50 79 C50 79, 56 76, 56 72 C56 69, 52 69, 50 72 Z" fill="#fb7185" />
+          </g>
+        </g>
+      )}
+
       {accessory === "crown" && (
         <g>
           <path d="M32 20 L40 29 L50 16 L60 29 L68 20 L64 32 L36 32 Z" fill="#facc15" stroke="#ca8a04" strokeWidth="1" />

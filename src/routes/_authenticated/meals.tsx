@@ -1,6 +1,7 @@
+// src/routes/_authenticated/meals.tsx
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/AppShell";
 import { listMembers } from "@/lib/hub-api";
@@ -63,7 +64,19 @@ function MealsPage() {
     queryFn: () => fetch('/api/meals/suggestions').then(r => r.json()),
   });
 
-  const isAdmin = me.data?.role?.toLowerCase() === "admin";
+  // Read active hero from kiosk
+  const activeMember = useMemo(() => {
+    try {
+      return JSON.parse(localStorage.getItem("kiosk_active_member") || "null");
+    } catch {
+      return null;
+    }
+  }, []);
+
+  // SECURITY FIX: Children accounts NEVER have edit permissions!
+  const isSystemAdmin = me.data?.role?.toLowerCase() === "admin";
+  const isParentCharacter = (activeMember?.is_parent === 1 || activeMember?.is_parent === true || activeMember?.role?.toLowerCase() === "admin") && activeMember?.is_kid !== 1;
+  const isAdmin = Boolean(isSystemAdmin && (isParentCharacter || !activeMember));
 
   const inv = () => {
     qc.invalidateQueries({ queryKey: ["meal-plan"] });
@@ -73,13 +86,19 @@ function MealsPage() {
 
   // --- MUTATIONS ---
   const setSlot = useMutation({
-    mutationFn: (v: any) => fetch('/api/meals/plan', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(v) }),
+    mutationFn: (v: any) => {
+      if (!isAdmin) throw new Error("Only Admins can alter the feast!");
+      return fetch('/api/meals/plan', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(v) });
+    },
     onSuccess: () => { toast.success("Meal Added to Plan"); inv(); },
     onError: () => toast.error("Only Admins can alter the feast!")
   });
 
   const clearSlot = useMutation({
-    mutationFn: (id: string) => fetch(`/api/meals/plan/${id}`, { method: 'DELETE' }),
+    mutationFn: (id: string) => {
+      if (!isAdmin) throw new Error("Only Admins can remove meals!");
+      return fetch(`/api/meals/plan/${id}`, { method: 'DELETE' });
+    },
     onSuccess: () => { toast.success("Slot Cleared"); inv(); },
     onError: () => toast.error("Only Admins can remove meals!")
   });
@@ -93,37 +112,42 @@ function MealsPage() {
 
   return (
     <AppShell>
-      <div className="mx-auto max-w-7xl px-4 py-6 md:px-8 space-y-8">
+      <div className="mx-auto max-w-7xl px-3 py-4 sm:px-6 sm:py-8 space-y-6 sm:space-y-8 safe-area-inset-bottom">
         
         {/* --- HEADER --- */}
         <header className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h1 className="font-display text-4xl font-black tracking-tight text-slate-900 uppercase italic">Meal Planner</h1>
-            <p className="text-slate-400 font-bold uppercase text-[10px] tracking-widest italic">The Weekly Feast Protocol</p>
+            <h1 className="font-display text-2xl sm:text-4xl font-black tracking-tight text-slate-900 uppercase italic">Meal Planner</h1>
+            <p className="text-slate-400 font-bold uppercase text-[9px] sm:text-[10px] tracking-widest italic">The Weekly Feast Protocol</p>
           </div>
-          <div className="flex items-center gap-3">
-            <div className="flex bg-white rounded-2xl shadow-sm border-4 border-slate-50 p-1">
-              <button onClick={() => setWeekStart(new Date(weekStart.getTime() - 7 * 86400000))} className="p-3 hover:bg-slate-100 rounded-xl transition-all cursor-pointer">‹</button>
-              <span className="font-black uppercase tracking-widest text-[10px] flex items-center px-4">{new Date(from).toLocaleDateString()}</span>
-              <button onClick={() => setWeekStart(new Date(weekStart.getTime() + 7 * 86400000))} className="p-3 hover:bg-slate-100 rounded-xl transition-all cursor-pointer">›</button>
+          <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+            <div className="flex bg-white rounded-2xl shadow-xs border-2 sm:border-4 border-slate-50 p-1">
+              <button onClick={() => setWeekStart(new Date(weekStart.getTime() - 7 * 86400000))} className="p-2.5 sm:p-3 hover:bg-slate-100 rounded-xl transition-all cursor-pointer min-h-[40px] min-w-[40px] flex items-center justify-center">‹</button>
+              <span className="font-black uppercase tracking-widest text-[9px] sm:text-[10px] flex items-center px-3 sm:px-4">{new Date(from).toLocaleDateString()}</span>
+              <button onClick={() => setWeekStart(new Date(weekStart.getTime() + 7 * 86400000))} className="p-2.5 sm:p-3 hover:bg-slate-100 rounded-xl transition-all cursor-pointer min-h-[40px] min-w-[40px] flex items-center justify-center">›</button>
             </div>
             
+            {/* Shopping List Button: Admin/Parent Only */}
             {isAdmin && (
-              <button onClick={() => genShop.mutate()} className="bg-slate-900 text-white px-6 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center gap-2 shadow-xl hover:bg-indigo-600 transition-all active:scale-95 cursor-pointer">
+              <button onClick={() => genShop.mutate()} className="bg-slate-900 text-white px-4 sm:px-6 py-3 sm:py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center gap-2 shadow-xl hover:bg-indigo-600 transition-all active:scale-95 cursor-pointer min-h-[44px]">
                 <ShoppingBasket size={18} /> BUILD SHOPPING LIST
               </button>
             )}
           </div>
         </header>
 
-        {/* --- 1. WEEKLY PLANNER GRID --- */}
+        {/* --- 1. WEEKLY PLANNER GRID (Read-only if non-admin) --- */}
         <MealWeeklyPlanner
           weekStart={weekStart}
           planData={plan.data}
           recipesData={recipes.data}
           isAdmin={isAdmin}
-          onSetSlot={(v) => setSlot.mutate(v)}
-          onClearSlot={(id) => clearSlot.mutate(id)}
+          onSetSlot={(v) => {
+            if (isAdmin) setSlot.mutate(v);
+          }}
+          onClearSlot={(id) => {
+            if (isAdmin) clearSlot.mutate(id);
+          }}
         />
 
         {/* --- 2. DYNAMIC FAMILY SUGGESTIONS BOARD --- */}
@@ -134,26 +158,28 @@ function MealsPage() {
           onRefresh={inv}
         />
 
-        {/* --- 3. FAMILY COOKBOOK VISUAL GRID (Collapsible) --- */}
+        {/* --- 3. FAMILY COOKBOOK VISUAL GRID (Add recipe button hidden for kids) --- */}
         <MealCookbook
           recipesData={recipes.data}
           isAdmin={isAdmin}
           showCookbook={showCookbook}
           onToggleCookbook={() => setShowCookbook(!showCookbook)}
           onOpenRecipeDetails={(r) => setSelectedRecipe(r)}
-          onOpenAddRecipe={() => setShowAddRecipeModal(true)}
+          onOpenAddRecipe={() => {
+            if (isAdmin) setShowAddRecipeModal(true);
+          }}
           onRefresh={inv}
         />
 
-        {/* --- 4. ADD RECIPE MODAL --- */}
-        {showAddRecipeModal && (
+        {/* --- 4. ADD RECIPE MODAL (Admin Only) --- */}
+        {showAddRecipeModal && isAdmin && (
           <MealAddRecipeModal
             onClose={() => setShowAddRecipeModal(false)}
             onRefresh={inv}
           />
         )}
 
-        {/* --- 5. RECIPE DETAIL & EDIT MODAL --- */}
+        {/* --- 5. RECIPE DETAIL MODAL --- */}
         {selectedRecipe && (
           <MealDetailModal
             recipe={selectedRecipe}

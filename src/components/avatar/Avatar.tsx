@@ -7,12 +7,13 @@ import { AvatarFaceLayer, AvatarHairLayer, AvatarAccessoryLayer } from "./Avatar
 export type BackdropTheme = 
   | "amber" | "pink" | "emerald" | "sky" | "rose" | "violet"
   | "spiderVerse" | "starkTech" | "bifrost" | "wakandaSunset" | "cosmicSpace"
-  | "heelerBackyard" | "keepyUppy" | "danceMode" | "magicAsparagus" | "fairyGarden";
+  | "heelerBackyard" | "keepyUppy" | "danceMode" | "magicAsparagus" | "fairyGarden"
+  | "chuuPeach";
 
-export type HeroSuit = "classic" | "spiderSuit" | "ironArmor" | "blueyPup" | "bingoPup";
-export type FaceExpression = "happy" | "determined" | "cool" | "starEyes" | "playful" | "superhero";
-export type HairStyle = "none" | "spiky" | "wizard" | "braids" | "curls" | "cap" | "blueyEars" | "bingoEars" | "heroCowl";
-export type AccessoryType = "none" | "crown" | "glasses" | "headphones" | "sword" | "webShooter" | "magicWand" | "lightning";
+export type HeroSuit = "classic" | "spiderSuit" | "ironArmor" | "blueyPup" | "bingoPup" | "chuuIdol";
+export type FaceExpression = "happy" | "determined" | "cool" | "starEyes" | "playful" | "superhero" | "chuuWink";
+export type HairStyle = "none" | "spiky" | "wizard" | "braids" | "curls" | "cap" | "blueyEars" | "bingoEars" | "heroCowl" | "chuuPigtails";
+export type AccessoryType = "none" | "crown" | "glasses" | "headphones" | "sword" | "webShooter" | "magicWand" | "lightning" | "chuuHeart";
 
 export interface AvatarConfig {
   bg: BackdropTheme;

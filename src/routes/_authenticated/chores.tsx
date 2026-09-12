@@ -1,3 +1,4 @@
+// src/routes/_authenticated/chores.tsx
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useState, useEffect, useCallback } from "react";
@@ -34,7 +35,6 @@ function ChoresKiosk() {
   const isSystemAdmin = me.data?.role?.toLowerCase() === "admin";
 
   // --- KIOSK STATE SYNCER ---
-  // Keeps the local active member in sync with any changes made globally (e.g. Switching Heroes from sidebar)
   useEffect(() => {
     const syncMember = () => {
       try {
@@ -43,13 +43,11 @@ function ChoresKiosk() {
         if (JSON.stringify(parsed) !== JSON.stringify(activeMember)) {
           setActiveMember(parsed);
         }
-      } catch (e) {
-        // Ignore JSON read errors
-      }
+      } catch (e) {}
     };
 
-    const t = setInterval(syncMember, 500); // Poll local storage
-    window.addEventListener("storage", syncMember); // Listen to storage updates
+    const t = setInterval(syncMember, 500);
+    window.addEventListener("storage", syncMember);
 
     return () => {
       clearInterval(t);
@@ -64,7 +62,7 @@ function ChoresKiosk() {
       if (Date.now() - lastActivity > 60000) {
         setActiveMember(null);
         setIsAdminView(false);
-        localStorage.removeItem("kiosk_active_member"); // Lock global kiosk
+        localStorage.removeItem("kiosk_active_member");
         toast("Hub Reset for Safety", { icon: <Timer className="size-4" /> });
       }
     }, 1000);
@@ -73,15 +71,25 @@ function ChoresKiosk() {
 
   const recordActivity = useCallback(() => setLastActivity(Date.now()), []);
 
-  // Determine if active character is a parent OR if logged in user is a system admin
-  const canAccessAdmin = isSystemAdmin || activeMember?.is_parent === 1 || activeMember?.is_parent === true;
+  // SECURITY FIX: Children accounts NEVER have admin access under any circumstances!
+  const isParentCharacter = (activeMember?.is_parent === 1 || activeMember?.is_parent === true || activeMember?.role?.toLowerCase() === "admin") && activeMember?.is_kid !== 1;
+  const canAccessAdmin = Boolean(isSystemAdmin && isParentCharacter);
+
+  // If a child is currently selected, force admin view to false
+  useEffect(() => {
+    if (!canAccessAdmin && isAdminView) {
+      setIsAdminView(false);
+    }
+  }, [canAccessAdmin, isAdminView]);
 
   // --- SESSION LOADING GUARD ---
   if (me.isLoading) {
     return (
       <AppShell>
         <div className="flex flex-col items-center justify-center min-h-[85vh] p-6">
-          <p className="font-black text-slate-400 uppercase tracking-widest text-xs italic animate-pulse text-center">Synchronizing Kiosk...</p>
+          <p className="font-black text-slate-400 uppercase tracking-widest text-xs italic animate-pulse text-center">
+            Synchronizing Kiosk...
+          </p>
         </div>
       </AppShell>
     );
@@ -94,8 +102,8 @@ function ChoresKiosk() {
         onMouseMove={recordActivity} 
         onClick={recordActivity}
       >
-        {/* Render SCREEN A: Admin Panel View */}
-        {isAdminView ? (
+        {/* Render SCREEN A: Admin Panel View (Only accessible if canAccessAdmin is TRUE) */}
+        {isAdminView && canAccessAdmin ? (
           <ChoreAdminPanel
             activeMember={activeMember}
             onBack={() => {
@@ -110,29 +118,31 @@ function ChoresKiosk() {
             setIsAdminView={setIsAdminView}
           />
         ) : activeMember ? (
-          // Render SCREEN B: Active Kid Dashboard View
+          // Render SCREEN B: Active Kid Dashboard View (No Admin controls visible for children)
           <ChoreActiveDashboard
             activeMember={activeMember}
             onBack={() => {
               setActiveMember(null);
               setIsAdminView(false);
-              localStorage.removeItem("kiosk_active_member"); // Clear global select
+              localStorage.removeItem("kiosk_active_member");
             }}
             isAdminView={isAdminView}
             setIsAdminView={setIsAdminView}
             canAccessAdmin={canAccessAdmin}
           />
         ) : (
-          // Render SCREEN C: Character Select View (Fallback if bypassed)
+          // Render SCREEN C: Character Select View (Fallback)
           <ChoreCharacterSelect
             onSelectMember={(m) => {
               setActiveMember(m);
-              localStorage.setItem("kiosk_active_member", JSON.stringify(m)); // Propagate globally
+              localStorage.setItem("kiosk_active_member", JSON.stringify(m));
               recordActivity();
             }}
             onOpenAdmin={() => {
-              setIsAdminView(true);
-              recordActivity();
+              if (isSystemAdmin) {
+                setIsAdminView(true);
+                recordActivity();
+              }
             }}
           />
         )}

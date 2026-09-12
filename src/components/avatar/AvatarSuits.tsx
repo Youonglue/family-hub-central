@@ -2,6 +2,33 @@
 import React from "react";
 
 export function AvatarSuitLayer({ suit = "classic" }: { suit?: string }) {
+  // Chuu K-Pop Idol Outfit (Pastel Sailor Suit with Ribbon Brooch)
+  if (suit === "chuuIdol") {
+    return (
+      <g>
+        {/* Soft Coral/Peach Blazer Shoulders */}
+        <path d="M20 85 C20 66, 30 58, 50 58 C70 58, 80 66, 80 85 Z" fill="#fb7185" />
+        
+        {/* Crisp White Inner Shirt */}
+        <path d="M38 85 L38 68 L50 78 L62 68 L62 85 Z" fill="#ffffff" />
+        
+        {/* Cute Sailor Collar Wings */}
+        <polygon points="34,62 50,75 42,85 24,78" fill="#ffffff" opacity="0.95" />
+        <polygon points="66,62 50,75 58,85 76,78" fill="#ffffff" opacity="0.95" />
+        <line x1="30" y1="72" x2="44" y2="82" stroke="#fda4af" strokeWidth="1" />
+        <line x1="70" y1="72" x2="56" y2="82" stroke="#fda4af" strokeWidth="1" />
+
+        {/* Strawberry Ribbon Bow & Golden Heart Brooch */}
+        <path d="M46 72 L42 68 L42 74 Z" fill="#f43f5e" />
+        <path d="M54 72 L58 68 L58 74 Z" fill="#f43f5e" />
+        <circle cx="50" cy="71" r="2.5" fill="#facc15" stroke="#eab308" strokeWidth="0.5" />
+
+        {/* Head Base */}
+        <circle cx="50" cy="42" r="19" fill="#fdedd3" />
+      </g>
+    );
+  }
+
   if (suit === "spiderSuit") {
     return (
       <g>

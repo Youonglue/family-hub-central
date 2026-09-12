@@ -10,7 +10,7 @@ import {
   HairStyle, 
   AccessoryType 
 } from "./Avatar";
-import { Check, ArrowLeft, Sparkles, Shield, Smile, Wand2 } from "lucide-react";
+import { Check, ArrowLeft, Sparkles, Shield, Smile, Wand2, Heart } from "lucide-react";
 
 interface Props {
   initialConfig?: AvatarConfig;
@@ -23,6 +23,10 @@ export function AvatarCustomizer({ initialConfig, onSave, onClose }: Props) {
   const [activeTab, setActiveTab] = useState<"backdrops" | "suits" | "faces" | "hair" | "gear">("backdrops");
 
   // --- THEMED OPTIONS ---
+  const loonaBackdrops: { id: BackdropTheme; label: string; previewColor: string }[] = [
+    { id: "chuuPeach", label: "LOONA Moon 🌙", previewColor: "#fb7185" },
+  ];
+
   const marvelBackdrops: { id: BackdropTheme; label: string; previewColor: string }[] = [
     { id: "spiderVerse", label: "Spider-Verse", previewColor: "#831843" },
     { id: "starkTech", label: "Stark Tech", previewColor: "#0369a1" },
@@ -43,6 +47,7 @@ export function AvatarCustomizer({ initialConfig, onSave, onClose }: Props) {
 
   const heroSuits: { id: HeroSuit; label: string }[] = [
     { id: "classic", label: "Classic Hero" },
+    { id: "chuuIdol", label: "🎀 Chuu Idol Sailor" },
     { id: "spiderSuit", label: "🕷️ Web Slinger" },
     { id: "ironArmor", label: "⚡ Iron Armor" },
     { id: "blueyPup", label: "🐶 Bluey Heeler" },
@@ -50,6 +55,7 @@ export function AvatarCustomizer({ initialConfig, onSave, onClose }: Props) {
   ];
 
   const faceOptions: { id: FaceExpression; label: string }[] = [
+    { id: "chuuWink", label: "😉 Chuu Idol Wink" },
     { id: "happy", label: "😊 Happy" },
     { id: "playful", label: "😜 Playful" },
     { id: "determined", label: "😤 Fierce" },
@@ -59,6 +65,7 @@ export function AvatarCustomizer({ initialConfig, onSave, onClose }: Props) {
   ];
 
   const hairOptions: { id: HairStyle; label: string }[] = [
+    { id: "chuuPigtails", label: "🎀 Chuu Ribbon Pigtails" },
     { id: "none", label: "None" },
     { id: "blueyEars", label: "🐶 Bluey Ears" },
     { id: "bingoEars", label: "🐾 Bingo Ears" },
@@ -71,6 +78,7 @@ export function AvatarCustomizer({ initialConfig, onSave, onClose }: Props) {
   ];
 
   const accessoryOptions: { id: AccessoryType; label: string }[] = [
+    { id: "chuuHeart", label: "💖 Chuu Apple Heart" },
     { id: "none", label: "None" },
     { id: "magicWand", label: "🪄 Featherwand" },
     { id: "webShooter", label: "🕸️ Web Blast" },
@@ -89,18 +97,18 @@ export function AvatarCustomizer({ initialConfig, onSave, onClose }: Props) {
         <div className="flex items-center gap-3">
           <button 
             onClick={onClose} 
-            className="size-10 sm:size-11 rounded-2xl bg-slate-50 hover:bg-slate-100 flex items-center justify-center text-slate-500 cursor-pointer min-h-[44px] min-w-[44px]"
+            className="size-10 sm:size-11 rounded-2xl bg-slate-50 hover:bg-slate-100 flex items-center justify-center text-slate-500 cursor-pointer min-h-[44px] min-w-[44px] active:scale-95"
             aria-label="Back"
           >
             <ArrowLeft className="size-5" />
           </button>
           <div>
             <h2 className="text-xl sm:text-2xl font-black uppercase italic tracking-tight text-slate-900">Hero Customizer</h2>
-            <p className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-widest">Choose Marvel, Bluey & Superhero Styles</p>
+            <p className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-widest">K-Pop, Marvel, Bluey & Superhero Styles</p>
           </div>
         </div>
 
-        <span className="bg-indigo-50 text-indigo-600 text-[10px] font-black uppercase px-3 py-1.5 rounded-xl flex items-center gap-1">
+        <span className="bg-pink-50 text-pink-600 text-[10px] font-black uppercase px-3 py-1.5 rounded-xl flex items-center gap-1">
           <Sparkles size={12} /> Offline
         </span>
       </div>
@@ -110,7 +118,7 @@ export function AvatarCustomizer({ initialConfig, onSave, onClose }: Props) {
         
         {/* Large SVG Preview Column */}
         <div className="md:col-span-4 flex flex-col items-center justify-center gap-3 bg-slate-50 p-4 sm:p-6 rounded-3xl border border-slate-100">
-          <Avatar config={current} className="size-36 sm:size-48" />
+          <Avatar config={current} className="size-36 sm:size-48 shadow-md" />
           <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest bg-white px-3 py-1 rounded-full shadow-sm">
             Live Preview
           </span>
@@ -125,16 +133,16 @@ export function AvatarCustomizer({ initialConfig, onSave, onClose }: Props) {
               { id: "backdrops", label: "Backdrops 🎨", icon: Wand2 },
               { id: "suits", label: "Suit 🦸", icon: Shield },
               { id: "faces", label: "Face 😊", icon: Smile },
-              { id: "hair", label: "Hair & Ears 🐶", icon: Sparkles },
-              { id: "gear", label: "Gear ⚔️", icon: Wand2 },
+              { id: "hair", label: "Hair & Ears 🎀", icon: Sparkles },
+              { id: "gear", label: "Gear 💖", icon: Heart },
             ].map((tab) => (
               <button
                 key={tab.id}
                 type="button"
                 onClick={() => setActiveTab(tab.id as any)}
-                className={`px-3.5 py-2 rounded-xl text-[10px] sm:text-xs font-black uppercase tracking-wider transition-all whitespace-nowrap min-h-[40px] cursor-pointer ${
+                className={`px-3.5 py-2 rounded-xl text-[10px] sm:text-xs font-black uppercase tracking-wider transition-all whitespace-nowrap min-h-[40px] cursor-pointer touch-manipulation ${
                   activeTab === tab.id 
-                    ? "bg-slate-900 text-white shadow-md" 
+                    ? "bg-slate-900 text-white shadow-md scale-105" 
                     : "bg-slate-100 text-slate-500 hover:bg-slate-200"
                 }`}
               >
@@ -145,10 +153,37 @@ export function AvatarCustomizer({ initialConfig, onSave, onClose }: Props) {
 
           <div className="max-h-[300px] sm:max-h-[340px] overflow-y-auto pr-1 space-y-4 scrollbar-thin">
             
-            {/* TAB 1: BACKDROPS (Marvel, Bluey & Classic) */}
+            {/* TAB 1: BACKDROPS */}
             {activeTab === "backdrops" && (
               <div className="space-y-4">
                 
+                {/* LOONA / Chuu Backdrops */}
+                <div className="space-y-1.5">
+                  <h4 className="text-[10px] font-black uppercase tracking-widest text-pink-600 flex items-center gap-1">
+                    🌙 LOONA Universe
+                  </h4>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {loonaBackdrops.map((b) => (
+                      <button
+                        key={b.id}
+                        type="button"
+                        onClick={() => setCurrent({ ...current, bg: b.id })}
+                        className={`p-2.5 rounded-2xl border-2 flex items-center justify-between transition-all cursor-pointer min-h-[44px] touch-manipulation ${
+                          current.bg === b.id 
+                            ? "border-pink-600 bg-pink-50 shadow-sm" 
+                            : "border-slate-100 bg-white hover:bg-slate-50"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="size-4 rounded-full" style={{ backgroundColor: b.previewColor }} />
+                          <span className="text-[10px] font-black uppercase text-slate-800">{b.label}</span>
+                        </div>
+                        {current.bg === b.id && <Check size={14} className="text-pink-600" />}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
                 {/* Marvel Backdrops */}
                 <div className="space-y-1.5">
                   <h4 className="text-[10px] font-black uppercase tracking-widest text-indigo-600">Marvel Universes</h4>
@@ -158,7 +193,7 @@ export function AvatarCustomizer({ initialConfig, onSave, onClose }: Props) {
                         key={b.id}
                         type="button"
                         onClick={() => setCurrent({ ...current, bg: b.id })}
-                        className={`p-2.5 rounded-2xl border-2 flex items-center justify-between transition-all cursor-pointer min-h-[44px] ${
+                        className={`p-2.5 rounded-2xl border-2 flex items-center justify-between transition-all cursor-pointer min-h-[44px] touch-manipulation ${
                           current.bg === b.id 
                             ? "border-indigo-600 bg-indigo-50 shadow-sm" 
                             : "border-slate-100 bg-white hover:bg-slate-50"
@@ -183,7 +218,7 @@ export function AvatarCustomizer({ initialConfig, onSave, onClose }: Props) {
                         key={b.id}
                         type="button"
                         onClick={() => setCurrent({ ...current, bg: b.id })}
-                        className={`p-2.5 rounded-2xl border-2 flex items-center justify-between transition-all cursor-pointer min-h-[44px] ${
+                        className={`p-2.5 rounded-2xl border-2 flex items-center justify-between transition-all cursor-pointer min-h-[44px] touch-manipulation ${
                           current.bg === b.id 
                             ? "border-sky-600 bg-sky-50 shadow-sm" 
                             : "border-slate-100 bg-white hover:bg-slate-50"
@@ -231,7 +266,7 @@ export function AvatarCustomizer({ initialConfig, onSave, onClose }: Props) {
                     key={s.id}
                     type="button"
                     onClick={() => setCurrent({ ...current, suit: s.id })}
-                    className={`p-3 rounded-2xl border-2 flex items-center justify-between transition-all cursor-pointer min-h-[44px] ${
+                    className={`p-3 rounded-2xl border-2 flex items-center justify-between transition-all cursor-pointer min-h-[44px] touch-manipulation ${
                       (current.suit || "classic") === s.id
                         ? "bg-slate-900 text-white border-slate-900 shadow-md"
                         : "bg-slate-50 text-slate-700 border-slate-100 hover:bg-slate-100"
@@ -252,7 +287,7 @@ export function AvatarCustomizer({ initialConfig, onSave, onClose }: Props) {
                     key={face.id}
                     type="button"
                     onClick={() => setCurrent({ ...current, face: face.id })}
-                    className={`p-3 rounded-2xl border-2 flex items-center justify-between transition-all cursor-pointer min-h-[44px] ${
+                    className={`p-3 rounded-2xl border-2 flex items-center justify-between transition-all cursor-pointer min-h-[44px] touch-manipulation ${
                       current.face === face.id
                         ? "bg-slate-900 text-white border-slate-900 shadow-md"
                         : "bg-slate-50 text-slate-700 border-slate-100 hover:bg-slate-100"
@@ -273,7 +308,7 @@ export function AvatarCustomizer({ initialConfig, onSave, onClose }: Props) {
                     key={hair.id}
                     type="button"
                     onClick={() => setCurrent({ ...current, hair: hair.id })}
-                    className={`p-3 rounded-2xl border-2 flex items-center justify-between transition-all cursor-pointer min-h-[44px] ${
+                    className={`p-3 rounded-2xl border-2 flex items-center justify-between transition-all cursor-pointer min-h-[44px] touch-manipulation ${
                       current.hair === hair.id
                         ? "bg-slate-900 text-white border-slate-900 shadow-md"
                         : "bg-slate-50 text-slate-700 border-slate-100 hover:bg-slate-100"
@@ -294,7 +329,7 @@ export function AvatarCustomizer({ initialConfig, onSave, onClose }: Props) {
                     key={acc.id}
                     type="button"
                     onClick={() => setCurrent({ ...current, accessory: acc.id })}
-                    className={`p-3 rounded-2xl border-2 flex items-center justify-between transition-all cursor-pointer min-h-[44px] ${
+                    className={`p-3 rounded-2xl border-2 flex items-center justify-between transition-all cursor-pointer min-h-[44px] touch-manipulation ${
                       current.accessory === acc.id
                         ? "bg-slate-900 text-white border-slate-900 shadow-md"
                         : "bg-slate-50 text-slate-700 border-slate-100 hover:bg-slate-100"
@@ -317,7 +352,7 @@ export function AvatarCustomizer({ initialConfig, onSave, onClose }: Props) {
       <button
         type="button"
         onClick={() => onSave(current)}
-        className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white rounded-2xl font-black text-xs sm:text-sm uppercase tracking-widest shadow-xl transition-all cursor-pointer min-h-[48px] flex items-center justify-center gap-2"
+        className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white rounded-2xl font-black text-xs sm:text-sm uppercase tracking-widest shadow-xl transition-all cursor-pointer min-h-[48px] flex items-center justify-center gap-2 touch-manipulation"
       >
         <Check size={18} /> LOCK IN NEW LOOK
       </button>

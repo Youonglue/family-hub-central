@@ -61,7 +61,7 @@ export default async function choreRoutes(app: any, opts: any) {
     injectChore("is_boss", "INTEGER DEFAULT 0");
     injectChore("is_coop", "INTEGER DEFAULT 0");
     injectChore("member_id", "TEXT");
-    injectChore("member_ids", "TEXT"); // Stores JSON array of multiple assigned heroes
+    injectChore("member_ids", "TEXT");
     injectChore("category", "TEXT DEFAULT 'General'");
 
     const injectComp = (col: string, type: string) => {
@@ -109,14 +109,26 @@ export default async function choreRoutes(app: any, opts: any) {
     }
   };
 
-  // 1. GET CHORES (Supports filtering by memberId and multi-hero assignments)
+  // Helper to count pending submissions for a hero on a chore within 3 hours
+  const getPendingSubmissionCount = (choreId: string, memberId: string) => {
+    const res = db.prepare(`
+      SELECT COUNT(*) as n
+      FROM chore_completions
+      WHERE chore_id = ?
+        AND member_id = ?
+        AND status = 'pending'
+        AND completed_at > datetime('now', '-3 hours')
+    `).get(choreId, memberId) as any;
+    return res?.n || 0;
+  };
+
+  // 1. GET CHORES
   app.get("/", async (req: any, reply: any) => {
     try {
       ensureTablesExist();
       const { memberId } = req.query || {};
 
       if (memberId) {
-        // Returns chores assigned directly to this hero (single or multi-assigned) OR explicit Co-Op quests
         return db.prepare(`
           SELECT c.*, m.name as assigned_member_name 
           FROM chores c
@@ -131,7 +143,6 @@ export default async function choreRoutes(app: any, opts: any) {
         `).all(memberId, memberId);
       }
 
-      // Admin View: Return all templates and assigned chores
       return db.prepare(`
         SELECT c.*, m.name as assigned_member_name 
         FROM chores c
@@ -145,14 +156,13 @@ export default async function choreRoutes(app: any, opts: any) {
     }
   });
 
-  // 2. ADD CHORE (Supports multi-hero assignment array)
+  // 2. ADD CHORE
   app.post("/", async (req: any) => {
     ensureTablesExist();
     const { title, points, xp, is_boss, is_coop, member_id, member_ids, category } = req.body;
     const finalPoints = parseInt(points) || 10;
     const finalXp = xp !== undefined && xp !== "" ? (parseInt(xp) || 0) : finalPoints;
     
-    // Support either a single member_id or an array of member_ids
     let singleMember: string | null = null;
     let jsonMemberIds: string | null = null;
 
@@ -297,20 +307,78 @@ export default async function choreRoutes(app: any, opts: any) {
     return { success: true };
   });
 
-  // 6. COMPLETE CHORE
-  app.post("/:id/complete", async (req: any) => {
-    ensureTablesExist();
-    const chore = db.prepare("SELECT points, xp, is_boss, is_coop FROM chores WHERE id = ?").get(req.params.id) as any;
-    const basePoints = chore.points || 0;
-    const baseXp = chore.xp !== null && chore.xp !== undefined ? chore.xp : basePoints;
+  // 6. COMPLETE CHORE (Max 3 Quick Submissions Allowed, Blocks 4th until approved or 3h passes)
+  app.post("/:id/complete", async (req: any, reply: any) => {
+    try {
+      ensureTablesExist();
+      const chore = db.prepare("SELECT points, xp, is_boss, is_coop FROM chores WHERE id = ?").get(req.params.id) as any;
+      if (!chore) return reply.code(404).send({ error: "Quest not found" });
 
-    db.prepare(`
-      INSERT INTO chore_completions (id, chore_id, member_id, points_awarded, xp_awarded, status, completed_at) 
-      VALUES (?, ?, ?, ?, ?, 'pending', datetime('now'))
-    `).run(randomUUID(), req.params.id, req.body.member_id, basePoints, baseXp);
-    
-    broadcast("completions"); 
-    return { success: true };
+      const basePoints = chore.points || 0;
+      const baseXp = chore.xp !== null && chore.xp !== undefined ? chore.xp : basePoints;
+
+      const { member_id, member_ids } = req.body;
+
+      // CO-OP QUEST VALIDATION: 2+ Heroes, Max 3 Submissions per Hero in 3 Hours
+      if (chore.is_coop === 1) {
+        const rawIds = Array.isArray(member_ids) 
+          ? member_ids 
+          : [member_id].filter(Boolean);
+        
+        const uniqueIds = Array.from(new Set(rawIds.map((id: any) => String(id).trim()))).filter(Boolean);
+
+        if (uniqueIds.length < 2) {
+          return reply.code(400).send({ 
+            error: "Co-Op quests require a minimum of 2 different heroes to complete!" 
+          });
+        }
+
+        // Verify none of the heroes have exceeded 3 pending submissions
+        for (const mId of uniqueIds) {
+          const count = getPendingSubmissionCount(req.params.id, mId);
+          if (count >= 3) {
+            const member = db.prepare("SELECT name FROM family_members WHERE id = ?").get(mId) as any;
+            return reply.code(429).send({ 
+              error: `"${member?.name || 'A hero'}" has reached the limit of 3 submissions for this quest! Awaiting parent approval.` 
+            });
+          }
+        }
+
+        db.transaction(() => {
+          for (const mId of uniqueIds) {
+            db.prepare(`
+              INSERT INTO chore_completions (id, chore_id, member_id, points_awarded, xp_awarded, status, completed_at) 
+              VALUES (?, ?, ?, ?, ?, 'pending', datetime('now'))
+            `).run(randomUUID(), req.params.id, mId, basePoints, baseXp);
+          }
+        })();
+
+        broadcast("completions"); 
+        return { success: true, count: uniqueIds.length };
+      }
+
+      // STANDARD SINGLE QUEST VALIDATION: Max 3 Pending Submissions in 3 Hours
+      const singleId = member_id || (Array.isArray(member_ids) ? member_ids[0] : null);
+      if (!singleId) return reply.code(400).send({ error: "No hero specified" });
+
+      const pendingCount = getPendingSubmissionCount(req.params.id, singleId);
+      if (pendingCount >= 3) {
+        return reply.code(429).send({ 
+          error: "Maximum 3 submissions reached for this quest! Awaiting parent approval." 
+        });
+      }
+
+      db.prepare(`
+        INSERT INTO chore_completions (id, chore_id, member_id, points_awarded, xp_awarded, status, completed_at) 
+        VALUES (?, ?, ?, ?, ?, 'pending', datetime('now'))
+      `).run(randomUUID(), req.params.id, singleId, basePoints, baseXp);
+      
+      broadcast("completions"); 
+      return { success: true, pendingCount: pendingCount + 1 };
+    } catch (error) {
+      console.error("❌ COMPLETE CHORE ERROR:", error);
+      return reply.code(500).send({ error: (error as Error).message });
+    }
   });
 
   // 7. GET PENDING APPROVALS

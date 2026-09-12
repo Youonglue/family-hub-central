@@ -2,7 +2,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useMemo } from "react";
 import { toast } from "sonner";
-import { ArrowLeft, ShieldCheck, Flame, Sword, Users, Star, Sparkles } from "lucide-react";
+import { ArrowLeft, ShieldCheck, Flame, Sword, Users, Star, Sparkles, Check, X, AlertCircle, AlertTriangle } from "lucide-react";
 import { Avatar, parseAvatarConfig } from "@/components/avatar/Avatar";
 
 interface ChoreActiveDashboardProps {
@@ -22,12 +22,23 @@ export function ChoreActiveDashboard({
 }: ChoreActiveDashboardProps) {
   const qc = useQueryClient();
 
-  // DEFAULT: "mine" shows only this hero's assigned tasks (Co-Op separated into its own filter!)
   const [activeTab, setActiveTab] = useState<"mine" | "coop" | "all">("mine");
+
+  // Co-Op Party Modal State
+  const [selectedCoopChore, setSelectedCoopChore] = useState<any | null>(null);
+  const [coopParticipants, setCoopParticipants] = useState<string[]>([]);
+
+  // Repeat Confirmation Modal State
+  const [confirmingRepeat, setConfirmingRepeat] = useState<{ chore: any; pendingCount: number } | null>(null);
 
   const chores = useQuery({ 
     queryKey: ["chores", activeMember?.id], 
     queryFn: () => fetch(`/api/chores?memberId=${activeMember.id}`).then(res => res.json()) 
+  });
+
+  const pendingApprovals = useQuery({
+    queryKey: ["pending-approvals"],
+    queryFn: () => fetch('/api/chores/completions/pending').then(res => res.json())
   });
   
   const pointsData = useQuery({ 
@@ -56,35 +67,98 @@ export function ChoreActiveDashboard({
   }, [memberRecord]);
 
   const completeChore = useMutation({
-    mutationFn: (id: string) => fetch(`/api/chores/${id}/complete`, { 
+    mutationFn: ({ choreId, memberIds }: { choreId: string; memberIds: string[] }) => 
+      fetch(`/api/chores/${choreId}/complete`, { 
         method: "POST", 
         headers: { "Content-Type": "application/json" }, 
-        body: JSON.stringify({ member_id: activeMember.id }) 
-    }).then(res => res.json()),
-    onSuccess: () => { 
-        toast.success("Quest Submitted! Waiting for parent approval. ⭐"); 
-        qc.invalidateQueries({ queryKey: ["pending-approvals"] }); 
+        body: JSON.stringify({ 
+          member_id: activeMember.id,
+          member_ids: memberIds
+        }) 
+      }).then(async (res) => {
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || "Failed to submit quest");
+        }
+        return res.json();
+      }),
+    onSuccess: (_, vars) => { 
+      if (vars.memberIds.length > 1) {
+        toast.success(`Co-Op Quest Submitted for ${vars.memberIds.length} Heroes! Awaiting approval. 👥`, { position: "top-center" });
+      } else {
+        toast.success("Quest Submitted! Awaiting parent approval. ⭐", { position: "top-center" });
+      }
+      setSelectedCoopChore(null);
+      setCoopParticipants([]);
+      setConfirmingRepeat(null);
+      qc.invalidateQueries({ queryKey: ["pending-approvals"] }); 
+    },
+    onError: (err: any) => {
+      toast.error(err.message || "Failed to submit quest");
     }
   });
 
   const rawChoreList = Array.isArray(chores.data) ? chores.data : [];
+  const pendingList = Array.isArray(pendingApprovals.data) ? pendingApprovals.data : [];
 
-  // FILTER LOGIC: Default to personal chores only, with separate Co-Op view!
+  // Count pending submissions for a chore within 3 hours
+  const getChorePendingCount = (choreId: string) => {
+    return pendingList.filter((p: any) => {
+      if (p.chore_id !== choreId || p.member_id !== activeMember.id) return false;
+      const completedTime = new Date(p.completed_at || Date.now()).getTime();
+      return Date.now() - completedTime < 3 * 60 * 60 * 1000;
+    }).length;
+  };
+
   const filteredChores = useMemo(() => {
-    if (activeTab === "mine") {
-      // Personal assigned chores only (not Co-Op)
-      return rawChoreList.filter((c: any) => c.is_coop !== 1);
-    }
-    if (activeTab === "coop") {
-      // Co-Op quests only
-      return rawChoreList.filter((c: any) => c.is_coop === 1);
-    }
-    // All
+    if (activeTab === "mine") return rawChoreList.filter((c: any) => c.is_coop !== 1);
+    if (activeTab === "coop") return rawChoreList.filter((c: any) => c.is_coop === 1);
     return rawChoreList;
   }, [rawChoreList, activeTab]);
 
   const personalCount = rawChoreList.filter((c: any) => c.is_coop !== 1).length;
   const coopCount = rawChoreList.filter((c: any) => c.is_coop === 1).length;
+
+  const eligibleHeroes = useMemo(() => {
+    const list = Array.isArray(pointsData.data) ? pointsData.data : [];
+    return list.filter((m: any) => m.show_on_chores !== 0 && m.is_kid !== 0);
+  }, [pointsData.data]);
+
+  const handleQuestCardClick = (c: any) => {
+    if (c.is_coop === 1) {
+      setSelectedCoopChore(c);
+      setCoopParticipants([activeMember.id]);
+      return;
+    }
+
+    const count = getChorePendingCount(c.id);
+
+    // Hard lock if already submitted 3 times
+    if (count >= 3) {
+      toast.error("Maximum 3 submissions reached for this quest! Awaiting parent approval.", { position: "top-center" });
+      return;
+    }
+
+    // If submitted 1 or 2 times, prompt confirmation to avoid accidental double-clicks!
+    if (count >= 1) {
+      setConfirmingRepeat({ chore: c, pendingCount: count });
+      return;
+    }
+
+    // First submission: direct submit
+    completeChore.mutate({ choreId: c.id, memberIds: [activeMember.id] });
+  };
+
+  const handleToggleCoopHero = (heroId: string) => {
+    if (heroId === activeMember.id) return;
+    setCoopParticipants((prev) => {
+      const exists = prev.includes(heroId);
+      const updated = exists ? prev.filter((id) => id !== heroId) : [...prev, heroId];
+      return Array.from(new Set(updated));
+    });
+  };
+
+  const hasMinimumCoopHeroes = coopParticipants.length >= 2;
 
   return (
     <div className="space-y-4 sm:space-y-6 md:space-y-8 animate-in slide-in-from-bottom-5 duration-300 safe-area-inset-bottom">
@@ -117,7 +191,6 @@ export function ChoreActiveDashboard({
 
       {/* HERO CHARACTER DETAILS PANEL */}
       <div className="bg-white p-4 sm:p-6 md:p-8 lg:p-10 rounded-3xl sm:rounded-[3.5rem] shadow-xl border-2 sm:border-4 border-slate-50 flex flex-col md:flex-row items-center gap-4 sm:gap-6 md:gap-8 relative overflow-hidden">
-         
          <div className="relative shrink-0">
            <Avatar 
              config={avatarConfig} 
@@ -168,7 +241,6 @@ export function ChoreActiveDashboard({
 
       {/* CO-OP SEPARATION FILTER BAR */}
       <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none select-none">
-        {/* Default: Personal Quests Only */}
         <button
           type="button"
           onClick={() => setActiveTab("mine")}
@@ -181,7 +253,6 @@ export function ChoreActiveDashboard({
           <Star size={13} className="text-yellow-400 fill-yellow-400" /> My Quests ({personalCount})
         </button>
 
-        {/* Co-Op Quests Toggle */}
         <button
           type="button"
           onClick={() => setActiveTab("coop")}
@@ -194,7 +265,6 @@ export function ChoreActiveDashboard({
           <Users size={13} /> 👥 Co-Op Quests ({coopCount})
         </button>
 
-        {/* View All */}
         <button
           type="button"
           onClick={() => setActiveTab("all")}
@@ -227,16 +297,24 @@ export function ChoreActiveDashboard({
            const basePts = c.points || 0;
            const baseXp = c.xp !== null && c.xp !== undefined ? c.xp : basePts;
 
-           // Boss: 3x Points & 1x XP; Co-Op: 2x Points & 2x XP
            const displayPts = isBoss ? basePts * 3 : isCoop ? basePts * 2 : basePts;
            const displayXp = isBoss ? baseXp : isCoop ? baseXp * 2 : baseXp;
+
+           const pendingCount = getChorePendingCount(c.id);
+           const isMaxReached = pendingCount >= 3;
+           const isPendingOnceOrTwice = pendingCount >= 1 && pendingCount < 3;
 
            return (
              <button 
                key={c.id} 
-               onClick={() => completeChore.mutate(c.id)} 
+               onClick={() => handleQuestCardClick(c)} 
+               disabled={completeChore.isPending || isMaxReached}
                className={`group p-4 sm:p-6 lg:p-7 rounded-2xl sm:rounded-3xl lg:rounded-[3rem] border-2 sm:border-4 text-left shadow-md hover:shadow-xl transition-all flex flex-col justify-between min-h-[170px] sm:min-h-[190px] h-auto cursor-pointer select-none active:scale-[0.98] min-w-0 ${
-                 isBoss 
+                 isMaxReached
+                   ? 'bg-slate-100/80 border-slate-300 opacity-60 cursor-not-allowed'
+                   : isPendingOnceOrTwice
+                   ? 'bg-amber-50/70 border-amber-300 ring-2 ring-amber-400/20'
+                   : isBoss 
                    ? 'bg-rose-50 border-rose-300 ring-2 sm:ring-4 ring-rose-500/10 hover:border-rose-500' 
                    : isCoop 
                    ? 'bg-indigo-50/50 border-indigo-200 ring-2 sm:ring-4 ring-indigo-500/10 hover:border-indigo-400' 
@@ -246,7 +324,7 @@ export function ChoreActiveDashboard({
                 {/* Card Header Row */}
                 <div className="flex justify-between items-start gap-2.5 sm:gap-3 w-full">
                    <div className={`p-2.5 sm:p-3.5 rounded-2xl group-hover:rotate-6 transition-transform shadow-sm shrink-0 ${
-                     isBoss ? 'bg-rose-100 text-rose-600' : isCoop ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-50 text-slate-800'
+                     isMaxReached ? 'bg-slate-200 text-slate-500' : isPendingOnceOrTwice ? 'bg-amber-100 text-amber-700' : isBoss ? 'bg-rose-100 text-rose-600' : isCoop ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-50 text-slate-800'
                    }`}>
                        <Sword size={22} className="sm:size-[26px]" />
                    </div>
@@ -258,14 +336,26 @@ export function ChoreActiveDashboard({
                        +{displayPts} PTS • +{displayXp} XP
                      </div>
                      
-                     {/* Multiplier Badges */}
-                     {isBoss && (
+                     {/* Pending / Max Status Badges */}
+                     {isMaxReached && (
+                       <span className="px-2 py-0.5 bg-slate-200 text-slate-700 text-[8px] sm:text-[9px] font-black uppercase tracking-wider rounded-md border border-slate-300 whitespace-nowrap">
+                         🚫 Max 3 Submissions
+                       </span>
+                     )}
+
+                     {!isMaxReached && isPendingOnceOrTwice && (
+                       <span className="px-2 py-0.5 bg-amber-100 text-amber-800 text-[8px] sm:text-[9px] font-black uppercase tracking-wider rounded-md border border-amber-300 whitespace-nowrap">
+                         ⏳ {pendingCount}/3 Pending Approval
+                       </span>
+                     )}
+
+                     {!isPendingOnceOrTwice && !isMaxReached && isBoss && (
                        <span className="px-2 py-0.5 bg-rose-100 text-rose-700 text-[8px] sm:text-[9px] font-black uppercase tracking-wider rounded-lg border border-rose-300 animate-pulse whitespace-nowrap">
                          💀 BOSS 3x
                        </span>
                      )}
 
-                     {isCoop && (
+                     {!isPendingOnceOrTwice && !isMaxReached && isCoop && (
                        <span className="px-2 py-0.5 bg-indigo-100 text-indigo-700 text-[8px] sm:text-[9px] font-black uppercase tracking-wider rounded-lg border border-indigo-300 whitespace-nowrap">
                          👥 CO-OP 2x
                        </span>
@@ -279,15 +369,198 @@ export function ChoreActiveDashboard({
                     {c.title}
                   </h4>
                   <p className={`font-black uppercase text-[9px] sm:text-[10px] tracking-wider group-hover:translate-x-1.5 transition-transform mt-1 shrink-0 ${
-                    isBoss ? 'text-rose-600' : isCoop ? 'text-indigo-600' : 'text-indigo-500'
+                    isMaxReached 
+                      ? 'text-slate-400' 
+                      : isPendingOnceOrTwice 
+                      ? 'text-amber-700' 
+                      : isBoss 
+                      ? 'text-rose-600' 
+                      : isCoop 
+                      ? 'text-indigo-600' 
+                      : 'text-indigo-500'
                   }`}>
-                    Begin Quest →
+                    {isMaxReached 
+                      ? "Awaiting Parent Approval ⏳" 
+                      : isPendingOnceOrTwice 
+                      ? "Tap to Submit Again →" 
+                      : isCoop 
+                      ? "Assemble Crew (2+ Heroes) →" 
+                      : "Begin Quest →"}
                   </p>
                 </div>
              </button>
            );
          })}
       </div>
+
+      {/* REPEAT CONFIRMATION MODAL (Prevents Accidental Double-Clicks) */}
+      {confirmingRepeat && (
+        <div 
+          className="fixed inset-0 z-[100] grid place-items-center bg-slate-950/70 backdrop-blur-md p-4"
+          onClick={() => setConfirmingRepeat(null)}
+        >
+          <div 
+            className="w-full max-w-md bg-white rounded-3xl sm:rounded-[3.5rem] p-5 sm:p-8 shadow-2xl border-4 sm:border-8 border-amber-100 text-center animate-in zoom-in-95 duration-200 my-auto"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="size-14 sm:size-16 bg-amber-100 text-amber-700 rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-inner">
+              <AlertTriangle size={28} />
+            </div>
+
+            <h3 className="text-lg sm:text-2xl font-black uppercase italic tracking-tight text-slate-900 mb-1">
+              Submit Again?
+            </h3>
+            <p className="text-slate-500 font-bold text-xs mb-3">
+              "{confirmingRepeat.chore.title}"
+            </p>
+
+            <div className="p-3 bg-amber-50 rounded-2xl border border-amber-200 text-[11px] text-amber-800 font-bold mb-4 leading-relaxed text-left">
+              You already submitted this quest ({confirmingRepeat.pendingCount}/3 pending approval). Did you complete it again and want to submit another?
+            </div>
+
+            <div className="space-y-2">
+              <button
+                onClick={() => {
+                  completeChore.mutate({
+                    choreId: confirmingRepeat.chore.id,
+                    memberIds: [activeMember.id]
+                  });
+                }}
+                disabled={completeChore.isPending}
+                className="w-full py-3.5 bg-amber-500 hover:bg-amber-600 active:scale-95 text-white rounded-2xl font-black text-xs uppercase tracking-widest transition-all shadow-md cursor-pointer min-h-[44px]"
+              >
+                {completeChore.isPending 
+                  ? "Submitting..." 
+                  : `Yes, Submit Again (${confirmingRepeat.pendingCount + 1}/3)`}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setConfirmingRepeat(null)}
+                className="w-full py-2 text-[10px] font-black text-slate-400 uppercase tracking-widest hover:text-slate-600 transition-colors cursor-pointer"
+              >
+                Cancel (Keep Current)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CO-OP QUEST PARTY SELECTION MODAL */}
+      {selectedCoopChore && (
+        <div 
+          className="fixed inset-0 z-[100] grid place-items-center bg-slate-950/70 backdrop-blur-md p-4" 
+          onClick={() => { setSelectedCoopChore(null); setCoopParticipants([]); }}
+        >
+          <div 
+            className="w-full max-w-md bg-white rounded-3xl sm:rounded-[3.5rem] p-5 sm:p-8 shadow-2xl border-4 sm:border-8 border-indigo-50 text-center animate-in zoom-in-95 duration-200 my-auto" 
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="size-14 sm:size-16 bg-indigo-100 rounded-2xl flex items-center justify-center mx-auto mb-3 text-indigo-600 shadow-inner">
+              <Users size={28} />
+            </div>
+            
+            <h3 className="text-lg sm:text-2xl font-black uppercase italic tracking-tight text-slate-900 mb-1">
+              Assemble Co-Op Crew
+            </h3>
+            <p className="text-slate-500 font-bold text-[10px] uppercase tracking-widest mb-3">
+              "{selectedCoopChore.title}"
+            </p>
+
+            <div className={`p-2.5 rounded-xl border text-[10px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 mb-4 ${
+              hasMinimumCoopHeroes 
+                ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+                : "bg-amber-50 border-amber-200 text-amber-700"
+            }`}>
+              {hasMinimumCoopHeroes ? (
+                <>
+                  <Check size={14} className="text-emerald-600" /> Crew Ready: {coopParticipants.length} Heroes Selected
+                </>
+              ) : (
+                <>
+                  <AlertCircle size={14} className="text-amber-600" /> Minimum 2 Different Heroes Required
+                </>
+              )}
+            </div>
+
+            <div className="space-y-1.5 text-left mb-5">
+              <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider block ml-1">
+                Participating Heroes:
+              </span>
+
+              <div className="grid grid-cols-1 gap-2 max-h-[160px] overflow-y-auto pr-1">
+                {eligibleHeroes.map((m: any) => {
+                  const mId = m.member_id || m.id;
+                  const isCurrentActive = mId === activeMember.id;
+                  const isSelected = coopParticipants.includes(mId);
+                  const heroAvatar = parseAvatarConfig(m.avatar_config);
+
+                  return (
+                    <button
+                      type="button"
+                      key={mId}
+                      onClick={() => handleToggleCoopHero(mId)}
+                      className={`p-2.5 rounded-2xl border-2 flex items-center justify-between transition-all cursor-pointer min-h-[44px] ${
+                        isSelected 
+                          ? "border-indigo-600 bg-indigo-50/70 shadow-xs" 
+                          : "border-slate-100 bg-slate-50 hover:bg-slate-100"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <Avatar config={heroAvatar} className="size-7 rounded-lg shadow-xs" />
+                        <div>
+                          <span className="text-xs font-black uppercase text-slate-800 block leading-tight">
+                            {m.name}
+                          </span>
+                          {isCurrentActive && (
+                            <span className="text-[8px] font-bold text-indigo-600 uppercase">
+                              (Current Hero • Locked In)
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className={`size-6 rounded-lg border flex items-center justify-center ${
+                        isSelected ? "bg-indigo-600 border-indigo-600 text-white" : "border-slate-300 bg-white"
+                      }`}>
+                        {isSelected && <Check size={14} />}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <button
+                onClick={() => {
+                  if (hasMinimumCoopHeroes) {
+                    completeChore.mutate({
+                      choreId: selectedCoopChore.id,
+                      memberIds: coopParticipants
+                    });
+                  }
+                }}
+                disabled={!hasMinimumCoopHeroes || completeChore.isPending}
+                className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-2xl font-black text-xs uppercase tracking-widest transition-all shadow-xl cursor-pointer disabled:cursor-not-allowed min-h-[44px] flex items-center justify-center gap-2"
+              >
+                {completeChore.isPending 
+                  ? "Submitting Quest..." 
+                  : `Launch Co-Op Quest (${coopParticipants.length} Heroes)`}
+              </button>
+
+              <button 
+                type="button" 
+                onClick={() => { setSelectedCoopChore(null); setCoopParticipants([]); }}
+                className="text-[10px] font-black text-slate-400 uppercase tracking-widest hover:text-rose-600 transition-colors cursor-pointer p-2"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

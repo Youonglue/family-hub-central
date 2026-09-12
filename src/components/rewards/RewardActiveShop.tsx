@@ -13,18 +13,6 @@ interface RewardActiveShopProps {
   canAccessAdmin: boolean;
 }
 
-const EVENT_COLORS = ["sky", "rose", "amber", "emerald", "violet", "indigo", "cyan", "pink", "orange", "fuchsia", "lime", "teal"];
-
-const getQuestColor = (title: string): string => {
-  const colors = EVENT_COLORS.map(c => `var(--kid-${c})`);
-  let hash = 0;
-  for (let i = 0; i < title.length; i++) {
-    hash = title.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  const index = Math.abs(hash) % colors.length;
-  return colors[index];
-};
-
 export function RewardActiveShop({
   activeMember,
   onBack,
@@ -34,12 +22,11 @@ export function RewardActiveShop({
 }: RewardActiveShopProps) {
   const qc = useQueryClient();
 
-  // DEFAULT: "mine" shows only this hero's assigned rewards + family shared prizes
+  // DEFAULT: "mine" strictly shows rewards relevant to activeMember
   const [selectedFilter, setSelectedFilter] = useState<string>("mine");
   const [pooledContributors, setPooledContributors] = useState<Record<string, string[]>>({});
   const [confirmingPurchase, setConfirmingPurchase] = useState<{ reward: any, contributors: any[], splitCost: number } | null>(null);
 
-  // Queries all rewards for browsing
   const rewards = useQuery({ 
     queryKey: ["rewards"], 
     queryFn: () => fetch('/api/rewards').then(res => res.json()) 
@@ -123,33 +110,27 @@ export function RewardActiveShop({
     });
   }, [rawMemberList, activeMember.id]);
 
-  // Helper to check if a reward is assigned to a hero
   const isRewardAssignedToHero = (r: any, heroId: string) => {
     if (r.member_id === heroId) return true;
     if (r.member_ids) {
       try {
-        const ids = JSON.parse(r.member_ids);
+        const ids = typeof r.member_ids === "string" ? JSON.parse(r.member_ids) : r.member_ids;
         if (Array.isArray(ids) && ids.includes(heroId)) return true;
       } catch (e) {}
     }
     return false;
   };
 
-  // DYNAMIC REWARDS FILTERING (Default: ONLY this hero's assigned rewards + explicit shared)
   const filteredRewards = useMemo(() => {
     if (selectedFilter === "mine") {
-      // Personal assigned rewards + explicit Shared rewards ONLY (Unassigned templates are excluded!)
       return rewardList.filter((r: any) => isRewardAssignedToHero(r, activeMember.id) || r.is_shared === 1);
     }
     if (selectedFilter === "shared") {
-      // Only explicit Family Co-Op / Shared rewards
       return rewardList.filter((r: any) => r.is_shared === 1);
     }
     if (selectedFilter === "all") {
-      // View all active assigned or shared rewards
       return rewardList.filter((r: any) => r.member_id || (r.member_ids && r.member_ids !== "[]") || r.is_shared === 1);
     }
-    // Filter by specific sibling ID
     return rewardList.filter((r: any) => isRewardAssignedToHero(r, selectedFilter));
   }, [rewardList, selectedFilter, activeMember.id]);
 
@@ -182,7 +163,7 @@ export function RewardActiveShop({
         </div>
       </div>
 
-      {/* GIANT HIGH-CONTRAST POINTS BANNER */}
+      {/* POINTS BANNER */}
       <div className="bg-white p-4 sm:p-6 md:p-8 lg:p-10 rounded-3xl sm:rounded-[3rem] shadow-xl border-2 sm:border-4 border-slate-50 flex flex-col md:flex-row items-center gap-4 sm:gap-6 md:gap-8 relative overflow-hidden text-center md:text-left">
          <Avatar 
            config={avatarConfig} 
@@ -207,9 +188,8 @@ export function RewardActiveShop({
          </div>
       </div>
 
-      {/* DYNAMIC REWARD BROWSER & FILTER PILLS */}
+      {/* DYNAMIC REWARD BROWSER PILLS */}
       <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none select-none">
-        {/* Default Filter: Mine */}
         <button
           type="button"
           onClick={() => setSelectedFilter("mine")}
@@ -222,7 +202,6 @@ export function RewardActiveShop({
           <Star size={13} className="text-yellow-400 fill-yellow-400" /> My Rewards
         </button>
 
-        {/* Shared / Family Co-Op Filter */}
         <button
           type="button"
           onClick={() => setSelectedFilter("shared")}
@@ -235,7 +214,6 @@ export function RewardActiveShop({
           <Users size={13} /> 👥 Family Co-Op
         </button>
 
-        {/* Browse Siblings */}
         {eligibleSiblings.map((m: any) => {
           const mId = m.member_id || m.id;
           const isSelected = selectedFilter === mId;
@@ -258,7 +236,6 @@ export function RewardActiveShop({
           );
         })}
 
-        {/* View All Filter */}
         <button
           type="button"
           onClick={() => setSelectedFilter("all")}
@@ -272,20 +249,19 @@ export function RewardActiveShop({
         </button>
       </div>
 
-      {/* CATALOG GRID (Optimized with line-clamp-2 so text never bursts out of cards) */}
+      {/* CATALOG GRID: Clean Cards Without Annoying Colored Side-Borders */}
       <div className="grid gap-3 sm:gap-4 md:gap-6 grid-cols-1 sm:grid-cols-2">
          {filteredRewards.length === 0 && (
            <div className="col-span-full py-12 bg-white rounded-3xl border-2 border-dashed border-slate-100 text-center p-6">
              <p className="font-black uppercase tracking-wider text-slate-400 text-xs sm:text-sm">
                {selectedFilter === "mine" 
-                 ? `No rewards assigned to ${activeMember.name} yet. Ask an admin to assign goals in the Shop Customizer!` 
+                 ? `No rewards assigned to ${activeMember.name} yet. Customize rewards in the Admin Panel!` 
                  : "No rewards found in this section."}
              </p>
            </div>
          )}
 
          {filteredRewards.map((r: any) => {
-           const rewardColor = getQuestColor(r.title);
            const isPoolingActive = pooledContributors[r.id] !== undefined;
            const activeContributors = [activeMember.id, ...(pooledContributors[r.id] ?? [])];
            const splitCost = Math.ceil(r.points / activeContributors.length);
@@ -296,13 +272,14 @@ export function RewardActiveShop({
              return balance >= splitCost;
            });
 
+           const isAssignedToMe = isRewardAssignedToHero(r, activeMember.id);
+
            return (
              <div 
                key={r.id} 
-               className="bg-white p-4 sm:p-6 md:p-7 rounded-3xl sm:rounded-[3rem] border-2 sm:border-4 border-slate-50 shadow-md flex flex-col justify-between min-h-[260px] sm:min-h-[300px] h-auto relative group hover:shadow-xl transition-all"
-               style={{ borderLeftColor: rewardColor, borderLeftWidth: '10px' }}
+               className="bg-white p-4 sm:p-6 md:p-7 rounded-3xl sm:rounded-[3rem] border-2 border-slate-100 hover:border-indigo-200 shadow-md flex flex-col justify-between min-h-[260px] sm:min-h-[290px] h-auto relative group hover:shadow-xl transition-all"
              >
-               {/* Card Top: Icon, Badges, Points */}
+               {/* Card Top: Icon & Clean Badges */}
                <div className="flex justify-between items-start gap-3">
                  <div className="p-2.5 sm:p-3 bg-slate-50 rounded-2xl group-hover:rotate-6 transition-transform shadow-sm text-slate-800 shrink-0">
                      <Gift size={24} className="sm:size-7" />
@@ -313,21 +290,21 @@ export function RewardActiveShop({
                      {r.points} PTS
                    </div>
                    
-                   {/* Target Hero or Shared Badge */}
+                   {/* Clean Badges */}
                    <div>
                      {r.is_shared === 1 ? (
-                       <span className="px-2 py-0.5 bg-emerald-50 text-emerald-600 border border-emerald-200 text-[8px] sm:text-[9px] font-black uppercase rounded-md block">
+                       <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 text-[8px] sm:text-[9px] font-black uppercase rounded-md block">
                          Family Shared
                        </span>
+                     ) : isAssignedToMe ? (
+                       <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 border border-indigo-200 text-[8px] sm:text-[9px] font-black uppercase rounded-md block">
+                         ⭐ My Goal
+                       </span>
                      ) : r.assigned_member_name ? (
-                       <span className="px-2 py-0.5 bg-indigo-50 text-indigo-600 border border-indigo-200 text-[8px] sm:text-[9px] font-black uppercase rounded-md block">
+                       <span className="px-2 py-0.5 bg-slate-100 text-slate-600 border border-slate-200 text-[8px] sm:text-[9px] font-black uppercase rounded-md block">
                          {r.assigned_member_name}'s Goal
                        </span>
-                     ) : (
-                       <span className="px-2 py-0.5 bg-indigo-50 text-indigo-600 border border-indigo-200 text-[8px] sm:text-[9px] font-black uppercase rounded-md block">
-                         Hero Goal
-                       </span>
-                     )}
+                     ) : null}
                    </div>
 
                    {isPoolingActive && (
@@ -338,9 +315,10 @@ export function RewardActiveShop({
                  </div>
                </div>
                
-               {/* Card Bottom: Title with line-clamp-2, Pooling, Claim */}
-               <div className="space-y-3 mt-3 w-full min-w-0">
-                 <h4 className="text-base sm:text-lg md:text-xl font-black text-slate-800 leading-snug uppercase tracking-tight break-words line-clamp-2">
+               {/* Card Bottom: Full Title (No Cutoffs) & Actions */}
+               <div className="space-y-3 mt-3 w-full min-w-0 flex-1 flex flex-col justify-between">
+                 {/* FULLY READABLE TITLE: line-clamp removed so entire name wraps naturally */}
+                 <h4 className="text-base sm:text-lg md:text-xl font-black text-slate-800 leading-snug tracking-tight break-words">
                    {r.title}
                  </h4>
 

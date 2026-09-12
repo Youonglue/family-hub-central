@@ -1,6 +1,6 @@
 // src/components/kiosk/KioskPinPortal.tsx
 import React, { useState } from "react";
-import { ShieldCheck, RefreshCcw, X, KeyRound, UserPlus, Lock } from "lucide-react";
+import { ShieldCheck, RefreshCcw, X, KeyRound } from "lucide-react";
 import { toast } from "sonner";
 
 interface KioskPinPortalProps {
@@ -29,17 +29,17 @@ export function KioskPinPortal({
   isSubmittingPin,
   onClose
 }: KioskPinPortalProps) {
-  // Mode switcher: "pin" | "password" | "register"
-  const [authMode, setAuthMode] = useState<"pin" | "password" | "register">("pin");
+  // Mode switcher: "pin" | "password" (Account creation moved to Admin Settings only)
+  const [authMode, setAuthMode] = useState<"pin" | "password">("pin");
 
-  // Password / Register Form States
+  // Password Login State
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [isSubmittingForm, setIsSubmittingForm] = useState(false);
 
   const isSelectedAdminNeedsSetup = selectedAdmin && (!selectedAdmin.pin_hash || selectedAdmin.needs_pin_setup === 1);
 
-  // Handle Standard Password Login
+  // Handle Standard Password Login on Kiosk Bar
   const handlePasswordLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!username.trim() || !password) return;
@@ -65,35 +65,6 @@ export function KioskPinPortal({
     }
   };
 
-  // Handle New Account Creation
-  const handleRegisterAccount = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!username.trim() || password.length < 4) {
-      toast.error("Password must be at least 4 characters");
-      return;
-    }
-
-    setIsSubmittingForm(true);
-    try {
-      const res = await fetch("/api/auth/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: username.trim(), password })
-      });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Account creation failed");
-
-      toast.success("Admin Account Created! Please set your 6-digit PIN.", { position: "top-center" });
-      onClose();
-      window.location.reload();
-    } catch (err: any) {
-      toast.error(err.message || "Registration failed");
-    } finally {
-      setIsSubmittingForm(false);
-    }
-  };
-
   return (
     <div className="fixed inset-0 z-[10000] bg-slate-900/90 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
       <div className="w-full max-w-md bg-white rounded-3xl sm:rounded-[3.5rem] border-4 sm:border-8 border-slate-50 p-5 sm:p-8 shadow-2xl animate-in zoom-in-95 duration-200 relative my-auto max-h-[95vh] overflow-y-auto">
@@ -108,7 +79,7 @@ export function KioskPinPortal({
           <X size={18} />
         </button>
 
-        {/* 1. PASSWORD LOGIN MODE */}
+        {/* 1. PASSWORD LOGIN MODE (Accessible directly on Kiosk) */}
         {authMode === "password" ? (
           <form onSubmit={handlePasswordLogin} className="space-y-4 text-center py-2 animate-in fade-in duration-200">
             <div className="size-14 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-2">
@@ -149,76 +120,18 @@ export function KioskPinPortal({
               {isSubmittingForm ? "Signing in..." : "Sign In with Password"}
             </button>
 
-            <div className="flex items-center justify-between pt-2 border-t border-slate-100">
-              <button
-                type="button"
-                onClick={() => setAuthMode("pin")}
-                className="text-[10px] font-black uppercase tracking-wider text-indigo-600 hover:underline cursor-pointer"
-              >
-                ← Use 6-Digit PIN Pad
-              </button>
-              <button
-                type="button"
-                onClick={() => setAuthMode("register")}
-                className="text-[10px] font-black uppercase tracking-wider text-slate-400 hover:text-slate-700 cursor-pointer"
-              >
-                + Create Account
-              </button>
-            </div>
-          </form>
-        ) : authMode === "register" ? (
-          /* 2. CREATE NEW ACCOUNT MODE */
-          <form onSubmit={handleRegisterAccount} className="space-y-4 text-center py-2 animate-in fade-in duration-200">
-            <div className="size-14 bg-green-50 text-green-600 rounded-2xl flex items-center justify-center mx-auto mb-2">
-              <UserPlus size={28} />
-            </div>
-            <h3 className="text-2xl font-black uppercase italic tracking-tight text-slate-900">
-              Create Admin Account
-            </h3>
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-              Add a new family administrator
-            </p>
-
-            <div className="space-y-2.5 text-left pt-2">
-              <input
-                type="text"
-                required
-                value={username}
-                onChange={e => setUsername(e.target.value)}
-                placeholder="Choose Username"
-                className="w-full p-4 bg-slate-50 border-2 border-slate-200 rounded-2xl text-sm font-black outline-none focus:border-indigo-500 min-h-[48px]"
-                autoFocus
-              />
-              <input
-                type="password"
-                required
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                placeholder="Choose Password (4+ chars)"
-                className="w-full p-4 bg-slate-50 border-2 border-slate-200 rounded-2xl text-sm font-black outline-none focus:border-indigo-500 min-h-[48px]"
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={isSubmittingForm}
-              className="w-full py-4 bg-green-600 hover:bg-green-700 active:scale-95 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg transition-all cursor-pointer min-h-[48px] disabled:opacity-50"
-            >
-              {isSubmittingForm ? "Creating..." : "Create Admin Account"}
-            </button>
-
             <div className="pt-2 border-t border-slate-100 text-center">
               <button
                 type="button"
                 onClick={() => setAuthMode("pin")}
                 className="text-[10px] font-black uppercase tracking-wider text-indigo-600 hover:underline cursor-pointer"
               >
-                ← Back to PIN Keypad
+                ← Back to 6-Digit PIN Keypad
               </button>
             </div>
           </form>
         ) : (
-          /* 3. DEFAULT QUICK-PIN MODE */
+          /* 2. DEFAULT 6-DIGIT QUICK-PIN MODE */
           !selectedAdmin ? (
             <div className="space-y-4 sm:space-y-6 text-center py-2 sm:py-4">
               <ShieldCheck className="size-12 sm:size-16 text-indigo-500 animate-bounce mx-auto" />
@@ -257,22 +170,14 @@ export function KioskPinPortal({
                 })}
               </div>
 
-              {/* Alternative Login Actions */}
-              <div className="flex items-center justify-between pt-3 border-t border-slate-100">
+              {/* Password Login Option on Kiosk Bar */}
+              <div className="pt-3 border-t border-slate-100 text-center">
                 <button
                   type="button"
                   onClick={() => setAuthMode("password")}
-                  className="text-[10px] font-black uppercase tracking-wider text-indigo-600 hover:underline flex items-center gap-1 cursor-pointer"
+                  className="text-[10px] font-black uppercase tracking-wider text-indigo-600 hover:underline inline-flex items-center gap-1 cursor-pointer"
                 >
-                  <KeyRound size={12} /> Password Login
-                </button>
-                
-                <button
-                  type="button"
-                  onClick={() => setAuthMode("register")}
-                  className="text-[10px] font-black uppercase tracking-wider text-slate-500 hover:text-slate-800 flex items-center gap-1 cursor-pointer"
-                >
-                  <UserPlus size={12} /> New Account
+                  <KeyRound size={12} /> Log in with Username & Password
                 </button>
               </div>
             </div>
@@ -301,7 +206,7 @@ export function KioskPinPortal({
                 </p>
               </div>
 
-              {/* Pin indicator dots */}
+              {/* PIN Indicator Dots */}
               <div className="flex justify-center gap-2 sm:gap-3 py-1 sm:py-2">
                 {Array.from({ length: 6 }).map((_, i) => (
                   <div 
@@ -349,7 +254,7 @@ export function KioskPinPortal({
                 </button>
               </div>
 
-              {/* Password option link */}
+              {/* Password Alternative on Kiosk Keypad */}
               <div className="pt-2">
                 <button
                   type="button"
