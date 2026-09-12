@@ -29,17 +29,16 @@ export function KioskPinPortal({
   isSubmittingPin,
   onClose
 }: KioskPinPortalProps) {
-  // Mode switcher: "pin" | "password" (Account creation moved to Admin Settings only)
+  // Only "pin" and "password" modes allowed on kiosk (Create Account removed!)
   const [authMode, setAuthMode] = useState<"pin" | "password">("pin");
 
-  // Password Login State
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [isSubmittingForm, setIsSubmittingForm] = useState(false);
 
   const isSelectedAdminNeedsSetup = selectedAdmin && (!selectedAdmin.pin_hash || selectedAdmin.needs_pin_setup === 1);
 
-  // Handle Standard Password Login on Kiosk Bar
+  // Handle Standard Password Login on Kiosk
   const handlePasswordLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!username.trim() || !password) return;
@@ -79,17 +78,17 @@ export function KioskPinPortal({
           <X size={18} />
         </button>
 
-        {/* 1. PASSWORD LOGIN MODE (Accessible directly on Kiosk) */}
+        {/* 1. PASSWORD LOGIN MODE */}
         {authMode === "password" ? (
           <form onSubmit={handlePasswordLogin} className="space-y-4 text-center py-2 animate-in fade-in duration-200">
-            <div className="size-14 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-2">
+            <div className="size-14 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-2 shadow-inner">
               <KeyRound size={28} />
             </div>
             <h3 className="text-2xl font-black uppercase italic tracking-tight text-slate-900">
               Admin Password Login
             </h3>
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-              Log in with full username & password
+              Log in with full administrator credentials
             </p>
 
             <div className="space-y-2.5 text-left pt-2">
@@ -170,7 +169,7 @@ export function KioskPinPortal({
                 })}
               </div>
 
-              {/* Password Login Option on Kiosk Bar */}
+              {/* Password Option Only (Create Account Removed!) */}
               <div className="pt-3 border-t border-slate-100 text-center">
                 <button
                   type="button"
@@ -254,7 +253,7 @@ export function KioskPinPortal({
                 </button>
               </div>
 
-              {/* Password Alternative on Kiosk Keypad */}
+              {/* Password Option Link */}
               <div className="pt-2">
                 <button
                   type="button"

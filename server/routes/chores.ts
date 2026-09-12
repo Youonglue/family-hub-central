@@ -84,32 +84,75 @@ export default async function choreRoutes(app: any, opts: any) {
       db.prepare("ALTER TABLE family_members ADD COLUMN last_completion_date TEXT").run();
     } catch (e) {}
 
+    // Ensure notifications table exists with lifecycle timestamps
     try {
       db.prepare(`
         CREATE TABLE IF NOT EXISTS notifications (
           id TEXT PRIMARY KEY,
           member_id TEXT,
+          entity_id TEXT,
           title TEXT,
           message TEXT,
           type TEXT,
+          status TEXT DEFAULT 'approved',
+          requested_at TEXT,
+          approved_at TEXT,
           created_at TEXT
         )
       `).run();
     } catch (e) {}
+
+    const injectNotif = (col: string, type: string) => {
+      try { db.prepare(`ALTER TABLE notifications ADD COLUMN ${col} ${type}`).run(); } catch (e) {}
+    };
+    injectNotif("entity_id", "TEXT");
+    injectNotif("status", "TEXT DEFAULT 'approved'");
+    injectNotif("requested_at", "TEXT");
+    injectNotif("approved_at", "TEXT");
   };
 
-  const logNotification = (memberId: string | null, title: string, message: string, type: string) => {
+  // Helper to log or update notifications with full lifecycle tracking
+  const logNotification = (
+    memberId: string | null,
+    title: string,
+    message: string,
+    type: string,
+    entityId: string | null = null,
+    status = "approved"
+  ) => {
     try {
+      // If notification already exists for this entity, merge and update it!
+      if (entityId) {
+        const existing = db.prepare("SELECT id FROM notifications WHERE entity_id = ?").get(entityId) as any;
+        if (existing) {
+          db.prepare(`
+            UPDATE notifications 
+            SET title = ?, message = ?, status = ?, approved_at = datetime('now')
+            WHERE id = ?
+          `).run(title, message, status, existing.id);
+          return;
+        }
+      }
+
+      // New entry
       db.prepare(`
-        INSERT INTO notifications (id, member_id, title, message, type, created_at)
-        VALUES (?, ?, ?, ?, ?, datetime('now'))
-      `).run(randomUUID(), memberId, title, message, type);
+        INSERT INTO notifications (id, member_id, entity_id, title, message, type, status, requested_at, approved_at, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, datetime('now'))
+      `).run(
+        randomUUID(), 
+        memberId, 
+        entityId, 
+        title, 
+        message, 
+        type, 
+        status, 
+        status === 'approved' ? new Date().toISOString() : null
+      );
     } catch (e) {
       console.error("❌ LOG NOTIFICATION ERROR:", e);
     }
   };
 
-  // Helper to count pending submissions for a hero on a chore within 3 hours
   const getPendingSubmissionCount = (choreId: string, memberId: string) => {
     const res = db.prepare(`
       SELECT COUNT(*) as n
@@ -195,7 +238,7 @@ export default async function choreRoutes(app: any, opts: any) {
     return { success: true };
   });
 
-  // 3. EDIT / MULTI-ASSIGN CHORE
+  // 3. EDIT CHORE
   app.patch("/:id", async (req: any, reply: any) => {
     try {
       ensureTablesExist();
@@ -284,7 +327,9 @@ export default async function choreRoutes(app: any, opts: any) {
           memberId, 
           "Behaviour Spark! ✨", 
           `"${member.name}" earned +${pts} PTS & +${exp} XP for "${sparkReason}"!`, 
-          "chore"
+          "chore",
+          null,
+          "approved"
         );
       })();
 
@@ -307,11 +352,11 @@ export default async function choreRoutes(app: any, opts: any) {
     return { success: true };
   });
 
-  // 6. COMPLETE CHORE (Max 3 Quick Submissions Allowed, Blocks 4th until approved or 3h passes)
+  // 6. COMPLETE CHORE (Creates initial notification with requested_at timestamp)
   app.post("/:id/complete", async (req: any, reply: any) => {
     try {
       ensureTablesExist();
-      const chore = db.prepare("SELECT points, xp, is_boss, is_coop FROM chores WHERE id = ?").get(req.params.id) as any;
+      const chore = db.prepare("SELECT points, xp, is_boss, is_coop, title FROM chores WHERE id = ?").get(req.params.id) as any;
       if (!chore) return reply.code(404).send({ error: "Quest not found" });
 
       const basePoints = chore.points || 0;
@@ -319,21 +364,15 @@ export default async function choreRoutes(app: any, opts: any) {
 
       const { member_id, member_ids } = req.body;
 
-      // CO-OP QUEST VALIDATION: 2+ Heroes, Max 3 Submissions per Hero in 3 Hours
+      // CO-OP QUEST VALIDATION
       if (chore.is_coop === 1) {
-        const rawIds = Array.isArray(member_ids) 
-          ? member_ids 
-          : [member_id].filter(Boolean);
-        
+        const rawIds = Array.isArray(member_ids) ? member_ids : [member_id].filter(Boolean);
         const uniqueIds = Array.from(new Set(rawIds.map((id: any) => String(id).trim()))).filter(Boolean);
 
         if (uniqueIds.length < 2) {
-          return reply.code(400).send({ 
-            error: "Co-Op quests require a minimum of 2 different heroes to complete!" 
-          });
+          return reply.code(400).send({ error: "Co-Op quests require a minimum of 2 different heroes to complete!" });
         }
 
-        // Verify none of the heroes have exceeded 3 pending submissions
         for (const mId of uniqueIds) {
           const count = getPendingSubmissionCount(req.params.id, mId);
           if (count >= 3) {
@@ -344,36 +383,64 @@ export default async function choreRoutes(app: any, opts: any) {
           }
         }
 
+        const partyNames = uniqueIds.map(mId => (db.prepare("SELECT name FROM family_members WHERE id = ?").get(mId) as any)?.name || "Hero").join(" & ");
+
         db.transaction(() => {
           for (const mId of uniqueIds) {
+            const completionId = randomUUID();
             db.prepare(`
               INSERT INTO chore_completions (id, chore_id, member_id, points_awarded, xp_awarded, status, completed_at) 
               VALUES (?, ?, ?, ?, ?, 'pending', datetime('now'))
-            `).run(randomUUID(), req.params.id, mId, basePoints, baseXp);
+            `).run(completionId, req.params.id, mId, basePoints, baseXp);
+
+            // Create initial request notification tied to this completion ID
+            logNotification(
+              mId,
+              "Co-Op Quest Requested ⏳",
+              `Co-Op Quest "${chore.title}" submitted by ${partyNames}. Awaiting approval.`,
+              "chore",
+              completionId,
+              "requested"
+            );
           }
         })();
 
         broadcast("completions"); 
+        broadcast("notifications");
         return { success: true, count: uniqueIds.length };
       }
 
-      // STANDARD SINGLE QUEST VALIDATION: Max 3 Pending Submissions in 3 Hours
+      // SINGLE QUEST VALIDATION
       const singleId = member_id || (Array.isArray(member_ids) ? member_ids[0] : null);
       if (!singleId) return reply.code(400).send({ error: "No hero specified" });
 
       const pendingCount = getPendingSubmissionCount(req.params.id, singleId);
       if (pendingCount >= 3) {
-        return reply.code(429).send({ 
-          error: "Maximum 3 submissions reached for this quest! Awaiting parent approval." 
-        });
+        return reply.code(429).send({ error: "Maximum 3 submissions reached for this quest! Awaiting parent approval." });
       }
 
-      db.prepare(`
-        INSERT INTO chore_completions (id, chore_id, member_id, points_awarded, xp_awarded, status, completed_at) 
-        VALUES (?, ?, ?, ?, ?, 'pending', datetime('now'))
-      `).run(randomUUID(), req.params.id, singleId, basePoints, baseXp);
+      const completionId = randomUUID();
+      const hero = db.prepare("SELECT name FROM family_members WHERE id = ?").get(singleId) as any;
+
+      db.transaction(() => {
+        db.prepare(`
+          INSERT INTO chore_completions (id, chore_id, member_id, points_awarded, xp_awarded, status, completed_at) 
+          VALUES (?, ?, ?, ?, ?, 'pending', datetime('now'))
+        `).run(completionId, req.params.id, singleId, basePoints, baseXp);
+
+        // Initial request notification stamped with requested_at
+        logNotification(
+          singleId,
+          "Quest Requested ⏳",
+          `"${hero?.name || 'Hero'}" submitted "${chore.title}". Awaiting approval.`,
+          "chore",
+          completionId,
+          "requested"
+        );
+      })();
       
       broadcast("completions"); 
+      broadcast("notifications");
       return { success: true, pendingCount: pendingCount + 1 };
     } catch (error) {
       console.error("❌ COMPLETE CHORE ERROR:", error);
@@ -393,7 +460,7 @@ export default async function choreRoutes(app: any, opts: any) {
     `).all();
   });
 
-  // 8. APPROVE CHORE
+  // 8. APPROVE CHORE (MERGES WITH REQUESTED ENTRY IN ADVENTURE LOG)
   app.post("/completions/:id/approve", async (req: any, reply: any) => {
     ensureTablesExist();
     const completionId = req.params.id;
@@ -458,11 +525,14 @@ export default async function choreRoutes(app: any, opts: any) {
           WHERE id = ?
         `).run(totalXp, totalXp, newStreak, today, comp.member_id);
 
+        // MERGE: Updates the existing requested notification card with approval timestamp & badge!
         logNotification(
           comp.member_id, 
           "Quest Approved! ⚔️", 
           `"${member.name}" completed "${comp.chore_title}" (+${pointsAwarded} pts, +${totalXp} XP)!`, 
-          "chore"
+          "chore",
+          completionId,
+          "approved"
         );
 
         if (streakBonusXp > 0) {
@@ -470,7 +540,9 @@ export default async function choreRoutes(app: any, opts: any) {
             comp.member_id,
             "Streak Milestone! 🔥",
             `"${member.name}" hit a ${newStreak}-day streak and earned a +${streakBonusXp} XP milestone bonus!`,
-            "streak"
+            "streak",
+            null,
+            "approved"
           );
         }
       }
@@ -559,7 +631,9 @@ export default async function choreRoutes(app: any, opts: any) {
         memberId, 
         "Points Adjusted! ⚖️", 
         `Parent adjusted "${member.name}" points balance by -${pointsToDeduct} pts.`, 
-        "points"
+        "points",
+        null,
+        "approved"
       );
 
       broadcast("points");
@@ -599,12 +673,15 @@ export default async function choreRoutes(app: any, opts: any) {
 
       db.prepare("DELETE FROM chore_completions WHERE id = ?").run(completionId);
 
-      try {
-        db.prepare(`
-          INSERT INTO notifications (id, member_id, title, message, type, created_at)
-          VALUES (?, ?, ?, ?, 'chore', datetime('now'))
-        `).run(randomUUID(), memberId, "Quest Declined ❌", `"${memberName}"'s quest "${choreTitle}" was declined by parent.`, "chore");
-      } catch (e) {}
+      // Updates existing requested notification to declined status
+      logNotification(
+        memberId,
+        "Quest Declined ❌",
+        `"${memberName}"'s quest "${choreTitle}" was declined by parent.`,
+        "chore",
+        completionId,
+        "declined"
+      );
 
       broadcast("points");
       broadcast("completions");

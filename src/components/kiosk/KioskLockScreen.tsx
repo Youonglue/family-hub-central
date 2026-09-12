@@ -150,7 +150,6 @@ export function KioskLockScreen({
   onOpenAdmin 
 }: KioskLockScreenProps) {
   const [selectedScreensaverDay, setSelectedScreensaverDay] = useState<Date | null>(null);
-
   const [config, setConfig] = useState<ScreensaverConfig>(getScreensaverConfig);
 
   useEffect(() => {
@@ -195,8 +194,9 @@ export function KioskLockScreen({
   return (
     <div 
       id="kiosk-screensaver-root"
-      className={`fixed inset-0 z-[9999] ${theme.bgCanvas} ${fontClass} flex flex-col justify-between p-3.5 sm:p-5 select-none overflow-hidden h-[100dvh] max-h-[100dvh] pt-[max(env(safe-area-inset-top),0.875rem)] pb-[max(env(safe-area-inset-bottom),0.875rem)] pl-[max(env(safe-area-inset-left),0.875rem)] pr-[max(env(safe-area-inset-right),0.875rem)]`}
-      onClick={(e) => e.stopPropagation()}
+      className={`fixed inset-0 z-[9999] ${theme.bgCanvas} ${fontClass} flex flex-col justify-between p-3.5 sm:p-5 select-none overflow-hidden h-[100dvh] max-h-[100dvh] pt-[max(env(safe-area-inset-top),0.875rem)] pb-[max(env(safe-area-inset-bottom),0.875rem)] pl-[max(env(safe-area-inset-left),0.875rem)] pr-[max(env(safe-area-inset-right),0.875rem)] cursor-pointer`}
+      /* SMART WAKE: Tapping the background smoothly wakes the tablet straight to Choose Hero */
+      onClick={() => onOpenHeroSelect()}
     >
       {/* Ambient Animated Glows */}
       {config.ambientGlow && (
@@ -206,8 +206,11 @@ export function KioskLockScreen({
         </div>
       )}
 
-      {/* TOP HEADER: Notch & Dynamic Island Safe */}
-      <header className={`relative z-20 flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${theme.headerBg} backdrop-blur-2xl px-4 py-3 rounded-2xl sm:rounded-3xl border shadow-lg shrink-0`}>
+      {/* TOP HEADER */}
+      <header 
+        className={`relative z-20 flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${theme.headerBg} backdrop-blur-2xl px-4 py-3 rounded-2xl sm:rounded-3xl border shadow-lg shrink-0`}
+        onClick={(e) => e.stopPropagation()} // Prevent header background from waking screen prematurely
+      >
         
         {/* Left: Clock & Date */}
         <div className="flex items-center gap-3">
@@ -230,7 +233,7 @@ export function KioskLockScreen({
           </div>
         </div>
 
-        {/* Right: Action Buttons (iPhone Safe) */}
+        {/* Right: Action Buttons */}
         <div className="flex items-center gap-2 w-full sm:w-auto">
           <button 
             type="button"
@@ -251,7 +254,7 @@ export function KioskLockScreen({
       </header>
 
       {/* MAIN SCREEN AREA: 7-DAY HORIZON */}
-      <main className="relative z-10 flex-1 my-2 sm:my-3 flex flex-col min-h-0">
+      <main className="relative z-10 flex-1 my-2 sm:my-3 flex flex-col min-h-0" onClick={(e) => e.stopPropagation()}>
         <div className={`${theme.horizonCard} backdrop-blur-3xl border-2 sm:border-4 rounded-3xl sm:rounded-[3rem] p-3 sm:p-5 shadow-xl flex-1 flex flex-col min-h-0`}>
           
           <div className="flex items-center justify-between pb-2 border-b border-black/5 dark:border-white/10 shrink-0">
@@ -280,7 +283,10 @@ export function KioskLockScreen({
               return (
                 <div 
                   key={dayKey}
-                  onClick={() => setSelectedScreensaverDay(dayDate)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedScreensaverDay(dayDate);
+                  }}
                   style={{
                     backgroundColor: isToday 
                       ? theme.cardToday 
@@ -355,7 +361,7 @@ export function KioskLockScreen({
 
                         return (
                           <div 
-                            key={e.id}
+                            key={e.id} 
                             className={`${theme.eventBadgeBg} rounded-xl p-2 text-left space-y-0.5 border shadow-xs transition-colors`}
                           >
                             <div className="flex items-center justify-between gap-1">

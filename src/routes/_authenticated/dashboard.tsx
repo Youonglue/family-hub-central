@@ -3,7 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useState, useEffect, useMemo } from "react";
 import { AppShell } from "@/components/AppShell";
-import { Clock, Calendar, Zap, Sword, Gift, Flame, Scale, ScrollText } from "lucide-react";
+import { Clock, Calendar, Zap, Sword, Gift, Flame, Scale, ScrollText, CheckCircle2, XCircle } from "lucide-react";
 import { Avatar, parseAvatarConfig } from "@/components/avatar/Avatar";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
@@ -40,6 +40,14 @@ const getNotificationIcon = (type: string) => {
   }
 };
 
+const formatLogTime = (dateStr?: string | null) => {
+  if (!dateStr) return "";
+  const d = new Date(dateStr);
+  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const date = d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  return `${time}, ${date}`;
+};
+
 function Dashboard() {
   const [now, setNow] = useState(new Date());
 
@@ -72,7 +80,6 @@ function Dashboard() {
   const rawMemberList = Array.isArray(points.data) ? points.data : [];
   const logList = Array.isArray(notifications.data) ? notifications.data : [];
 
-  // Client-side strict filter safeguard
   const visibleHeroes = useMemo(() => {
     return rawMemberList.filter((m: any) => {
       return m.show_on_dashboard !== 0 && m.show_on_leaderboard !== 0;
@@ -196,16 +203,16 @@ function Dashboard() {
               </div>
             </section>
 
-            {/* B. Adventure Log */}
+            {/* B. Adventure Log (With Merged Request & Approval Timestamps) */}
             <section className="bg-white p-5 sm:p-8 rounded-3xl sm:rounded-[3rem] border-2 sm:border-4 border-slate-50 shadow-xl">
               <h2 className="text-xl sm:text-2xl font-black uppercase italic tracking-tighter mb-2 flex items-center gap-2 text-slate-900">
                 <ScrollText className="text-indigo-500 size-5 sm:size-6 shrink-0" /> Adventure Log
               </h2>
               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4 sm:mb-6">
-                Live news feed of family achievements and claims
+                Live timeline of family achievements, requests, and approvals
               </p>
               
-              <div className="space-y-3 sm:space-y-4 max-h-[380px] overflow-y-auto pr-1 scrollbar-thin">
+              <div className="space-y-3 sm:space-y-4 max-h-[420px] overflow-y-auto pr-1 scrollbar-thin">
                 {logList.length === 0 ? (
                   <p className="text-center py-12 text-xs font-black text-slate-300 uppercase tracking-wider">
                     The adventure is just beginning. No logs recorded yet.
@@ -215,13 +222,17 @@ function Dashboard() {
                     const hero = rawMemberList.find((m: any) => m.member_id === log.member_id || m.id === log.member_id);
                     const heroColor = hero?.avatar_color || '#6366f1';
 
+                    const isMergedApproval = Boolean(log.requested_at && log.approved_at && log.status === 'approved');
+                    const isPendingApproval = Boolean(log.requested_at && log.status === 'requested');
+                    const isDeclined = Boolean(log.status === 'declined');
+
                     return (
                       <div 
                         key={log.id} 
-                        className="p-3.5 sm:p-4 rounded-2xl bg-slate-50 border border-slate-100 flex items-center gap-3 sm:gap-4 shadow-sm hover:bg-slate-100/80 transition-all border-l-8"
+                        className="p-3.5 sm:p-4 rounded-2xl bg-slate-50 border border-slate-100 flex items-start gap-3 sm:gap-4 shadow-xs hover:bg-slate-100/80 transition-all border-l-8"
                         style={{ borderLeftColor: heroColor }}
                       >
-                        <div className="size-9 sm:size-10 bg-white border border-slate-200 rounded-xl flex items-center justify-center shrink-0 shadow-sm">
+                        <div className="size-9 sm:size-10 bg-white border border-slate-200 rounded-xl flex items-center justify-center shrink-0 shadow-xs mt-0.5">
                           {getNotificationIcon(log.type)}
                         </div>
 
@@ -233,9 +244,39 @@ function Dashboard() {
                             {log.message}
                           </p>
                           
-                          <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest block mt-1">
-                            {new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • {new Date(log.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}
-                          </span>
+                          {/* Merged Lifecycle Timestamp Footer */}
+                          <div className="flex items-center gap-2 flex-wrap text-[9px] font-bold uppercase tracking-wider mt-2 pt-2 border-t border-slate-200/60">
+                            {isMergedApproval ? (
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="flex items-center gap-1 text-slate-500">
+                                  <Clock size={11} className="text-slate-400" />
+                                  Requested: <strong className="text-slate-700">{formatLogTime(log.requested_at)}</strong>
+                                </span>
+                                <span className="text-slate-300">•</span>
+                                <span className="flex items-center gap-1 text-emerald-700 font-black">
+                                  <CheckCircle2 size={11} className="text-emerald-600" />
+                                  Approved: <strong className="text-emerald-800">{formatLogTime(log.approved_at)}</strong>
+                                </span>
+                              </div>
+                            ) : isPendingApproval ? (
+                              <div className="flex items-center gap-1.5 text-amber-700 font-bold">
+                                <Clock size={11} className="text-amber-500" />
+                                <span>Requested: <strong>{formatLogTime(log.requested_at)}</strong> (Awaiting Approval)</span>
+                              </div>
+                            ) : isDeclined ? (
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-slate-400">Requested: {formatLogTime(log.requested_at)}</span>
+                                <span className="text-slate-300">•</span>
+                                <span className="flex items-center gap-1 text-rose-600 font-black">
+                                  <XCircle size={11} /> Declined: {formatLogTime(log.approved_at || log.created_at)}
+                                </span>
+                              </div>
+                            ) : (
+                              <span className="text-slate-400">
+                                {formatLogTime(log.created_at)}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
                     );
