@@ -1,9 +1,11 @@
 // src/routes/_authenticated/dashboard.tsx
 import { createFileRoute } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useEffect, useMemo } from "react";
+import { toast } from "sonner";
 import { AppShell } from "@/components/AppShell";
-import { Clock, Calendar, Zap, Sword, Gift, Flame, Scale, ScrollText, CheckCircle2, XCircle } from "lucide-react";
+import { getMe } from "@/lib/auth-client";
+import { Clock, Calendar, Zap, Sword, Gift, Flame, Scale, ScrollText, CheckCircle2, XCircle, Trash2 } from "lucide-react";
 import { Avatar, parseAvatarConfig } from "@/components/avatar/Avatar";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
@@ -49,7 +51,10 @@ const formatLogTime = (dateStr?: string | null) => {
 };
 
 function Dashboard() {
+  const qc = useQueryClient();
   const [now, setNow] = useState(new Date());
+
+  const me = useQuery({ queryKey: ["me"], queryFn: () => getMe() });
 
   const points = useQuery({ 
     queryKey: ["points"], 
@@ -64,6 +69,36 @@ function Dashboard() {
   const notifications = useQuery({ 
     queryKey: ["notifications"], 
     queryFn: () => fetch('/api/notifications').then(res => res.json()) 
+  });
+
+  // Read active hero from kiosk
+  const activeMember = useMemo(() => {
+    try {
+      return JSON.parse(localStorage.getItem("kiosk_active_member") || "null");
+    } catch {
+      return null;
+    }
+  }, []);
+
+  // Admin Verification
+  const isSystemAdmin = me.data?.role?.toLowerCase() === "admin";
+  const isParentCharacter = (activeMember?.is_parent === 1 || activeMember?.is_parent === true || activeMember?.role?.toLowerCase() === "admin") && activeMember?.is_kid !== 1;
+  const isAdmin = Boolean(isSystemAdmin && (isParentCharacter || !activeMember));
+
+  // DELETE LOG MUTATION (Admin Only)
+  const deleteLog = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await fetch(`/api/notifications/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error("Failed to delete log entry");
+      return res.json();
+    },
+    onSuccess: () => {
+      toast.success("Log entry removed from Adventure Log");
+      qc.invalidateQueries({ queryKey: ["notifications"] });
+    },
+    onError: () => {
+      toast.error("Failed to delete log entry");
+    }
   });
 
   const todayQuests = useMemo(() => {
@@ -88,7 +123,7 @@ function Dashboard() {
 
   return (
     <AppShell>
-      <div className="mx-auto max-w-[1500px] px-3 py-4 sm:px-6 sm:py-6 md:px-8 md:py-10 space-y-6 sm:space-y-8 animate-in fade-in duration-300">
+      <div className="mx-auto max-w-[1500px] px-3 py-4 sm:px-6 sm:py-6 md:px-8 md:py-10 space-y-6 sm:space-y-8 animate-in fade-in duration-300 safe-area-inset-bottom">
         
         {/* Welcome / Header */}
         <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-slate-100">
@@ -148,7 +183,6 @@ function Dashboard() {
                         key={m.member_id || m.id} 
                         className={`p-4 sm:p-7 rounded-2xl sm:rounded-[2.5rem] border-2 flex flex-col sm:flex-row items-center gap-4 sm:gap-6 relative overflow-hidden hover:shadow-md transition-all ${bgStyles}`}
                       >
-                        {/* Left Side: Medal Rank and Vector Avatar */}
                         <div className="flex flex-row sm:flex-col items-center gap-3 sm:gap-2 shrink-0">
                           {medal && (
                             <span className="text-2xl sm:text-3xl font-black uppercase tracking-tighter text-slate-800 animate-pulse">
@@ -161,7 +195,6 @@ function Dashboard() {
                           />
                         </div>
 
-                        {/* Right Side: Large Stats */}
                         <div className="flex-1 min-w-0 w-full space-y-2.5 sm:space-y-3 text-center sm:text-left">
                           <div className="flex justify-between items-center gap-2 sm:gap-4 flex-wrap">
                             <p className="font-black text-2xl sm:text-3xl uppercase tracking-tighter text-slate-900 truncate">
@@ -203,7 +236,7 @@ function Dashboard() {
               </div>
             </section>
 
-            {/* B. Adventure Log (With Merged Request & Approval Timestamps) */}
+            {/* B. Adventure Log */}
             <section className="bg-white p-5 sm:p-8 rounded-3xl sm:rounded-[3rem] border-2 sm:border-4 border-slate-50 shadow-xl">
               <h2 className="text-xl sm:text-2xl font-black uppercase italic tracking-tighter mb-2 flex items-center gap-2 text-slate-900">
                 <ScrollText className="text-indigo-500 size-5 sm:size-6 shrink-0" /> Adventure Log
@@ -229,7 +262,7 @@ function Dashboard() {
                     return (
                       <div 
                         key={log.id} 
-                        className="p-3.5 sm:p-4 rounded-2xl bg-slate-50 border border-slate-100 flex items-start gap-3 sm:gap-4 shadow-xs hover:bg-slate-100/80 transition-all border-l-8"
+                        className="p-3.5 sm:p-4 rounded-2xl bg-slate-50 border border-slate-100 flex items-start gap-3 sm:gap-4 shadow-xs hover:bg-slate-100/80 transition-all border-l-8 group relative"
                         style={{ borderLeftColor: heroColor }}
                       >
                         <div className="size-9 sm:size-10 bg-white border border-slate-200 rounded-xl flex items-center justify-center shrink-0 shadow-xs mt-0.5">
@@ -237,9 +270,29 @@ function Dashboard() {
                         </div>
 
                         <div className="min-w-0 flex-1">
-                          <p className="font-black text-[9px] sm:text-[10px] text-slate-400 uppercase tracking-widest leading-none mb-1">
-                            {log.title}
-                          </p>
+                          <div className="flex justify-between items-start gap-2">
+                            <p className="font-black text-[9px] sm:text-[10px] text-slate-400 uppercase tracking-widest leading-none mb-1">
+                              {log.title}
+                            </p>
+
+                            {/* ADMIN ONLY DELETE BUTTON */}
+                            {isAdmin && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (confirm("Remove this entry from the Adventure Log?")) {
+                                    deleteLog.mutate(log.id);
+                                  }
+                                }}
+                                disabled={deleteLog.isPending}
+                                className="p-1 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all cursor-pointer min-h-[28px] min-w-[28px] flex items-center justify-center -mr-1 -mt-1 active:scale-95"
+                                title="Delete log entry"
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            )}
+                          </div>
+
                           <p className="font-black text-xs sm:text-sm text-slate-800 leading-tight">
                             {log.message}
                           </p>

@@ -83,7 +83,6 @@ await app.register(fastifyHelmet, {
   frameguard: { action: "deny" }
 });
 
-// Whitelist local home network from aggressive rate limiting
 await app.register(fastifyRateLimit, {
   max: 300,
   timeWindow: "1 minute",
@@ -156,7 +155,6 @@ app.addHook("preHandler", async (req, reply) => {
     return;
   }
 
-  // FIXED: Added /api/auth/verify-pin and /api/auth/pin-status so unauthenticated PIN logins are permitted
   const publicPaths = [
     "/api/auth/login", 
     "/api/auth/register", 
@@ -202,13 +200,13 @@ app.get("/api/points", async (req: any) => {
         SELECT 
           m.id as member_id, m.name, m.avatar_color, m.avatar_icon, m.xp, m.level, m.is_kid, m.is_parent,
           (COALESCE((SELECT SUM(points_awarded) FROM chore_completions WHERE member_id = m.id AND status = 'approved'), 0) - 
-           COALESCE((SELECT SUM(points_spent) FROM redemptions WHERE member_id = m.id), 0)) as balance
+           COALESCE((SELECT SUM(points_spent) FROM redemptions WHERE member_id = m.id AND status = 'approved'), 0)) as balance
         FROM family_members m 
         ORDER BY m.xp DESC
     `).all();
 });
 
-// Adventure Log Notifications Alignment
+// Adventure Log Notifications (GET)
 app.get("/api/notifications", async () => {
     try {
       return db.prepare("SELECT * FROM notifications ORDER BY created_at DESC LIMIT 30").all();
@@ -217,7 +215,22 @@ app.get("/api/notifications", async () => {
     }
 });
 
-// --- SERVE FRONTEND (Instant Cache-Busting for HTML) ---
+// DELETE INDIVIDUAL ADVENTURE LOG ENTRY (Admin Only)
+app.delete("/api/notifications/:id", async (req: any, reply: any) => {
+    try {
+      const user = getSession(req);
+      if (!user || user.role !== 'admin') {
+        return reply.code(403).send({ error: "Admin only" });
+      }
+      db.prepare("DELETE FROM notifications WHERE id = ?").run(req.params.id);
+      broadcast("notifications");
+      return { success: true };
+    } catch (e) {
+      return reply.code(500).send({ error: (e as Error).message });
+    }
+});
+
+// --- SERVE FRONTEND ---
 const distPath = path.resolve(__dirname, "../dist");
 
 app.register(fastifyStatic, { 
