@@ -190,7 +190,7 @@ function AuthPage() {
                 <button
                   type="button"
                   onClick={() => {
-                    setName("");
+                    setUsername("");
                     setPassword("");
                     setViewMode("gateway");
                   }}

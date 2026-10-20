@@ -79,8 +79,15 @@ export default async function authRoutes(app: any, opts: any) {
     const user = getSessionUser(req);
     const userCount = (db.prepare("SELECT COUNT(*) as n FROM users").get() as any).n;
     if (!user) return { id: null, role: 'guest', first_run: userCount === 0 };
-    return { 
-      ...user, 
+    const {
+      password_hash,
+      pin_hash,
+      recovery_key_hash,
+      ...safeUser
+    } = user;
+
+    return {
+      ...safeUser,
       role: user.role || 'user', 
       has_pin: !!user.pin_hash,
       needs_pin_setup: user.needs_pin_setup === 1 || !user.pin_hash,
@@ -300,7 +307,25 @@ export default async function authRoutes(app: any, opts: any) {
     if (!user) return reply.code(404).send({ error: "User not found" });
 
     if (isSetup || !user.pin_hash || user.needs_pin_setup === 1) {
-      if (!pin || pin.length !== 6) return reply.code(400).send({ error: "PIN must be 6 digits" });
+      // Initial PIN setup requires an authenticated account owner.
+      if (!activeUser || activeUser.id !== user.id) {
+        return reply.code(401).send({
+          error: "Sign in with your password before setting up a PIN"
+        });
+      }
+
+      // Existing PINs cannot be replaced using the setup flow.
+      if (user.pin_hash) {
+        return reply.code(403).send({
+          error: "PIN already configured. Use account settings."
+        });
+      }
+
+      if (typeof pin !== "string" || !/^\d{6}$/.test(pin)) {
+        return reply.code(400).send({
+          error: "PIN must contain exactly 6 digits"
+        });
+      }
 
       const salt = randomBytes(16).toString("hex");
       const hash = hashSecret(pin, salt);
@@ -486,9 +511,15 @@ export default async function authRoutes(app: any, opts: any) {
         return reply.code(400).send({ error: "Password must be at least 4 characters" });
       }
 
-      if (currentPassword && user.password_hash) {
-        const isValid = verifySecret(currentPassword, user.password_hash);
-        if (!isValid) return reply.code(400).send({ error: "Current password incorrect" });
+      if (
+        typeof currentPassword !== "string" ||
+        !currentPassword ||
+        !user.password_hash ||
+        !verifySecret(currentPassword, user.password_hash)
+      ) {
+        return reply.code(403).send({
+          error: "Current account password required or incorrect"
+        });
       }
 
       const newSalt = randomBytes(16).toString("hex");
@@ -516,9 +547,15 @@ export default async function authRoutes(app: any, opts: any) {
         return reply.code(400).send({ error: "Username cannot be empty" });
       }
 
-      if (currentPassword && user.password_hash) {
-        const isValid = verifySecret(currentPassword, user.password_hash);
-        if (!isValid) return reply.code(400).send({ error: "Current password incorrect" });
+      if (
+        typeof currentPassword !== "string" ||
+        !currentPassword ||
+        !user.password_hash ||
+        !verifySecret(currentPassword, user.password_hash)
+      ) {
+        return reply.code(403).send({
+          error: "Current account password required or incorrect"
+        });
       }
 
       db.prepare("UPDATE users SET username = ? WHERE id = ?").run(newUsername.trim(), user.id);
@@ -535,11 +572,21 @@ export default async function authRoutes(app: any, opts: any) {
     if (!user) return reply.code(401).send({ error: "Unauthorized" });
 
     const { pin, currentPassword } = req.body;
-    if (!pin || pin.length !== 6) return reply.code(400).send({ error: "PIN must be 6 digits" });
+    if (typeof pin !== "string" || !/^\d{6}$/.test(pin)) {
+      return reply.code(400).send({
+        error: "PIN must contain exactly 6 digits"
+      });
+    }
 
-    if (currentPassword && user.password_hash) {
-      const isValid = verifySecret(currentPassword, user.password_hash);
-      if (!isValid) return reply.code(400).send({ error: "Current password incorrect" });
+    if (
+      typeof currentPassword !== "string" ||
+      !currentPassword ||
+      !user.password_hash ||
+      !verifySecret(currentPassword, user.password_hash)
+    ) {
+      return reply.code(403).send({
+        error: "Current account password required or incorrect"
+      });
     }
 
     const salt = randomBytes(16).toString("hex");
@@ -552,12 +599,39 @@ export default async function authRoutes(app: any, opts: any) {
     const user = getSessionUser(req);
     if (!user) return reply.code(401).send({ error: "Unauthorized" });
 
+    const { currentPassword } = req.body || {};
+
+    if (
+      typeof currentPassword !== "string" ||
+      !currentPassword ||
+      !user.password_hash ||
+      !verifySecret(currentPassword, user.password_hash)
+    ) {
+      return reply.code(403).send({
+        error: "Current account password required or incorrect"
+      });
+    }
+
     db.prepare("UPDATE users SET pin_hash = NULL WHERE id = ?").run(user.id);
     return { success: true };
   });
 
   app.get("/users", async () => {
-    return db.prepare("SELECT id, username, role, pin_hash, needs_pin_setup FROM users").all();
+    const users = db.prepare(
+      "SELECT id, username, role, pin_hash, needs_pin_setup FROM users"
+    ).all() as any[];
+
+    return users.map(user => ({
+      id: user.id,
+      username: user.username,
+      role: user.role,
+
+      // Compatibility field: boolean only, never the actual hash.
+      pin_hash: Boolean(user.pin_hash),
+
+      has_pin: Boolean(user.pin_hash),
+      needs_pin_setup: user.needs_pin_setup
+    }));
   });
 
   app.get("/pin-status", async (req: any) => {
