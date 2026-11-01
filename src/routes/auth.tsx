@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { login, register, getMe } from "@/lib/auth-client";
-import { LogIn, UserPlus, MonitorPlay, ArrowLeft, Loader2 } from "lucide-react";
+import { LogIn, ArrowLeft, Loader2 } from "lucide-react";
 
 export const Route = createFileRoute("/auth")({
   ssr: false,
@@ -58,26 +58,6 @@ function AuthPage() {
   };
 
   // Safe unprivileged guest bypass for shared tablet kiosk mode
-  const handleEnterKioskMode = async () => {
-    setBusy(true);
-    try {
-      // Attempt to log in to the unprivileged shared kiosk guest account
-      try {
-        await login("kiosk_guest", "kiosk_guest_password");
-      } catch {
-        // If account doesn't exist yet, silently register it and then log in
-        await register("kiosk_guest", "kiosk_guest_password");
-        await login("kiosk_guest", "kiosk_guest_password");
-      }
-      toast.success("Kiosk Mode Activated");
-      navigate({ to: "/dashboard", replace: true });
-    } catch (err) {
-      toast.error("Failed to activate Kiosk Mode");
-    } finally {
-      setBusy(false);
-    }
-  };
-
   // --- LOADING GUARDEE ---
   if (loadingSession) {
     return (
@@ -113,23 +93,9 @@ function AuthPage() {
                 <LogIn size={18} /> Log In
               </button>
 
-              <button
-                onClick={() => setViewMode("register")}
-                disabled={busy}
-                className="w-full py-4 sm:py-5 bg-white border-4 border-slate-50 text-slate-800 hover:border-indigo-500 rounded-[2rem] font-black uppercase text-sm tracking-wider shadow-md flex items-center justify-center gap-3 transition-all cursor-pointer min-h-[48px]"
-              >
-                <UserPlus size={18} /> Make Account
-              </button>
-
               <div className="border-t border-slate-100 my-2" />
 
-              <button
-                onClick={handleEnterKioskMode}
-                disabled={busy}
-                className="w-full py-4 sm:py-5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-[2rem] font-black uppercase text-sm tracking-wider shadow-sm flex items-center justify-center gap-3 transition-all cursor-pointer min-h-[48px]"
-              >
-                <MonitorPlay size={18} /> Enter Kiosk Mode
-              </button>
+              
             </div>
           </div>
         )}
@@ -201,18 +167,6 @@ function AuthPage() {
               )}
             </div>
 
-            {!firstRun && (
-              <p className="text-center text-xs font-black uppercase tracking-widest text-slate-400 mt-4">
-                {viewMode === "login" ? "Need an account?" : "Already have one?"}{" "}
-                <button
-                  type="button"
-                  onClick={() => setViewMode(viewMode === "login" ? "register" : "login")}
-                  className="font-black text-indigo-600 underline underline-offset-4"
-                >
-                  {viewMode === "login" ? "Register" : "Sign In"}
-                </button>
-              </p>
-            )}
           </form>
         )}
       </div>

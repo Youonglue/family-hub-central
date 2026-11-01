@@ -40,3 +40,18 @@ data/
 master.key
 .env
 .env.local
+
+# SSH credentials
+.ssh/
+id_rsa
+id_ed25519
+familyhub_github
+familyhub_github.pub
+
+# Private application credentials
+*.pem
+*.p12
+*.pfx
+*.secret
+.env.*
+!.env.example

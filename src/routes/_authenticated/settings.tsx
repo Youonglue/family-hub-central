@@ -13,6 +13,7 @@ import { FamilyApprovals } from "@/components/settings/FamilyApprovals";
 import { IdentityForms } from "@/components/settings/IdentityForms";
 import { BackupSettings } from "@/components/settings/BackupSettings";
 import { TrustedDevices } from "@/components/settings/TrustedDevices";
+import { FamilyAccounts } from "@/components/settings/FamilyAccounts";
 import { ScreensaverCustomizer } from "@/components/settings/ScreensaverCustomizer";
 
 export const Route = createFileRoute("/_authenticated/settings")({
@@ -227,6 +228,9 @@ function UnlockedSettings({
     <div className="space-y-6 sm:space-y-8">
       {/* 2. Device Pairing & Zero-Trust Access */}
       <TrustedDevices />
+
+      {/* Administrator-only family account creation */}
+      <FamilyAccounts />
 
       {/* 3. Roster and Point Deductions Administration */}
       <LeaderboardRoster />

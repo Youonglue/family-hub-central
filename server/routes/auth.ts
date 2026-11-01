@@ -252,21 +252,81 @@ export default async function authRoutes(app: any, opts: any) {
 
   // Standard Auth Endpoints
   app.post("/register", async (req: any, reply: any) => {
-    const { username, password } = req.body;
-    if (!username || !password) return reply.code(400).send({ error: "Username and password required" });
+    const isFirst =
+      (db.prepare("SELECT COUNT(*) as n FROM users").get() as any).n === 0;
 
-    const isFirst = (db.prepare("SELECT COUNT(*) as n FROM users").get() as any).n === 0;
+    // Only the initial administrator can register publicly.
+    // All subsequent accounts require an authenticated admin.
+    if (!isFirst) {
+      const admin = getSessionUser(req);
+
+      if (!admin || admin.role !== "admin") {
+        return reply.code(403).send({
+          error: "Only an administrator can create accounts"
+        });
+      }
+    }
+
+    const { username, password } = req.body || {};
+
+    if (
+      typeof username !== "string" ||
+      !username.trim() ||
+      username.trim().length > 64 ||
+      typeof password !== "string" ||
+      password.length < 8 ||
+      password.length > 256
+    ) {
+      return reply.code(400).send({
+        error: "Invalid username or password"
+      });
+    }
+
+    const normalizedUsername = username.trim();
+
+    const existing = db.prepare(
+      "SELECT id FROM users WHERE LOWER(username) = LOWER(?)"
+    ).get(normalizedUsername);
+
+    if (existing) {
+      return reply.code(409).send({
+        error: "Username already exists"
+      });
+    }
+
     const salt = randomBytes(16).toString("hex");
     const hash = hashSecret(password, salt);
     const id = randomUUID();
-    
-    db.prepare(`INSERT INTO users (id, username, password_hash, is_admin, role, needs_pin_setup, created_at) VALUES (?,?,?,?,?,1,datetime('now'))`)
-      .run(id, username.trim(), `scrypt$${salt}$${hash}`, isFirst ? 1 : 0, isFirst ? 'admin' : 'user');
-    
-    const token = randomBytes(64).toString("hex");
-    db.prepare("INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, datetime('now', '+30 days'))").run(token, id);
-    reply.header("Set-Cookie", `fh_sid=${token}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax`);
-    return { success: true };
+
+    db.prepare(
+      `INSERT INTO users
+       (id, username, password_hash, is_admin, role,
+        needs_pin_setup, created_at)
+       VALUES (?, ?, ?, ?, ?, 1, datetime('now'))`
+    ).run(
+      id,
+      normalizedUsername,
+      `scrypt$${salt}$${hash}`,
+      isFirst ? 1 : 0,
+      isFirst ? "admin" : "user"
+    );
+
+    // Only the initial installation gets an automatic login.
+    // An admin creating a family account keeps their own session.
+    if (isFirst) {
+      const token = randomBytes(64).toString("hex");
+
+      db.prepare(
+        "INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, datetime('now', '+30 days'))"
+      ).run(token, id);
+
+      reply.header(
+        "Set-Cookie",
+        `fh_sid=${token}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax`
+      );
+    }
+
+    return reply.code(201).send({ success: true });
   });
 
   app.post("/login", async (req: any, reply: any) => {
